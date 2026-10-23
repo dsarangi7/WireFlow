@@ -760,6 +760,58 @@ for (const [label, proj, cc] of [['2x24', project, conns], ['6-string', sixProje
   vsdxEq(label + ' every entry is STORE with a valid CRC32', crcOk, true);
 }
 
+/* ---- 5b. VSDX finishing conventions (learned from the AYK template) ---- */
+
+/** Extracts STORE zip parts into a name -> ascii-string map. */
+function vsdxParts(bytes) {
+  const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const eocdAt = bytes.length - 22;
+  const n = dv.getUint16(eocdAt + 10, true);
+  const cdOff = dv.getUint32(eocdAt + 16, true);
+  const parts = new Map();
+  let p = cdOff;
+  const dec = b => Buffer.from(bytes.slice(b.start, b.start + b.len)).toString('latin1');
+  for (let e = 0; e < n; e++) {
+    const nameLen = dv.getUint16(p + 28, true);
+    const extraLen = dv.getUint16(p + 30, true);
+    const commLen = dv.getUint16(p + 32, true);
+    const size = dv.getUint32(p + 24, true);
+    const localOff = dv.getUint32(p + 42, true);
+    const lnameLen = dv.getUint16(localOff + 26, true);
+    const lextraLen = dv.getUint16(localOff + 28, true);
+    const name = dec({ start: localOff + 30, len: nameLen });
+    parts.set(name, dec({ start: localOff + 30 + lnameLen + lextraLen, len: size }));
+    p += 46 + nameLen + extraLen + commLen;
+  }
+  return parts;
+}
+
+{
+  const bytes = E.vsdxExport(conns, project);
+  const parts = vsdxParts(bytes);
+  const page1 = parts.get('visio/pages/page1.xml') || '';
+  const page2 = parts.get('visio/pages/page2.xml') || '';
+  const pages = parts.get('visio/pages/pages.xml') || '';
+  const ct = parts.get('[Content_Types].xml') || '';
+  const p1rels = parts.get('visio/pages/_rels/page1.xml.rels') || '';
+  const media = parts.get('visio/media/image1.png') || '';
+
+  vsdxEq('package contains page2 + media', parts.has('visio/pages/page2.xml') && parts.has('visio/media/image1.png'), true);
+  vsdxEq('logo PNG starts with the PNG signature', [media.charCodeAt(0), media.charCodeAt(1), media.charCodeAt(2), media.charCodeAt(3)].join(','), '137,80,78,71');
+  vsdxEq('wires are native 1D shapes (BeginX present)', page1.includes('BeginX'), true);
+  vsdxEq('wire Angle uses the ATAN2 formula', page1.includes('F="ATAN2(EndY-BeginY,EndX-BeginX)"'), true);
+  vsdxEq('house power colour #ff0000 used', page1.includes('#ff0000'), true);
+  vsdxEq('house comm colour #00b050 used', page1.includes('#00b050'), true);
+  vsdxEq('old wrong Layers section form is gone', page1.includes('<Section N="Layers"'), false);
+  vsdxEq('layer section is canonical <Section N="Layer">', pages.includes('<Section N="Layer">') && pages.includes('<Cell N="Name" V="POWER"/>'), true);
+  vsdxEq('logo bitmap shape present on page 1', page1.includes('ForeignType="Bitmap"') && page1.includes('<Rel r:id="rId1"/>'), true);
+  vsdxEq('page1 rels point at the logo media', p1rels.includes('../media/image1.png'), true);
+  vsdxEq('content types declare png + page2', ct.includes('Extension="png"') && ct.includes('/visio/pages/page2.xml'), true);
+  vsdxEq('pages.xml declares both pages', (pages.match(/<Page /g) || []).length, 2);
+  vsdxEq('note page carries NOTES + EXCEPTIONS + legend', page2.includes('NOTES') && page2.includes('EXCEPTIONS') && page2.includes('WIRING LEGEND'), true);
+  vsdxEq('note page lists the cable gauges', page2.includes(E.DEFAULT_RULES.powerGauge.split('²')[0]) && page2.includes(E.DEFAULT_RULES.commGauge), true);
+}
+
 /* ============================================================
  * 6. CABLE GAUGE + SKILL JSON SPEC
  * ============================================================ */

@@ -17,7 +17,8 @@ rule engine implementing the Wiring Diagram Tool Engineering Rules (R01–R12, V
   compatibility, quantities, exception approvals) that block release
 - **Cable length model** — cross-rack segmented lengths (source + over-top span +
   destination + allowance), power deduction and rounding rules
-- **Export**: `.vsdx` (editable Visio, 12 layers), `.dxf` (R12, opens in AutoCAD),
+- **Export**: `.vsdx` (editable Visio: native 1D wires, AYK logo in the title block,
+  12 layers, auto-built Notes page), `.dxf` (R12, opens in AutoCAD),
   `.scr` (AutoCAD script), CSV cable schedule/BOM, and a machine-readable
   **JSON layout spec** for downstream automation tools
 - **Cable specification** — every harness carries a cable spec/gauge (e.g.
@@ -36,10 +37,11 @@ styles.css          Full application styling
 js/config.js        Cloud service public config (endpoint + publishable key)
 js/engine.js        Deterministic wiring engine + sheet layout + SVG/DXF/SCR renderers
 js/zip.js           Minimal store-method ZIP writer (for .vsdx packaging)
-js/vsdx.js          Visio .vsdx generator (OPC package, 12 drawing layers)
+js/vsdx.js          Visio .vsdx generator (OPC package, 12 layers, 1D wires, logo, Notes page)
+docs/visio-rack-wiring-skill.md  Visio production workflow learned from the AYK template
 js/aps.js           Autodesk APS client (token, OSS upload, translate, viewer)
 js/app.js           Router, landing page, auth (email OTP), dashboard, workspace UI
-tests/drawing.test.js  188-assertion regression suite (node tests/drawing.test.js)
+tests/drawing.test.js  202-assertion regression suite (node tests/drawing.test.js)
 ```
 
 ## Running locally

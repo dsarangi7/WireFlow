@@ -829,7 +829,7 @@ function buildSheetLayout(project, conns) {
   addLine('TITLE', tb.x, tb.y + 100, tb.x, tb.y + tb.h, { width: 1.0 });
 
   addText('TEXT', tb.x + 14, tb.y + 20, 12.5, (p.vessel || 'WIREFLOW ENGINEERING LTD'), { bold: true });
-  addText('TEXT', tb.x + tb.w - 14, tb.y + 19, 8.5, 'MARINE BATTERY WIRING SYSTEM', { anchor: 'end' });
+  addText('TEXT', tb.x + tb.w - 64, tb.y + 19, 8.5, 'MARINE BATTERY WIRING SYSTEM', { anchor: 'end' });
 
   addText('TEXT', tb.x + 14, tb.y + 44, 8, 'DRAWING TITLE');
   addText('TEXT', tb.x + 14, tb.y + 62, 15, (p.name || p.rack || 'Rack 1'), { bold: true });
