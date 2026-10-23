@@ -1,0 +1,15 @@
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
+.vscode/
+.idea/
+
+# temp artifacts
+*.tmp
+.tmp_*
+*.log
+
+# local env / credentials (never commit secrets)
+.env
+*.local
