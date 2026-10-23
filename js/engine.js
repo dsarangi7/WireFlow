@@ -26,6 +26,8 @@ const DEFAULT_RULES = {
   m2sPowerLen: 800,        // approved M2S power harness length
   m2sCommLen: 800,         // approved M2S communication harness length
   busPowerLen: 1200,       // approved SSC-to-JB bus power length
+  powerGauge: '63A/125V, 150 mm²',  // cable spec printed on the schedule / JSON
+  commGauge: 'Cat5, 25 AWG',        // cable spec for communication harnesses
   overTopSpans: [],        // [{fromRack, toRack, network, spanMm}]
   roundingStep: 0,         // 0 = exact mm; else round manufactured length up
 };
@@ -44,13 +46,13 @@ function emptyProject() {
 function harnessCatalogue(rules) {
   const r = rules || DEFAULT_RULES;
   return [
-    { pn: `PW-JMP-${fmtLen(r.powerJumper)}`,  cls: 'M2M-PWR',  network: 'power', length: r.powerJumper, desc: `Standard short power jumper ${r.powerJumper} mm AB` },
-    { pn: `PW-LOC-${fmtLen(r.longPower)}`,    cls: 'M2M-PWR',  network: 'power', length: r.longPower,   desc: `Longer local power jumper ${r.longPower} mm` },
-    { pn: `CM-JMP-${fmtLen(r.commJumper)}`,   cls: 'M2M-COMM', network: 'comm',  length: r.commJumper,  desc: `Standard short communication jumper ${r.commJumper} mm` },
-    { pn: `CM-LOC-${fmtLen(r.longComm)}`,     cls: 'M2M-COMM', network: 'comm',  length: r.longComm,    desc: `Longer local communication jumper ${r.longComm} mm` },
-    { pn: `PW-M2S-${fmtLen(r.m2sPowerLen)}`,  cls: 'M2S-PWR',  network: 'power', length: r.m2sPowerLen, desc: 'Module-to-SSC power harness' },
-    { pn: `CM-M2S-${fmtLen(r.m2sCommLen)}`,   cls: 'M2S-COMM', network: 'comm',  length: r.m2sCommLen,  desc: 'Module-to-SSC communication harness' },
-    { pn: `PW-BUS-${fmtLen(r.busPowerLen)}`,  cls: 'SSC-JB',   network: 'power', length: r.busPowerLen, desc: 'SSC Bus to junction box power cable' },
+    { pn: `PW-JMP-${fmtLen(r.powerJumper)}`,  cls: 'M2M-PWR',  network: 'power', length: r.powerJumper, gauge: r.powerGauge, desc: `Standard short power jumper ${r.powerJumper} mm AB` },
+    { pn: `PW-LOC-${fmtLen(r.longPower)}`,    cls: 'M2M-PWR',  network: 'power', length: r.longPower,   gauge: r.powerGauge, desc: `Longer local power jumper ${r.longPower} mm` },
+    { pn: `CM-JMP-${fmtLen(r.commJumper)}`,   cls: 'M2M-COMM', network: 'comm',  length: r.commJumper,  gauge: r.commGauge,  desc: `Standard short communication jumper ${r.commJumper} mm` },
+    { pn: `CM-LOC-${fmtLen(r.longComm)}`,     cls: 'M2M-COMM', network: 'comm',  length: r.longComm,    gauge: r.commGauge,  desc: `Longer local communication jumper ${r.longComm} mm` },
+    { pn: `PW-M2S-${fmtLen(r.m2sPowerLen)}`,  cls: 'M2S-PWR',  network: 'power', length: r.m2sPowerLen, gauge: r.powerGauge, desc: 'Module-to-SSC power harness' },
+    { pn: `CM-M2S-${fmtLen(r.m2sCommLen)}`,   cls: 'M2S-COMM', network: 'comm',  length: r.m2sCommLen,  gauge: r.commGauge,  desc: 'Module-to-SSC communication harness' },
+    { pn: `PW-BUS-${fmtLen(r.busPowerLen)}`,  cls: 'SSC-JB',   network: 'power', length: r.busPowerLen, gauge: r.powerGauge, desc: 'SSC Bus to junction box power cable' },
   ];
 }
 function fmtLen(n) { return String(Math.round(n)).padStart(3, '0'); }
@@ -121,10 +123,11 @@ function generateNetlist(project) {
     c.routedLen = applyDeduction(c.routedLen, c.network, rules);
     const h = pickHarness(cat, c.network, c.routedLen, rules);
     if (h) {
-      c.harness = h.pn; c.length = h.length; c.desc = h.desc;
+      c.harness = h.pn; c.length = h.length; c.desc = h.desc; c.gauge = h.gauge;
     } else {
       c.harness = null; c.length = c.routedLen;
       c.desc = 'No approved harness fits — engineering release required';
+      c.gauge = c.network === 'power' ? rules.powerGauge : rules.commGauge;
     }
   }
 
@@ -290,16 +293,80 @@ function buildSchedule(conns) {
   const map = new Map();
   for (const c of conns) {
     const key = `${c.harness || 'UNRELEASED'}|${c.cls}|${c.from}→${c.to}`;
-    if (!map.has(key)) map.set(key, { harness: c.harness || '— UNRELEASED —', cls: c.cls, network: c.network, from: c.from, to: c.to, length: c.length, routedLen: c.routedLen, qty: 0, desc: c.desc || '' });
+    if (!map.has(key)) map.set(key, { harness: c.harness || '— UNRELEASED —', cls: c.cls, network: c.network, from: c.from, to: c.to, length: c.length, routedLen: c.routedLen, qty: 0, desc: c.desc || '', gauge: c.gauge || '' });
     map.get(key).qty++;
   }
   return [...map.values()];
 }
 
 function scheduleCSV(conns, project) {
-  const rows = [['Cable ID', 'Network', 'Class', 'From', 'To', 'Harness P/N', 'Manufactured length (mm)', 'Routed length (mm)', 'Qty', 'Description']];
-  buildSchedule(conns).forEach((r, i) => rows.push([`C-${String(i + 1).padStart(3, '0')}`, r.network, r.cls, r.from, r.to, r.harness, r.length, r.routedLen, r.qty, r.desc]));
+  const rows = [['Cable ID', 'Network', 'Class', 'From', 'To', 'Harness P/N', 'Cable spec', 'Manufactured length (mm)', 'Routed length (mm)', 'Qty', 'Description']];
+  buildSchedule(conns).forEach((r, i) => rows.push([`C-${String(i + 1).padStart(3, '0')}`, r.network, r.cls, r.from, r.to, r.harness, r.gauge, r.length, r.routedLen, r.qty, r.desc]));
   return rows.map(r => r.map(v => `"${String(v ?? '').replace(/"/g, '""')}"`).join(',')).join('\r\n');
+}
+
+/* ---------- skill-compatible JSON layout spec ----------
+ * Machine-readable layout contract matching the wiring-diagram
+ * skill format: components in inches, connections with colour,
+ * gauge and length. Downstream tools (Visio skills, custom
+ * generators) can consume this without knowing the engine.
+ */
+function specJson(conns, project) {
+  const L = buildSheetLayout(project, conns);
+  const unitsPerMm = 4; // 1 sheet unit = 0.25 mm
+  const toIn = u => Math.round((u / unitsPerMm / 25.4) * 1000) / 1000;
+  const components = L.modules.map(m => ({
+    id: m.label,
+    type: 'module',
+    string: m.s + 1,
+    position: { x: toIn(m.x), y: toIn(m.y) },
+    size: { width: toIn(m.w), height: toIn(m.h) },
+    power_terminal: { x: toIn(m.tPower), y: toIn(m.ty) },
+    comm_terminal: { x: toIn(m.tComm), y: toIn(m.ty) },
+  }));
+  for (const s of (L.ssc || [])) {
+    components.push({
+      id: s.label,
+      type: 'ssc',
+      position: { x: toIn(s.x), y: toIn(s.y) },
+      size: { width: toIn(s.w), height: toIn(s.h) },
+    });
+  }
+  // Junction boxes are netlist endpoints (S<n>-JB) but are only labelled on
+  // the sheet; derive them here so the JSON spec is fully self-consistent.
+  const jbSeen = new Set();
+  for (const c of conns) {
+    for (const ep of [c.from, c.to]) {
+      const m = ep.match(/^(S(\d+))-JB:/);
+      if (!m || jbSeen.has(m[1])) continue;
+      jbSeen.add(m[1]);
+      const ssc = (L.ssc || []).find(x => x.s === +m[2] - 1) || { x: 120, y: 240, w: 180 };
+      components.push({
+        id: m[1] + '-JB',
+        type: 'junction_box',
+        position: { x: toIn(ssc.x), y: toIn(ssc.y - 40) },
+        size: { width: toIn(ssc.w), height: toIn(30) },
+      });
+    }
+  }
+  const connections = conns.map(c => ({
+    id: 'C-' + String(c.seq).padStart(3, '0'),
+    from: c.from,
+    to: c.to,
+    network: c.network,
+    class: c.cls,
+    color: c.network === 'power' ? '#c00000' : '#00b050',
+    label: c.harness || 'UNRELEASED',
+    gauge: c.gauge || '',
+    length_mm: c.length ?? c.routedLen ?? null,
+  }));
+  return JSON.stringify({
+    diagram_type: 'wiring',
+    paper: { size: 'A3', orientation: 'landscape', width_in: toIn(L.w), height_in: toIn(L.h) },
+    title: `${project.name || 'Wiring'} — Rack wiring diagram`,
+    components,
+    connections,
+  }, null, 2);
 }
 
 /* ============================================================

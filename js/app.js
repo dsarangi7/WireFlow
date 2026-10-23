@@ -388,6 +388,11 @@ function tabConfig(el, project, ctx) {
         `<div class="field inline"><label>${label}</label><input type="number" data-rule="${k}" value="${r[k]}"></div>`).join('')}
     </div>
     <div class="card">
+      <h3>Cable specification</h3>
+      <div class="field inline"><label>Power cable spec / gauge</label><input type="text" data-rule="powerGauge" data-type="str" value="${esc(r.powerGauge || '')}"></div>
+      <div class="field inline"><label>Communication cable spec / gauge</label><input type="text" data-rule="commGauge" data-type="str" value="${esc(r.commGauge || '')}"></div>
+    </div>
+    <div class="card">
       <h3>Length rules</h3>
       <div class="field inline"><label>R12 · Power deduction (mm)</label><input type="number" data-rule="powerDeduction" value="${r.powerDeduction}"></div>
       <label class="check"><input type="checkbox" data-rule="applyDeductionToComm" ${r.applyDeductionToComm ? 'checked' : ''}> Apply deduction to communication as well</label>
@@ -403,7 +408,9 @@ function tabConfig(el, project, ctx) {
     const rules = { ...r };
     el.querySelectorAll('[data-rule]').forEach(inp => {
       const k = inp.dataset.rule;
-      rules[k] = inp.type === 'checkbox' ? inp.checked : +inp.value;
+      rules[k] = inp.type === 'checkbox' ? inp.checked
+        : inp.dataset.type === 'str' ? inp.value.trim()
+        : +inp.value;
     });
     // Guard the release gate: an empty configuration can never produce a drawing.
     rules.strings = Math.max(1, Math.round(rules.strings) || 1);
@@ -428,6 +435,7 @@ async function tabNetlist(el, project, ctx) {
     <div><h2>Generated netlist</h2><p class="muted">${conns.length} connections · deterministic from rules R02–R11.</p></div>
     <div class="btn-row">
       <button class="btn btn-ghost" id="n-csv">Export CSV</button>
+      <button class="btn btn-ghost" id="n-json">Export JSON spec</button>
       <button class="btn btn-ghost" id="n-dxf">Export DXF</button>
       <button class="btn btn-ghost" id="n-scr">AutoCAD script (.scr)</button>
       <button class="btn btn-primary" id="n-vsdx">Export Visio (.vsdx)</button>
@@ -448,6 +456,7 @@ async function tabNetlist(el, project, ctx) {
   </table></div>`;
 
   el.querySelector('#n-csv').onclick = () => download(`${project.name || 'cable'}-schedule.csv`, scheduleCSV(conns, project), 'text/csv');
+  el.querySelector('#n-json').onclick = () => download(`${project.name || 'wiring'}-spec.json`, specJson(conns, project), 'application/json');
   el.querySelector('#n-dxf').onclick = () => download(`${project.name || 'wiring'}.dxf`, dxfExport(conns, project), 'application/dxf');
   el.querySelector('#n-scr').onclick = () => download(`${project.name || 'wiring'}.scr`, scrExport(conns, project), 'text/plain');
   el.querySelector('#n-vsdx').onclick = () => download(`${project.name || 'wiring'}.vsdx`, vsdxExport(conns, project), 'application/vnd.ms-visio.drawing.main+xml');
@@ -578,12 +587,13 @@ async function tabSchedule(el, project, ctx) {
     </div>
   </div>
   <div class="table-wrap"><table class="data">
-    <thead><tr><th>Cable ID</th><th>Network</th><th>Class</th><th>From → To</th><th>Harness P/N</th><th>Mfg length</th><th>Qty</th></tr></thead>
+    <thead><tr><th>Cable ID</th><th>Network</th><th>Class</th><th>From → To</th><th>Harness P/N</th><th>Cable spec</th><th>Mfg length</th><th>Qty</th></tr></thead>
     <tbody>${sched.map((r, i) => `<tr>
       <td class="mono">C-${String(i + 1).padStart(3, '0')}</td>
       <td><span class="net ${r.network}">${r.network}</span></td><td>${esc(r.cls)}</td>
       <td class="mono">${esc(r.from)} → ${esc(r.to)}</td>
       <td class="mono ${r.harness.startsWith('—') ? 'warn' : ''}">${esc(r.harness)}</td>
+      <td class="mono">${esc(r.gauge || '')}</td>
       <td>${r.length} mm</td><td>${r.qty}</td></tr>`).join('')}
     </tbody>
   </table></div>`;

@@ -44,7 +44,7 @@ function loadEngine() {
     'DEFAULT_RULES', 'SHEET_LAYERS', 'SHEET_W', 'SHEET_H', 'SHEET_UNIT_MM',
     'emptyProject', 'generateNetlist', 'runValidations', 'buildSchedule',
     'scheduleCSV', 'harnessCatalogue', 'sheetLayer', 'sheetTextWidth', 'sheetAscii',
-    'buildSheetLayout', 'renderDiagramSVG', 'dxfExport', 'scrExport',
+    'buildSheetLayout', 'renderDiagramSVG', 'dxfExport', 'scrExport', 'specJson',
   ];
   const factory = new Function(src + '\nreturn {' + exportNames.join(',') + '};');
   const E = factory();
@@ -759,6 +759,55 @@ for (const [label, proj, cc] of [['2x24', project, conns], ['6-string', sixProje
   vsdxEq(label + ' every central-directory entry walked', checked, n);
   vsdxEq(label + ' every entry is STORE with a valid CRC32', crcOk, true);
 }
+
+/* ============================================================
+ * 6. CABLE GAUGE + SKILL JSON SPEC
+ * ============================================================ */
+const gaugeEq = (label, a, b) => eq('GAUGE/SPEC ' + label, a, b);
+
+gaugeEq('rules carry default power gauge', typeof E.DEFAULT_RULES.powerGauge, 'string');
+gaugeEq('rules carry default comm gauge', typeof E.DEFAULT_RULES.commGauge, 'string');
+gaugeEq('every connection carries a non-empty gauge',
+  conns.every(c => typeof c.gauge === 'string' && c.gauge.length > 0), true);
+gaugeEq('power connections use the power gauge',
+  conns.filter(c => c.network === 'power').every(c => c.gauge === E.DEFAULT_RULES.powerGauge), true);
+gaugeEq('comm connections use the comm gauge',
+  conns.filter(c => c.network === 'comm').every(c => c.gauge === E.DEFAULT_RULES.commGauge), true);
+gaugeEq('schedule rows carry gauge through',
+  E.buildSchedule(conns).every(r => typeof r.gauge === 'string' && r.gauge.length > 0), true);
+gaugeEq('schedule CSV has a Cable spec header column',
+  E.scheduleCSV(conns, project).split('\r\n')[0].includes('"Cable spec"'), true);
+
+const spec = JSON.parse(E.specJson(conns, project));
+gaugeEq('spec declares diagram_type wiring', spec.diagram_type, 'wiring');
+gaugeEq('spec paper is A3 landscape in inches',
+  spec.paper.size === 'A3' && spec.paper.orientation === 'landscape' && Math.abs(spec.paper.width_in - 16.537) < 0.01 && Math.abs(spec.paper.height_in - 11.691) < 0.01, true);
+gaugeEq('spec has one component per module plus SSC and JB devices',
+  spec.components.length, 2 * 24 + 2 + 2);
+gaugeEq('spec components include SSC ids',
+  spec.components.some(c => c.id === 'SSC-1') && spec.components.some(c => c.id === 'SSC-2'), true);
+gaugeEq('spec components include module grid ids',
+  spec.components.some(c => c.id === 'S1:M1') && spec.components.some(c => c.id === 'S2:M24'), true);
+gaugeEq('spec component positions are in inches (plausible magnitude)',
+  spec.components.every(c => c.position.x >= 0 && c.position.x <= 17 && c.position.y >= 0 && c.position.y <= 12), true);
+gaugeEq('spec connection count matches netlist', spec.connections.length, conns.length);
+gaugeEq('spec connection ids are stable C-001..', spec.connections[0].id, 'C-001');
+gaugeEq('spec power connections are red', spec.connections.filter(c => c.network === 'power').every(c => c.color === '#c00000'), true);
+gaugeEq('spec comm connections are green', spec.connections.filter(c => c.network === 'comm').every(c => c.color === '#00b050'), true);
+gaugeEq('spec connections carry gauge and positive lengths',
+  spec.connections.every(c => c.gauge && c.length_mm > 0), true);
+gaugeEq('spec connections reference declared components (module/SSC/JB)',
+  (() => {
+    const ids = new Set(spec.components.map(c => c.id));
+    const resolve = ep => {
+      const segs = ep.split(':');
+      if (segs.length >= 2 && ids.has(segs[0] + ':' + segs[1])) return true; // S1:M1 module
+      const dev = segs[0];
+      const m = dev.match(/^S(\d+)-SSC$/);           // S1-SSC terminal -> SSC-1 block
+      return m ? ids.has('SSC-' + m[1]) : ids.has(dev); // else JB device
+    };
+    return spec.connections.every(k => resolve(k.from) && resolve(k.to));
+  })(), true);
 
 /* ============================================================
  * SUMMARY

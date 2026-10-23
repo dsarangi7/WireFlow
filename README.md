@@ -18,7 +18,11 @@ rule engine implementing the Wiring Diagram Tool Engineering Rules (R01–R12, V
 - **Cable length model** — cross-rack segmented lengths (source + over-top span +
   destination + allowance), power deduction and rounding rules
 - **Export**: `.vsdx` (editable Visio, 12 layers), `.dxf` (R12, opens in AutoCAD),
-  `.scr` (AutoCAD script), CSV cable schedule/BOM
+  `.scr` (AutoCAD script), CSV cable schedule/BOM, and a machine-readable
+  **JSON layout spec** for downstream automation tools
+- **Cable specification** — every harness carries a cable spec/gauge (e.g.
+  `63A/125V, 150 mm²` power, `Cat5, 25 AWG` communication), configurable per
+  project and flowing through the netlist, schedule, CSV, VSDX and JSON spec
 - **Autodesk Platform Services (optional)** — upload DWG references, translate via
   Model Derivative, inspect in the embedded APS Viewer (bring your own APS app credentials)
 - **Cloud backend** — WorkBuddy Cloud Service: end-user auth (email OTP), per-user data
@@ -35,7 +39,7 @@ js/zip.js           Minimal store-method ZIP writer (for .vsdx packaging)
 js/vsdx.js          Visio .vsdx generator (OPC package, 12 drawing layers)
 js/aps.js           Autodesk APS client (token, OSS upload, translate, viewer)
 js/app.js           Router, landing page, auth (email OTP), dashboard, workspace UI
-tests/drawing.test.js  169-assertion regression suite (node tests/drawing.test.js)
+tests/drawing.test.js  188-assertion regression suite (node tests/drawing.test.js)
 ```
 
 ## Running locally
