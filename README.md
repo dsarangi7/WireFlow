@@ -38,10 +38,12 @@ js/config.js        Cloud service public config (endpoint + publishable key)
 js/engine.js        Deterministic wiring engine + sheet layout + SVG/DXF/SCR renderers
 js/zip.js           Minimal store-method ZIP writer (for .vsdx packaging)
 js/vsdx.js          Visio .vsdx generator (OPC package, 12 layers, 1D wires, logo, Notes page)
+visio-bridge/visio_bridge.ps1  Visio COM bridge: draws spec wires into the house template (Windows + Visio)
+visio-bridge/RUN-BRIDGE.cmd    One-click demo runner for the Visio bridge
 docs/visio-rack-wiring-skill.md  Visio production workflow learned from the AYK template
 js/aps.js           Autodesk APS client (token, OSS upload, translate, viewer)
 js/app.js           Router, landing page, auth (email OTP), dashboard, workspace UI
-tests/drawing.test.js  202-assertion regression suite (node tests/drawing.test.js)
+tests/drawing.test.js  208-assertion regression suite (node tests/drawing.test.js)
 ```
 
 ## Running locally
@@ -61,7 +63,7 @@ deterministic engine outputs (netlist → validation → exports all run client-
 
 ```bash
 node tests/drawing.test.js
-# PASSED: 169  FAILED: 0
+# PASSED: 208  FAILED: 0
 ```
 
 Covers: netlist/validation regression, release-gate matrix, sheet bounds at extreme

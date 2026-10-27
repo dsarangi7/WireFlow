@@ -861,6 +861,34 @@ gaugeEq('spec connections reference declared components (module/SSC/JB)',
     return spec.connections.every(k => resolve(k.from) && resolve(k.to));
   })(), true);
 
+/* ---- spec wires (Visio COM bridge input) ---- */
+const WIRE_LAYERS = ['POWER', 'SUBPWR', 'COMM', 'COMMGRY', 'TERM'];
+gaugeEq('spec has a non-empty wires array', Array.isArray(spec.wires) && spec.wires.length > 0, true);
+gaugeEq('spec wires all use a declared wire layer',
+  spec.wires.every(w => WIRE_LAYERS.includes(w.layer)), true);
+gaugeEq('spec wire coordinates are finite and on the A3 sheet (inches, Y up)',
+  spec.wires.every(w =>
+    [w.x1, w.y1, w.x2, w.y2].every(v => Number.isFinite(v)) &&
+    w.x1 >= 0 && w.x1 <= 16.6 && w.x2 >= 0 && w.x2 <= 16.6 &&
+    w.y1 >= 0 && w.y1 <= 11.7 && w.y2 >= 0 && w.y2 <= 11.7), true);
+gaugeEq('spec wire_color_map matches the house convention',
+  spec.wire_color_map.POWER === '#ff0000' && spec.wire_color_map.SUBPWR === '#ff0000' &&
+  spec.wire_color_map.COMM === '#00b050' && spec.wire_color_map.TERM === '#00b050', true);
+gaugeEq('spec wire count equals line primitives on the wire layers',
+  spec.wires.length,
+  E.buildSheetLayout(project, conns).primitives.filter(
+    p => p.type === 'line' && WIRE_LAYERS.includes(p.layer)).length);
+gaugeEq('spec wires are Y-flipped against the sheet layout (top rail -> large Y)',
+  (() => {
+    const lay = E.buildSheetLayout(project, conns);
+    const lines = lay.primitives.filter(p => p.type === 'line' && WIRE_LAYERS.includes(p.layer));
+    // pick the wire whose sheet-space y1 is the smallest; its spec y must be the largest
+    const top = lines.reduce((a, b) => (Math.min(b.y1, b.y2) < Math.min(a.y1, a.y2) ? b : a));
+    const wire = spec.wires[lines.indexOf(top)];
+    return Math.abs(wire.y1 - (1188 - Math.min(top.y1, top.y2)) * 0.25 / 25.4) < 1e-6 ||
+           Math.abs(wire.y2 - (1188 - Math.min(top.y1, top.y2)) * 0.25 / 25.4) < 1e-6;
+  })(), true);
+
 /* ============================================================
  * SUMMARY
  * ============================================================ */

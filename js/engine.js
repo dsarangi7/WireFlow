@@ -310,7 +310,29 @@ function scheduleCSV(conns, project) {
  * skill format: components in inches, connections with colour,
  * gauge and length. Downstream tools (Visio skills, custom
  * generators) can consume this without knowing the engine.
+ *
+ * The `wires` array carries the actual drawn wire geometry (line
+ * primitives on the wire layers POWER / SUBPWR / COMM / COMMGRY /
+ * TERM) in inches with Y measured from the BOTTOM of the sheet —
+ * Visio's native orientation — so the Visio COM bridge can draw
+ * them without any coordinate knowledge of the engine. The
+ * accompanying `wire_color_map` mirrors the house-drawing colour
+ * convention (power red, communication green) so downstream
+ * tools need no hardcoded colours.
  */
+
+/** Wire layers whose line primitives are exported as spec wires. */
+const SPEC_WIRE_LAYERS = ['POWER', 'SUBPWR', 'COMM', 'COMMGRY', 'TERM'];
+
+/** House-convention colours per wire layer (Visio bridge input). */
+const SPEC_WIRE_COLOR_MAP = {
+  POWER: '#ff0000',
+  SUBPWR: '#ff0000',
+  COMM: '#00b050',
+  COMMGRY: '#6b7280',
+  TERM: '#00b050',
+};
+
 function specJson(conns, project) {
   const L = buildSheetLayout(project, conns);
   const unitsPerMm = 4; // 1 sheet unit = 0.25 mm
@@ -360,12 +382,29 @@ function specJson(conns, project) {
     gauge: c.gauge || '',
     length_mm: c.length ?? c.routedLen ?? null,
   }));
+  /* Wire geometry: only line primitives on the wire layers, converted from
+     sheet units (y down) to inches (y up from the bottom-left corner) with
+     6-decimal rounding so the Visio bridge gets stable coordinates. */
+  const wireToIn = u => Math.round((u / unitsPerMm / 25.4) * 1e6) / 1e6;
+  const wires = [];
+  for (const pr of L.primitives) {
+    if (pr.type !== 'line' || !SPEC_WIRE_LAYERS.includes(pr.layer)) continue;
+    wires.push({
+      layer: pr.layer,
+      x1: wireToIn(pr.x1),
+      y1: Math.round(((SHEET_H - pr.y1) * SHEET_UNIT_MM / 25.4) * 1e6) / 1e6,
+      x2: wireToIn(pr.x2),
+      y2: Math.round(((SHEET_H - pr.y2) * SHEET_UNIT_MM / 25.4) * 1e6) / 1e6,
+    });
+  }
   return JSON.stringify({
     diagram_type: 'wiring',
     paper: { size: 'A3', orientation: 'landscape', width_in: toIn(L.w), height_in: toIn(L.h) },
     title: `${project.name || 'Wiring'} — Rack wiring diagram`,
     components,
     connections,
+    wires,
+    wire_color_map: { ...SPEC_WIRE_COLOR_MAP },
   }, null, 2);
 }
 
