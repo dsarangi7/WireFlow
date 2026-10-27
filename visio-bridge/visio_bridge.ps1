@@ -1,7 +1,7 @@
 # ============================================================
-# WireFlow -> Visio COM bridge (visio_bridge.ps1)
+# AYK WireFlow -> Visio COM bridge (visio_bridge.ps1)
 # ------------------------------------------------------------
-# Draws WireFlow spec wires into the house Visio template using
+# Draws AYK WireFlow spec wires into the house Visio template using
 # the Visio COM API. Zero dependencies beyond Windows PowerShell
 # 5.1 and a local Visio installation.
 #
@@ -15,7 +15,7 @@
 #     (works on a machine without Visio installed).
 #   * Otherwise the template is copied to -Out first so the
 #     embedded CAD picture / logo / masters survive, page 1 of the
-#     copy is opened, a 'WireFlow' layer is created (if missing)
+#     copy is opened, an 'AYK WireFlow' layer is created (if missing)
 #     and every spec wire is drawn as a native 1D line, coloured
 #     per spec.wire_color_map.
 #
@@ -84,7 +84,7 @@ try {
 $wireList = @()
 if ($specDoc.wires) { $wireList = @($specDoc.wires) }
 if ($wireList.Count -eq 0) {
-    Fail "spec has no wires (regenerate the spec with a WireFlow build whose specJson exports wires)"
+    Fail "spec has no wires (regenerate the spec with a AYK WireFlow build whose specJson exports wires)"
 }
 
 # colour map from the spec, falling back to the house defaults
@@ -104,15 +104,27 @@ $badCoord = 0
 foreach ($w in $wireList) {
     $lay = [string]$w.layer
     if ($layerCounts.ContainsKey($lay)) { $layerCounts[$lay]++ } else { $layerCounts[$lay] = 1 }
-    foreach ($coord in @($w.x1, $w.y1, $w.x2, $w.y2)) {
+    # X bbox tracks only x1/x2; Y bbox tracks only y1/y2. Mixing them
+    # pollutes both axes (QA bug report: Y range became a copy of X).
+    $xs = @(); $ys = @(); $ok = $true
+    foreach ($coord in @($w.x1, $w.x2)) {
         $v = 0.0
         if (-not [double]::TryParse([string]$coord, [Globalization.NumberStyles]::Float,
-                [Globalization.CultureInfo]::InvariantCulture, [ref]$v)) {
-            $badCoord++
-            continue
-        }
+                [Globalization.CultureInfo]::InvariantCulture, [ref]$v)) { $ok = $false; break }
+        $xs += $v
+    }
+    foreach ($coord in @($w.y1, $w.y2)) {
+        $v = 0.0
+        if (-not [double]::TryParse([string]$coord, [Globalization.NumberStyles]::Float,
+                [Globalization.CultureInfo]::InvariantCulture, [ref]$v)) { $ok = $false; break }
+        $ys += $v
+    }
+    if (-not $ok) { $badCoord++; continue }
+    foreach ($v in $xs) {
         if ($v -lt $minX) { $minX = $v }
         if ($v -gt $maxX) { $maxX = $v }
+    }
+    foreach ($v in $ys) {
         if ($v -lt $minY) { $minY = $v }
         if ($v -gt $maxY) { $maxY = $v }
     }
@@ -143,7 +155,7 @@ function Map-Y([double]$Value) {
 
 # ---------------- 2. dry run (no COM, no Visio required) ----------------
 if ($DryRun) {
-    Write-Host 'WireFlow Visio bridge - DRY RUN (nothing will be drawn)'
+    Write-Host 'AYK WireFlow Visio bridge - DRY RUN (nothing will be drawn)'
     Write-Host ("  spec          : " + (Resolve-Path -LiteralPath $Spec).Path)
     Write-Host ("  template      : $Template")
     Write-Host ("  output        : $Out")

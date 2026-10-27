@@ -1,5 +1,5 @@
 /* ============================================================
- * WireFlow — minimal ZIP writer (store method, no compression)
+ * AYK WireFlow — minimal ZIP writer (store method, no compression)
  * Enough to package OPC files (.vsdx) fully client-side.
  * ============================================================ */
 

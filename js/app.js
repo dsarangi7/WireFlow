@@ -73,7 +73,7 @@ function renderLanding() {
   app.innerHTML = `
   <header class="landing-nav">
     <div class="nav-inner">
-      <div class="logo"><svg width="26" height="26" viewBox="0 0 24 24" fill="none"><path d="M3 7h6l2-4 2 12 2-4h6" stroke="#f97316" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/><rect x="2" y="2" width="20" height="20" rx="5" stroke="#1e3a5f" stroke-width="1.6"/></svg> WireFlow</div>
+      <div class="logo"><svg width="26" height="26" viewBox="0 0 24 24" fill="none"><path d="M3 7h6l2-4 2 12 2-4h6" stroke="#f97316" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/><rect x="2" y="2" width="20" height="20" rx="5" stroke="#1e3a5f" stroke-width="1.6"/></svg> AYK WireFlow</div>
       <nav><a href="#features">Features</a><a href="#workflow">Workflow</a><a href="#rules">Rule engine</a><a href="#pricing">Pricing</a></nav>
       <div class="nav-cta">
         ${session ? `<a class="btn btn-ghost" href="#/app">Open app</a>` : `<a class="btn btn-ghost" href="#/login">Sign in</a><a class="btn btn-primary" href="#/login">Start free</a>`}
@@ -85,7 +85,7 @@ function renderLanding() {
     <div class="hero-text">
       <div class="hero-badge">Deterministic wiring automation · Marine battery racks</div>
       <h1>Ship-ready wiring diagrams.<br><span class="accent">Generated, not drawn.</span></h1>
-      <p>WireFlow turns your rack configuration into complete power &amp; communication wiring diagrams, cable schedules and BOMs — governed by your own approved engineering rules, and pushed straight into AutoCAD through the Autodesk Platform Services.</p>
+      <p>AYK WireFlow turns your rack configuration into complete power &amp; communication wiring diagrams, cable schedules and BOMs — governed by your own approved engineering rules, and pushed straight into AutoCAD through the Autodesk Platform Services.</p>
       <div class="hero-actions">
         <a class="btn btn-primary btn-lg" href="#/login">Create your account</a>
         <a class="btn btn-ghost btn-lg" href="#workflow">See how it works</a>
@@ -147,7 +147,7 @@ function renderLanding() {
   </section>
 
   <footer class="footer">
-    <div>© 2026 WireFlow · Wiring diagram automation for marine battery systems</div>
+    <div>© 2026 AYK WireFlow · Wiring diagram automation for marine battery systems</div>
     <div class="footer-links"><a href="#features">Features</a><a href="#pricing">Pricing</a><a href="#/login">Sign in</a></div>
   </footer>`;
 
@@ -163,7 +163,7 @@ function renderLogin(mode = 'landing') {
   app.innerHTML = `
   <div class="auth-wrap">
     <div class="auth-card">
-      <div class="logo big"><svg width="30" height="30" viewBox="0 0 24 24" fill="none"><path d="M3 7h6l2-4 2 12 2-4h6" stroke="#f97316" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/><rect x="2" y="2" width="20" height="20" rx="5" stroke="#1e3a5f" stroke-width="1.6"/></svg> WireFlow</div>
+      <div class="logo big"><svg width="30" height="30" viewBox="0 0 24 24" fill="none"><path d="M3 7h6l2-4 2 12 2-4h6" stroke="#f97316" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/><rect x="2" y="2" width="20" height="20" rx="5" stroke="#1e3a5f" stroke-width="1.6"/></svg> AYK WireFlow</div>
       <h2>Sign in or create an account</h2>
       <p class="auth-sub">We'll email you a one-time verification code. No password needed.</p>
       <div class="field"><label>Work email</label><input id="auth-email" type="email" placeholder="you@company.com" autocomplete="email"></div>
@@ -223,7 +223,7 @@ function shell(content, active) {
   app.innerHTML = `
   <div class="shell">
     <aside class="side">
-      <a class="logo side-logo" href="#/"><svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M3 7h6l2-4 2 12 2-4h6" stroke="#f97316" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/><rect x="2" y="2" width="20" height="20" rx="5" stroke="#1e3a5f" stroke-width="1.6"/></svg> WireFlow</a>
+      <a class="logo side-logo" href="#/"><svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M3 7h6l2-4 2 12 2-4h6" stroke="#f97316" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/><rect x="2" y="2" width="20" height="20" rx="5" stroke="#1e3a5f" stroke-width="1.6"/></svg> AYK WireFlow</a>
       <nav class="side-nav">
         <a href="#/app" class="${active === 'dash' ? 'on' : ''}">◫ Projects</a>
         <a href="#/integrations" class="${active === 'int' ? 'on' : ''}">⚡ Autodesk APS</a>
@@ -353,7 +353,7 @@ async function renderProjectPage(id) {
   async function switchTab(i) {
     document.querySelectorAll('.tab').forEach(t => t.classList.toggle('on', +t.dataset.i === i));
     body.innerHTML = `<div class="loading">…</div>`;
-    await views[i](body, project, { saveProject, getNetlist, getValidations });
+    await views[i](body, project, { saveProject, getNetlist, getValidations, loadUnderlay });
   }
   async function getNetlist(force) {
     if (!netlist || force) netlist = generateNetlist(project);
@@ -364,9 +364,40 @@ async function renderProjectPage(id) {
     return validations;
   }
 
+  /* Fetch the imported rack drawing and prepare it for the renderers. */
+  async function loadUnderlay() {
+    project.underlay = null;
+    if (!project.underlay_url) return;
+    try {
+      const { data, error } = await cloud.storage.createSignedUrl(project.underlay_url, 600);
+      if (error || !data) return;
+      const url = data.url || data;
+      const kind = project.underlay_kind || 'image';
+      const fit = {
+        x: project.underlay_x ?? 120, y: project.underlay_y ?? 280,
+        w: project.underlay_w ?? 1000, h: project.underlay_h ?? 640,
+      };
+      if (kind === 'dxf') {
+        const res = await fetch(url);
+        const parsed = rackParseDxf(await res.text());
+        project.underlay = { kind: 'dxf', prims: rackFitDxf(parsed, fit) };
+      } else {
+        const res = await fetch(url);
+        const blob = await res.blob();
+        const src = await new Promise((ok, fail) => {
+          const fr = new FileReader();
+          fr.onload = () => ok(fr.result); fr.onerror = fail;
+          fr.readAsDataURL(blob);
+        });
+        project.underlay = { kind: 'image', src, ...fit };
+      }
+    } catch (e) { /* sheet renders without the underlay */ }
+  }
+
   document.getElementById('tabs').addEventListener('click', e => {
     const b = e.target.closest('.tab'); if (b) switchTab(+b.dataset.i);
   });
+  await loadUnderlay();
   await switchTab(0);
 }
 
@@ -391,6 +422,22 @@ function tabConfig(el, project, ctx) {
       <h3>Cable specification</h3>
       <div class="field inline"><label>Power cable spec / gauge</label><input type="text" data-rule="powerGauge" data-type="str" value="${esc(r.powerGauge || '')}"></div>
       <div class="field inline"><label>Communication cable spec / gauge</label><input type="text" data-rule="commGauge" data-type="str" value="${esc(r.commGauge || '')}"></div>
+    </div>
+    <div class="card">
+      <h3>Rack drawing (underlay)</h3>
+      <p class="muted small">Import your own rack drawing and AYK WireFlow draws the wiring over it. Supports DXF (AutoCAD "Save as DXF"), PNG, JPG and SVG. Binary DWG needs the Autodesk translation — use the Drawings tab for that.</p>
+      <div class="field inline"><label>Status</label><span class="muted" id="u-status">${project.underlay_url ? esc('Imported: ' + (project.underlay_kind || 'image')) : 'No rack drawing imported'}</span></div>
+      <input type="file" id="u-file" accept=".dxf,.png,.jpg,.jpeg,.svg" style="display:none">
+      <div class="btn-row">
+        <button class="btn btn-ghost" id="u-pick">Import rack drawing…</button>
+        <button class="btn btn-ghost" id="u-align">Align to module grid</button>
+        <button class="btn btn-ghost" id="u-remove" ${project.underlay_url ? '' : 'disabled'}>Remove</button>
+      </div>
+      <div class="field inline"><label>Fit X (sheet units)</label><input type="number" id="u-x" value="${project.underlay_x ?? 120}"></div>
+      <div class="field inline"><label>Fit Y</label><input type="number" id="u-y" value="${project.underlay_y ?? 280}"></div>
+      <div class="field inline"><label>Fit width</label><input type="number" id="u-w" value="${project.underlay_w ?? 1000}"></div>
+      <div class="field inline"><label>Fit height</label><input type="number" id="u-h" value="${project.underlay_h ?? 640}"></div>
+      <button class="btn btn-ghost" id="u-apply">Apply alignment</button>
     </div>
     <div class="card">
       <h3>Length rules</h3>
@@ -424,6 +471,65 @@ function tabConfig(el, project, ctx) {
       config: { ...(project.config || {}), rules },
     });
     if (ok) { toast('Configuration saved. Regenerate the netlist to apply.'); el.querySelector('#c-saved').textContent = 'Saved ✓'; }
+  };
+
+  /* ---- rack underlay handlers ---- */
+  const uFile = el.querySelector('#u-file');
+  const uStatus = el.querySelector('#u-status');
+  const fitFromInputs = () => ({
+    underlay_x: Math.round(+el.querySelector('#u-x').value) || 120,
+    underlay_y: Math.round(+el.querySelector('#u-y').value) || 280,
+    underlay_w: Math.max(50, Math.round(+el.querySelector('#u-w').value)) || 1000,
+    underlay_h: Math.max(50, Math.round(+el.querySelector('#u-h').value)) || 640,
+  });
+  const afterUnderlayChange = async msg => {
+    await ctx.loadUnderlay();
+    uStatus.textContent = project.underlay_url ? `Imported: ${project.underlay_kind || 'image'}` : 'No rack drawing imported';
+    toast(msg + ' Open the Diagram tab to see it under the wiring.');
+  };
+  el.querySelector('#u-pick').onclick = () => uFile.click();
+  uFile.addEventListener('change', async () => {
+    const file = uFile.files[0]; if (!file) return;
+    try {
+      if (!session) throw new Error('Sign in required');
+      if (/\.dwg$/i.test(file.name)) {
+        throw new Error('Binary DWG needs Autodesk translation. In AutoCAD use "Save As" -> DXF, then import the DXF here.');
+      }
+      const isDxf = /\.dxf$/i.test(file.name);
+      uStatus.textContent = 'Uploading rack drawing…';
+      const path = cloud.storage.userPath(session.user.id, `underlay/${Date.now()}_${file.name}`);
+      const up = await cloud.storage.upload(path, file, { contentType: file.type || 'application/octet-stream' });
+      if (up.error) throw up.error;
+      const fit = fitFromInputs();
+      const ok = await ctx.saveProject({ underlay_url: path, underlay_kind: isDxf ? 'dxf' : 'image', ...fit });
+      if (!ok) throw new Error('Could not save the underlay reference');
+      el.querySelector('#u-remove').disabled = false;
+      await afterUnderlayChange('Rack drawing imported.');
+    } catch (e) {
+      uStatus.textContent = '';
+      toast(e.message, 'error');
+    } finally { uFile.value = ''; }
+  });
+  el.querySelector('#u-align').onclick = async () => {
+    const conns = await ctx.getNetlist(false);
+    const fit = rackDefaultFit(buildSheetLayout(project, conns));
+    el.querySelector('#u-x').value = fit.x; el.querySelector('#u-y').value = fit.y;
+    el.querySelector('#u-w').value = fit.w; el.querySelector('#u-h').value = fit.h;
+    const ok = await ctx.saveProject({ underlay_x: fit.x, underlay_y: fit.y, underlay_w: fit.w, underlay_h: fit.h });
+    if (ok) await afterUnderlayChange('Underlay aligned to the module grid.');
+  };
+  el.querySelector('#u-apply').onclick = async () => {
+    const ok = await ctx.saveProject(fitFromInputs());
+    if (ok) await afterUnderlayChange('Alignment applied.');
+  };
+  el.querySelector('#u-remove').onclick = async () => {
+    const ok = await ctx.saveProject({ underlay_url: null, underlay_kind: null });
+    if (ok) {
+      project.underlay = null;
+      uStatus.textContent = 'No rack drawing imported';
+      el.querySelector('#u-remove').disabled = true;
+      toast('Rack drawing removed.');
+    }
   };
 }
 

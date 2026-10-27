@@ -444,6 +444,7 @@ const SHEET_LAYERS = [
   { name: 'DEVICE',  dxf: 8,  stroke: '#94a3b8', width: 1.0 },
   { name: 'SSC',     dxf: 5,  stroke: '#4f46e5', width: 1.4 },
   { name: 'TERM',    dxf: 3,  stroke: '#16a34a', width: 1.4 },
+  { name: 'RACK',    dxf: 8,  stroke: '#8a94a6', width: 0.8 },
 ];
 
 const SHEET_W = 1680;          /* sheet width  in units (420 mm) */
@@ -620,6 +621,23 @@ function buildSheetLayout(project, conns) {
     });
   }
 
+  /* ---------------- rack underlay (imported drawing) ----------------
+     project.underlay is prepared by the app:
+       { kind: 'dxf',   prims: [sheet-coordinate primitives] }  (parser output)
+       { kind: 'image', src: dataURL, x, y, w, h }              (sheet units)
+     Emitted FIRST so everything else draws on top of the rack. */
+  let underlayImage = null;
+  const u = p.underlay;
+  if (u && u.kind === 'dxf' && Array.isArray(u.prims)) {
+    for (const rp of u.prims) {
+      if (!rp || !rp.type) continue;
+      primitives.push(Object.assign({ layer: 'RACK' }, rp));
+    }
+  } else if (u && u.kind === 'image' && u.src) {
+    underlayImage = { src: String(u.src), x: +u.x || 0, y: +u.y || 0,
+      w: +u.w || 0, h: +u.h || 0 };
+  }
+
   /* ---------------- sheet frames + zones ---------------- */
   const OUT = { x: 16, y: 16, w: SHEET_W - 32, h: SHEET_H - 32 };
   const IN = { x: 42, y: 42, w: SHEET_W - 84, h: SHEET_H - 88 };
@@ -712,8 +730,13 @@ function buildSheetLayout(project, conns) {
           s: s, c: c, r: r, m: m,
           x: colX, y: my, w: colW, h: modH,
           ty: my + modH - termInset,
-          tPower: colX + colW * 0.12,
-          tComm: colX + colW * 0.88,
+          /* Physical rack convention (AYK): communication panel on the LEFT
+             face of every module - sockets S (south) then N (north) left to
+             right; power panel on the RIGHT face - Negative then Positive
+             left to right. tPower/tComm are the tick anchors, centred on
+             each panel's terminal pair. */
+          tPower: colX + colW * 0.77,
+          tComm: colX + colW * 0.23,
           label: 'S' + (s + 1) + ':M' + m,
         });
       }
@@ -745,10 +768,13 @@ function buildSheetLayout(project, conns) {
     addRect('MOD', mo.x, mo.y, mo.w, mo.h, { fill: '#ffffff', width: 1.0 });
   }
 
-  /* ---------------- cable rails (power left/top, comm right/bottom) ---------------- */
+  /* ------- cable rails (comm left panel, power right panel) -------
+     Power trunk runs along the top and feeds each column's power rail on
+     the RIGHT of the modules; communication trunk runs along the bottom
+     and feeds each column's comm rail on the LEFT. */
   const powerTrunkStart = gridX - 8;
-  const powerTrunkEnd = gridX + (COLS - 1) * (colW + colGap) - 8;
-  const commTrunkStart = gridX + colW + 8;
+  const powerTrunkEnd = gridX + (COLS - 1) * (colW + colGap) + colW + 8;
+  const commTrunkStart = gridX - 8;
 
   for (const b of blocks) {
     const ssc = sscList[b.s];
@@ -781,8 +807,8 @@ function buildSheetLayout(project, conns) {
 
     for (let c = 0; c < COLS; c++) {
       const colX = gridX + c * (colW + colGap);
-      const railPowerX = colX - 8;
-      const railCommX = colX + colW + 8;
+      const railCommX = colX - 8;       /* comm rail on the LEFT panel side */
+      const railPowerX = colX + colW + 8; /* power rail on the RIGHT panel side */
       const colMods = mods.filter(function (mo) { return mo.s === b.s && mo.c === c; });
       if (!colMods.length) continue;
       const firstTy = colMods[0].ty;
@@ -796,11 +822,20 @@ function buildSheetLayout(project, conns) {
     }
   }
 
-  /* ---------------- module terminals + labels ---------------- */
+  /* ------------- module terminals + labels (physical convention) -------------
+     Left panel: comm sockets S (south) then N (north). Right panel: power
+     sockets Negative then Positive. */
+  const termFont = sheetClampNum(termR * 1.7, 4.5, 8);
   for (const mo of mods) {
-    const fractions = [0.12, 0.34, 0.66, 0.88];
-    for (let t = 0; t < fractions.length; t++) {
-      addCircle('TERM', mo.x + mo.w * fractions[t], mo.ty, termR, { fill: '#ffffff' });
+    const sockets = [
+      { fx: 0.12, t: 'S' }, { fx: 0.34, t: 'N' },
+      { fx: 0.66, t: '-' }, { fx: 0.88, t: '+' },
+    ];
+    for (const sk of sockets) {
+      const sx = mo.x + mo.w * sk.fx;
+      addCircle('TERM', sx, mo.ty, termR, { fill: '#ffffff' });
+      addText('TEXT', sx, mo.ty + termR + termFont * 0.9, termFont, sk.t,
+        { anchor: 'middle', cls: 'svg-term' });
     }
     addText('TEXT', mo.x + mo.w / 2, mo.y + modH / 2 + modFont * 0.36, modFont, mo.label,
       { anchor: 'middle', bold: true, cls: 'svg-mod' });
@@ -884,7 +919,7 @@ function buildSheetLayout(project, conns) {
     { label: 'SIZE', value: 'A3', w: 90 },
     { label: 'SHEET', value: '1/1', w: 90 },
     { label: 'DATE', value: isoDate, w: 130 },
-    { label: 'DRAWN BY', value: 'WireFlow Generator', w: 150 },
+    { label: 'DRAWN BY', value: 'AYK WireFlow', w: 150 },
   ];
   let fx = tb.x;
   for (const f of fields) {
@@ -930,6 +965,7 @@ function buildSheetLayout(project, conns) {
     modules: mods,
     blocks: blocks,
     ssc: sscList,
+    underlayImage: underlayImage,
     meta: {
       title: docTitle,
       drawingNo: p.drawing_no || 'DWG-0000',
@@ -1003,6 +1039,12 @@ function renderDiagramSVG(project, conns) {
   parts.push('<rect x="0" y="0" width="' + L.w + '" height="' + L.h + '" fill="#e7ecf3"/>');
   parts.push('<rect x="' + L.paper.x + '" y="' + L.paper.y + '" width="' + L.paper.w +
     '" height="' + L.paper.h + '" fill="#ffffff" stroke="#cbd5e1" stroke-width="1"/>');
+  if (L.underlayImage && L.underlayImage.w > 0 && L.underlayImage.h > 0) {
+    const im = L.underlayImage;
+    parts.push('<image href="' + sheetEsc(im.src) + '" x="' + im.x + '" y="' + im.y +
+      '" width="' + im.w + '" height="' + im.h +
+      '" preserveAspectRatio="none" opacity="0.95"/>');
+  }
   for (let i = 0; i < L.primitives.length; i++) {
     parts.push(sheetSvgPrimitive(L.primitives[i]));
   }

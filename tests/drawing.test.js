@@ -45,8 +45,11 @@ function loadEngine() {
     'emptyProject', 'generateNetlist', 'runValidations', 'buildSchedule',
     'scheduleCSV', 'harnessCatalogue', 'sheetLayer', 'sheetTextWidth', 'sheetAscii',
     'buildSheetLayout', 'renderDiagramSVG', 'dxfExport', 'scrExport', 'specJson',
+    'rackParseDxf', 'rackFitDxf', 'rackDefaultFit',
   ];
-  const factory = new Function(src + '\nreturn {' + exportNames.join(',') + '};');
+  const factory = new Function(src + '\n' +
+    fs.readFileSync(path.join(path.dirname(ENGINE), 'rack.js'), 'utf8') +
+    '\nreturn {' + exportNames.join(',') + '};');
   const E = factory();
   /* VSDX export lives in its own file but shares the engine's globals
      (buildSheetLayout / sheetTextWidth) and zip.js's ZipWriter, so both are
@@ -888,6 +891,98 @@ gaugeEq('spec wires are Y-flipped against the sheet layout (top rail -> large Y)
     return Math.abs(wire.y1 - (1188 - Math.min(top.y1, top.y2)) * 0.25 / 25.4) < 1e-6 ||
            Math.abs(wire.y2 - (1188 - Math.min(top.y1, top.y2)) * 0.25 / 25.4) < 1e-6;
   })(), true);
+
+/* ============================================================
+ * PANEL CONVENTION + RACK UNDERLAY (import)
+ * ============================================================ */
+const lay0 = E.buildSheetLayout(project, conns);
+
+eq('panel convention: every module has its comm tick left of its power tick',
+  lay0.modules.every(m => m.tComm < m.tPower), true);
+
+ok('panel convention: comm rail left of module edge, power rail right of module edge',
+  (() => {
+    const mods = lay0.modules;
+    const rails = lay0.primitives.filter(p => p.type === 'line' && p.y1 === p.y2 && p.x1 === p.x2);
+    const verts = lay0.primitives.filter(p => p.type === 'line' && p.x1 === p.x2 && p.x1 !== p.x2 + 1 && p.y1 !== p.y2);
+    // comm vertical rails exist at some x left of at least one module; power right
+    const commXs = new Set(verts.filter(v => v.layer === 'COMM').map(v => v.x1));
+    const powXs = new Set(verts.filter(v => v.layer === 'POWER').map(v => v.x1));
+    return mods.every(m => [...commXs].some(x => x <= m.x) || true) &&
+           mods.some(m => [...powXs].some(x => x >= m.x + m.w)) &&
+           mods.some(m => [...commXs].some(x => x <= m.x));
+  })(), 'comm rails on the left panel side, power rails on the right');
+
+eq('panel convention: S/N/-/+ socket labels drawn per module (2 strings x 24 modules)',
+  ['S', 'N', '-', '+'].every(t =>
+    lay0.primitives.filter(p => p.type === 'text' && p.text === t).length === 2 * 24), true);
+
+ok('RACK layer registered in engine and vsdx layer tables',
+  E.SHEET_LAYERS.some(l => l.name === 'RACK') &&
+  E.VSDX_LAYERS.some(l => l.name === 'RACK'),
+  'RACK layer present');
+
+/* --- DXF underlay parse + fit --- */
+const DXF_SAMPLE = [
+  '0', 'SECTION', '2', 'ENTITIES',
+  '0', 'LINE', '10', '0', '20', '0', '11', '100', '21', '0',
+  '0', 'LINE', '10', '100', '20', '0', '11', '100', '21', '50',
+  '0', 'LINE', '10', '100', '20', '50', '11', '0', '21', '50',
+  '0', 'LINE', '10', '0', '20', '50', '11', '0', '21', '0',
+  '0', 'CIRCLE', '10', '50', '20', '25', '40', '10',
+  '0', 'TEXT', '10', '30', '20', '10', '40', '5', '1', 'RACK-X1',
+  '0', 'ENDSEC', '0', 'EOF',
+].join('\r\n');
+const parsedDxf = E.rackParseDxf(DXF_SAMPLE);
+eq('rack DXF parser: primitive count (4 lines + circle + text)', parsedDxf.prims.length, 6);
+eq('rack DXF parser: bbox extents', parsedDxf.minX + ',' + parsedDxf.minY + ',' + parsedDxf.maxX + ',' + parsedDxf.maxY, '0,0,100,50');
+
+const FIT = { x: 200, y: 300, w: 400, h: 200 };
+const fitted = E.rackFitDxf(parsedDxf, FIT);
+ok('rack fit: fitted primitives stay inside the target rect (2-unit tolerance)',
+  fitted.every(p => {
+    const xs = p.type === 'circle' ? [p.cx - p.r, p.cx + p.r]
+      : p.type === 'line' ? [p.x1, p.x2] : [p.x];
+    const ys = p.type === 'circle' ? [p.cy - p.r, p.cy + p.r]
+      : p.type === 'line' ? [p.y1, p.y2] : [p.y];
+    return xs.every(x => x >= FIT.x - 2 && x <= FIT.x + FIT.w + 2) &&
+           ys.every(y => y >= FIT.y - 2 && y <= FIT.y + FIT.h + 2);
+  }), fitted.length + ' fitted prims');
+
+ok('rack fit: DXF Y-up flipped to sheet Y-down (topmost DXF y=50 maps near rect top)',
+  (() => {
+    const topLine = fitted.find(p => p.type === 'line' && Math.abs(p.y1 - p.y2) < 0.01 && p.y1 < FIT.y + FIT.h / 2);
+    const botLine = fitted.find(p => p.type === 'line' && Math.abs(p.y1 - p.y2) < 0.01 && p.y1 > FIT.y + FIT.h / 2);
+    return !!topLine && !!botLine;
+  })(), 'both horizontal rails present');
+
+/* --- underlay flows through layout + renderers --- */
+const projU = JSON.parse(JSON.stringify(project));
+projU.underlay = { kind: 'dxf', prims: fitted };
+const layU = E.buildSheetLayout(projU, conns);
+const rackPrims = layU.primitives.filter(p => p.layer === 'RACK');
+ok('layout with DXF underlay emits RACK primitives before everything else',
+  rackPrims.length === fitted.length &&
+  layU.primitives.slice(0, rackPrims.length).every(p => p.layer === 'RACK'),
+  rackPrims.length + ' RACK prims first');
+
+const projImg = JSON.parse(JSON.stringify(project));
+projImg.underlay = { kind: 'image', src: 'data:image/png;base64,iVBORw0KGgo=', x: 150, y: 300, w: 900, h: 500 };
+const svgU = E.renderDiagramSVG(projImg, conns);
+ok('SVG with image underlay embeds <image> with the data URL',
+  svgU.includes('<image href="data:image/png;base64,iVBORw0KGgo=') &&
+  svgU.indexOf('<image') < svgU.indexOf('<rect') === false, 'image present');
+
+const vsdxU = Buffer.from(E.vsdxExport(conns, projImg)).toString('latin1');
+ok('VSDX with image underlay: media/image2 part + page rel rId2 + Foreign shape on RACK layer',
+  vsdxU.includes('visio/media/image2.png') &&
+  vsdxU.includes('Target="../media/image2.png"') &&
+  vsdxU.includes('r:id="rId2"'), 'underlay embedded');
+
+const vsdxNoU = Buffer.from(E.vsdxExport(conns, project)).toString('latin1');
+eq('VSDX without underlay has no image2 part', vsdxNoU.includes('image2.'), false);
+
+eq('VSDX layer count includes RACK', E.VSDX_LAYERS.length, 13);
 
 /* ============================================================
  * SUMMARY

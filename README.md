@@ -1,6 +1,6 @@
-# WireFlow — Wiring Diagram Automation for Marine Battery Systems
+# AYK WireFlow — Wiring Diagram Automation for Marine Battery Systems
 
-WireFlow turns a marine battery rack configuration into complete power & communication
+AYK WireFlow turns a marine battery rack configuration into complete power & communication
 wiring diagrams, cable schedules and BOMs — governed by approved engineering rules and
 exported as native **Visio (.vsdx)**, **AutoCAD DXF/.scr**, **SVG** and **CSV**.
 
@@ -37,13 +37,14 @@ styles.css          Full application styling
 js/config.js        Cloud service public config (endpoint + publishable key)
 js/engine.js        Deterministic wiring engine + sheet layout + SVG/DXF/SCR renderers
 js/zip.js           Minimal store-method ZIP writer (for .vsdx packaging)
-js/vsdx.js          Visio .vsdx generator (OPC package, 12 layers, 1D wires, logo, Notes page)
+js/vsdx.js          Visio .vsdx generator (OPC package, 13 layers, 1D wires, logo, underlay, Notes page)
+js/rack.js          Rack underlay import: DXF parser + sheet fitting
 visio-bridge/visio_bridge.ps1  Visio COM bridge: draws spec wires into the house template (Windows + Visio)
 visio-bridge/RUN-BRIDGE.cmd    One-click demo runner for the Visio bridge
 docs/visio-rack-wiring-skill.md  Visio production workflow learned from the AYK template
 js/aps.js           Autodesk APS client (token, OSS upload, translate, viewer)
 js/app.js           Router, landing page, auth (email OTP), dashboard, workspace UI
-tests/drawing.test.js  208-assertion regression suite (node tests/drawing.test.js)
+tests/drawing.test.js  221-assertion regression suite (node tests/drawing.test.js)
 ```
 
 ## Running locally

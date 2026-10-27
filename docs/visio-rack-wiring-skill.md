@@ -2,7 +2,7 @@
 
 > Learned by diffing a real blank template (`111.vsdx`) against its finished output
 > (`DWG2512-01 S10164 Wiring Diagram.vsdx`) for the same project, both authored in
-> Visio by the application/field team. This file is the contract between WireFlow's
+> Visio by the application/field team. This file is the contract between AYK WireFlow's
 > generator and the way finished drawings actually look.
 
 ## 1. The workflow in one line
@@ -78,7 +78,7 @@ Style facts measured from the reference:
 - New device labels (`ACDP1`, `ACDP2`, `MSM`) are ~0.63 × 0.18 in text boxes near
   their wire clusters.
 
-## 4. Rules → wires mapping (WireFlow R01–R12)
+## 4. Rules → wires mapping (AYK WireFlow R01–R12)
 
 | Rule | Wire |
 |---|---|
@@ -92,9 +92,9 @@ Style facts measured from the reference:
 In-rack gaps / column transitions (R09/R10) simply become longer segments; cross-rack
 runs are declared as exceptions and routed on the Note page detail.
 
-## 5. What WireFlow now automates (vs. the manual workflow)
+## 5. What AYK WireFlow now automates (vs. the manual workflow)
 
-| Manual step | WireFlow |
+| Manual step | AYK WireFlow |
 |---|---|
 | Open blank template | Export `.vsdx` directly from the project config |
 | Count modules, plan chain | Netlist generated from R01–R12 (deterministic) |
