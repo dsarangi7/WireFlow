@@ -275,10 +275,21 @@ async function vsdxOpen(buf, opts) {
               x: vsdxNum(cells.PinX) - hw, y: vsdxNum(cells.PinY) - hh,
               w: hw * 2, h: hh * 2,
             });
+            /* The page group flips y (Visio is y-up). A bitmap <image> drawn
+               plainly in that space comes out vertically mirrored — the rack
+               picture appeared upside down while the page text looked fine.
+               Bitmaps are top-down, so pre-flip the image inside the shape so
+               its top row lands at local y=H (the shape's top edge). When the
+               shape itself is Y-flipped (fy<0) the two flips cancel: draw it
+               plainly. */
+            const imgTag = fy >= 0
+              ? `<g transform="translate(0 ${H}) scale(1 -1)"><image x="0" y="0" width="${W}" height="${H}" `
+                + `preserveAspectRatio="xMidYMid meet" href="${img.href}" data-vsdx-foreign="${escAttr(img.note || (fd.attrs.ForeignType || 'foreign'))}"/></g>`
+              : `<image x="0" y="0" width="${W}" height="${H}" `
+                + `preserveAspectRatio="xMidYMid meet" href="${img.href}" data-vsdx-foreign="${escAttr(img.note || (fd.attrs.ForeignType || 'foreign'))}"/>`;
             out.push(`<g transform="${t}">`
               + `<rect x="0" y="0" width="${W}" height="${H}" fill="#ffffff" stroke="none"/>`
-              + `<image x="0" y="0" width="${W}" height="${H}" `
-              + `preserveAspectRatio="xMidYMid meet" href="${img.href}" data-vsdx-foreign="${escAttr(img.note || (fd.attrs.ForeignType || 'foreign'))}"/>`
+              + imgTag
               + `</g>`);
           } else {
             out.push(`<g transform="${t}">`

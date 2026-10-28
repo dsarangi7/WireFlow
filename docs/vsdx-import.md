@@ -60,3 +60,15 @@ A `.vsdx` is an OPC package (a zip):
 - theme-referenced colours fall back to black; OLE objects without a
   renderable preview show a placeholder box;
 - the CAD picture renders at up to ~2400 px wide (configurable via `emfPx`).
+
+## Orientation (fixed 2026-10-28)
+
+The page group flips Y (Visio is Y-up, SVG is Y-down). Native shapes and text
+are un-flipped individually; an embedded bitmap `<image>` would come out
+vertically mirrored (the rack picture appeared upside down while the page
+text looked fine). The renderer now pre-flips every foreign image inside its
+shape (`translate(0 H) scale(1 -1)`), skipped when the shape itself carries
+FlipY. The picture used as the wiring base is the raw EMF canvas render —
+same orientation as the fixed page view. If a source picture ever arrives
+upside down anyway, the Numbering tab's wiring card has a
+"Rotate base picture 180%" button that stores the turned picture as the base.

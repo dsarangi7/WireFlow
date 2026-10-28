@@ -701,6 +701,7 @@ function tabNumbering(el, project, ctx) {
     <div class="btn-row">
       <button class="btn btn-ghost btn-sm" id="fv-cal">${cal.ok ? 'Recalibrate grid' : 'Calibrate grid (2 clicks)'}</button>
       ${cal.ok ? `<button class="btn btn-ghost btn-sm" id="fv-wire">${st.showWiring ? 'Hide wiring' : 'Show wiring'}</button>` : ''}
+      <button class="btn btn-ghost btn-sm" id="fv-rot" title="Only if the source picture itself came in upside down — stores the turned picture as the base, as-is otherwise">Rotate base picture 180°</button>
       <span id="fv-status">${status}</span>
     </div>
     <div id="fv-view" style="margin-top:10px;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden">${fvSvg(cal, { src: project.underlay.src }, segs, { width: 920, noGrid: !cal.ok })}</div>
@@ -958,6 +959,44 @@ function tabNumbering(el, project, ctx) {
     /* ---- front view handlers ---- */
     el.querySelector('#fv-cal')?.addEventListener('click', () => { st.calStep = 1; st.calClick = null; render(); });
     el.querySelector('#fv-wire')?.addEventListener('click', () => { st.showWiring = !st.showWiring; render(); });
+    el.querySelector('#fv-rot')?.addEventListener('click', async () => {
+      try {
+        const stEl = el.querySelector('#fv-status');
+        if (stEl) stEl.innerHTML = '<span class="chip chip-warn">rotating picture…</span>';
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        /* fetch to a blob URL first — a cross-origin signed URL would taint
+           the canvas and make toBlob throw */
+        let srcUrl = project.underlay.src;
+        try {
+          const resp = await fetch(srcUrl);
+          if (resp.ok) srcUrl = URL.createObjectURL(await resp.blob());
+        } catch (e2) { /* keep the original src */ }
+        await new Promise((res, rej) => { img.onload = res; img.onerror = () => rej(new Error('picture did not load')); img.src = srcUrl; });
+        const cv = document.createElement('canvas');
+        cv.width = img.naturalWidth || img.width || 1; cv.height = img.naturalHeight || img.height || 1;
+        const cx = cv.getContext('2d');
+        cx.translate(cv.width / 2, cv.height / 2); cx.rotate(Math.PI);
+        cx.drawImage(img, -cv.width / 2, -cv.height / 2);
+        const blob = await new Promise((res, rej) => cv.toBlob((b) => b ? res(b) : rej(new Error('could not encode PNG')), 'image/png'));
+        if (!session) throw new Error('Sign in required to store the rotated picture');
+        const path = cloud.storage.userPath(session.user.id, `underlay/${Date.now()}_rot180.png`);
+        const up = await cloud.storage.upload(path, blob, { contentType: 'image/png' });
+        if (up.error) throw up.error;
+        const fit = {
+          underlay_x: project.underlay_x, underlay_y: project.underlay_y,
+          underlay_w: project.underlay_w, underlay_h: project.underlay_h,
+        };
+        await ctx.saveProject({ underlay_url: path, underlay_kind: 'image', ...fit });
+        project.underlay_url = path; project.underlay_kind = 'image';
+        project.underlay = { kind: 'image', src: URL.createObjectURL(blob), ...fit };
+        /* the old calibration points at the un-rotated pixels — start over */
+        st.cal = fvCalib({ imgW: cv.width, imgH: cv.height });
+        st.calStep = 0; st.calClick = null;
+        render();
+        toast('Base picture turned 180° — recalibrate the grid on it, then the wiring follows.');
+      } catch (e) { toast('Rotate failed: ' + e.message, 'error'); render(); }
+    });
     el.querySelector('#fv-view')?.addEventListener('click', (e) => {
       const svg = e.currentTarget.querySelector('svg');
       if (!svg) return;

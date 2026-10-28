@@ -1469,6 +1469,11 @@ let vsdxTests = Promise.resolve();
       Math.abs(r.foreigns[0].x - 5) < 1e-9 && Math.abs(r.foreigns[0].y - 3.5) < 1e-9 &&
       r.foreigns[0].w === 2 && r.foreigns[0].h === 1 && /data:image\/png/.test(r.foreigns[0].href),
       `foreigns=${JSON.stringify(r.foreigns && r.foreigns.map((f) => [f.x, f.y, f.w, f.h]))}`);
+    /* the page group flips y, so the bitmap must be pre-flipped inside the
+       shape or the rack picture renders upside down (regression) */
+    ok('VSDX embedded bitmap is pre-flipped so the page Y-flip shows it upright',
+      /<g transform="translate\(0 1\) scale\(1 -1\)"><image /.test(r.svg) && /data-vsdx-foreign/.test(r.svg),
+      'image wrapped in translate(0 H) scale(1 -1)');
 
     const rHidden = await doc.renderPage(0, { layersOn: new Set([1]) });   /* only "Wires" on */
     ok('VSDX layer visibility filters shapes',
