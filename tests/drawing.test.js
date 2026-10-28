@@ -461,10 +461,22 @@ eq('guided flow derives import + calibration from saved project state',
 const guidedComplete = { underlay_url: 'rack.png', config: {
   numbering: { mode: 'layout', cal: { ok: true }, counts: [6, 6], order: ['0,0', '0,1'] },
   layout: { sscs: [{ id: 'SSC-1' }, { id: 'SSC-2' }] },
-  flow: { exportedAt: '2026-10-28T00:00:00.000Z' },
+  flow: { deliveredAt: '2026-10-28T00:00:00.000Z' },
 } };
 eq('guided flow derives applied chains, visible wiring and export',
   JSON.stringify(deriveFlow(guidedComplete)), '[true,true,true,true,true]');
+
+const printBuilderBody = fnBody(appSrc, 'buildPrintDocument');
+ok('fnBody extracted buildPrintDocument()', !!printBuilderBody,
+  printBuilderBody ? printBuilderBody.length + ' chars' : 'not found');
+const buildPrintPages = new Function('parts', printBuilderBody || 'return [];');
+const printPages = buildPrintPages({ sheetSvg: '<svg id="sheet"/>', frontSvg: '<svg id="front"/>', scheduleSvg: '<svg id="schedule"/>' });
+eq('print-document builder keeps the required A3 page order',
+  printPages.map(page => page.title).join(' | '),
+  'Generated wiring sheet | Rack front-view wiring | Cable schedule & BOM');
+eq('print-document builder returns ordered title/svg page records',
+  JSON.stringify(printPages.map(page => ({ title: typeof page.title, svg: page.svg }))),
+  JSON.stringify([{ title: 'string', svg: '<svg id="sheet"/>' }, { title: 'string', svg: '<svg id="front"/>' }, { title: 'string', svg: '<svg id="schedule"/>' }]));
 
 const verdictBody = fnBody(appSrc, 'vsdxImportVerdict');
 ok('fnBody extracted vsdxImportVerdict()', !!verdictBody,

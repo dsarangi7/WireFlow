@@ -42,3 +42,18 @@ layer count and whether the largest picture became the wiring base. Parse or
 picture-selection failures stay on the workspace as a user-facing error card,
 while technical details are logged to the browser console. Successful imports
 open Numbering automatically so calibration is the next visible task.
+
+## Wire, validate and deliver
+
+Step 4 summarizes the saved module count, per-SSC chain cable totals and both
+validation families: the engine release checks and variable-layout L01–L06
+checks. **Open wiring view** returns to the established front-view card in
+Numbering; the guided summary does not implement a second wiring editor.
+
+Step 5 builds three ordered print pages: generated wiring sheet, calibrated
+rack front view and compact cable schedule/BOM. The pages live in a hidden
+container until `window.print()` and use A3 landscape print CSS with exact
+colors and page breaks. Browser Save as PDF is therefore the PDF generator;
+there are no extra libraries. DXF, SCR, VSDX and CSV remain under **Other
+formats**. Printing reveals **Mark project delivered**, which saves
+`config.flow.deliveredAt` and completes the final step.

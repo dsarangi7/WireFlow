@@ -20,7 +20,7 @@ const FLOW_STEPS = Object.freeze([
   { label: 'Import rack', view: 'Configuration' },
   { label: 'Calibrate', view: 'Numbering' },
   { label: 'Number & chains', view: 'Numbering' },
-  { label: 'Wire & validate', view: 'Numbering' },
+  { label: 'Wire & validate', view: 'Wire & validate' },
   { label: 'Export PDF', view: 'Export' },
 ]);
 
@@ -35,8 +35,18 @@ function flowStepCompletion(project) {
     Array.isArray(numbering.counts) && numbering.counts.length > 0 &&
     Array.isArray(layout.sscs) && layout.sscs.length === numbering.counts.length;
   const wiringShown = chainsApplied && Array.isArray(numbering.order) && numbering.order.length > 1;
-  const exported = !!(cfg.flow && cfg.flow.exportedAt);
+  const exported = !!(cfg.flow && cfg.flow.deliveredAt);
   return [hasUnderlay, calibrated, chainsApplied, wiringShown, exported];
+}
+
+/** Pure print-page contract. Each page is an SVG and order is significant. */
+function buildPrintDocument(parts) {
+  const p = parts || {};
+  return [
+    { title: 'Generated wiring sheet', svg: p.sheetSvg || '' },
+    { title: 'Rack front-view wiring', svg: p.frontSvg || '' },
+    { title: 'Cable schedule & BOM', svg: p.scheduleSvg || '' },
+  ];
 }
 
 /** Pure quality verdict used by the guided VSDX import report. */
@@ -453,7 +463,7 @@ async function renderProjectPage(id) {
   const cfg = project.config || { rules: { ...DEFAULT_RULES }, exceptions: [], spans: [] };
   let netlist = null, validations = null;
 
-  const tabs = ['Configuration', 'Numbering', 'Netlist', 'Exceptions', 'Validation', 'Schedule & BOM', 'Diagram', 'Drawings (DWG)', 'Export'];
+  const tabs = ['Configuration', 'Numbering', 'Netlist', 'Exceptions', 'Validation', 'Schedule & BOM', 'Diagram', 'Drawings (DWG)', 'Wire & validate', 'Export'];
   shell(`
     <div class="proj-head">
       <a class="back" href="#/app">← Projects</a>
@@ -474,7 +484,7 @@ async function renderProjectPage(id) {
 
   const body = document.getElementById('tab-body');
   const home = document.getElementById('workspace-home');
-  const views = [tabConfig, tabNumbering, tabNetlist, tabExceptions, tabValidation, tabSchedule, tabDiagram, tabDrawings, tabExport];
+  const views = [tabConfig, tabNumbering, tabNetlist, tabExceptions, tabValidation, tabSchedule, tabDiagram, tabDrawings, tabWireValidate, tabExport];
 
   async function saveProject(patch) {
     const { data, error } = await cloud.database.from('projects').update({ ...patch, updated_at: new Date().toISOString() }).eq('id', id).select();
@@ -489,7 +499,7 @@ async function renderProjectPage(id) {
     document.getElementById('advanced').open = true;
     document.querySelectorAll('.tab').forEach(t => t.classList.toggle('on', +t.dataset.i === i));
     body.innerHTML = `<div class="loading">…</div>`;
-    await views[i](body, project, { saveProject, getNetlist, getValidations, loadUnderlay });
+    await views[i](body, project, { saveProject, getNetlist, getValidations, loadUnderlay, switchTab });
   }
   function stepIndex(step) { return tabs.indexOf(step.view); }
   async function renderWorkspace() {
@@ -1646,37 +1656,148 @@ async function tabDiagram(el, project, ctx) {
   };
 }
 
+/* ---- Guided step 4: live wiring and validation summary ------------------- */
+async function tabWireValidate(el, project, ctx) {
+  const numbering = (project.config && project.config.numbering) || {};
+  const rules = { ...DEFAULT_RULES, ...((project.config && project.config.rules) || {}) };
+  const groups = layoutGroups(project);
+  const totals = layoutTotals(groups);
+  const required = Array.isArray(numbering.counts) && numbering.counts.length
+    ? numbering.counts.reduce((sum, count) => sum + count, 0)
+    : Math.max(1, rules.strings || 1) * Math.max(1, rules.modulesPerString || 1);
+  const numbered = Array.isArray(numbering.order) ? numbering.order.length : 0;
+  const engineChecks = (await ctx.getValidations()).map(row => ({
+    id: row.id, label: row.label, pass: row.status === 'pass', detail: row.detail,
+  }));
+  const layoutChecks = layoutValidate(project);
+  const checks = engineChecks.concat(layoutChecks.map(row => ({
+    id: row.id, label: row.label, pass: row.status === 'pass', detail: row.detail,
+  })));
+  const cal = fvCalib(numbering.cal);
+  const canDraw = !!(cal.ok && project.underlay && project.underlay.kind === 'image' && project.underlay.src);
+  const segs = canDraw ? layoutFrontView(groups, cal, {}) : [];
+  const perSsc = layoutFrontViewSummary(segs, groups);
+  const passed = checks.filter(check => check.pass).length;
+  el.innerHTML = `
+    <div class="wire-summary">
+      <div><div class="workspace-kicker">Step 4</div><h2>Wire & validate</h2>
+        <p class="muted">A live release summary from the saved rack numbering, SSC chains and engineering rules.</p></div>
+      <div class="summary-grid">
+        <div class="summary-card"><span>Modules numbered</span><strong>${numbered}/${required}</strong><small>${numbered === required ? 'Complete' : required - numbered + ' remaining'}</small></div>
+        <div class="summary-card"><span>SSC chains</span><strong>${totals.sscs}</strong><small>${(totals.bomMm / 1000).toFixed(1)} m cable total</small></div>
+        <div class="summary-card"><span>Validation gate</span><strong>${passed}/${checks.length}</strong><small>${passed === checks.length ? 'All checks pass' : checks.length - passed + ' need attention'}</small></div>
+      </div>
+      <div class="card">
+        <h3>Chains by SSC</h3>
+        <div class="chain-summary-list">${groups.map((group, i) => {
+          const live = perSsc[i];
+          return `<div class="chain-summary-row"><span class="ssc-dot" style="background:${SSC_PALETTE[i % SSC_PALETTE.length]}"></span><b>${esc(group.label)}</b><span>${group.order.length} modules</span><span>${(group.metrics.bomMm / 1000).toFixed(1)} m BOM</span><span>${live ? 'red ' + (live.powerMm / 1000).toFixed(1) + ' m · green ' + (live.commMm / 1000).toFixed(1) + ' m' : 'Calibrate to measure front-view wiring'}</span></div>`;
+        }).join('') || '<p class="muted">No applied SSC chains yet.</p>'}</div>
+      </div>
+      <div class="card">
+        <h3>Engineering checks</h3>
+        <div class="validation-chips">${checks.map(check => `<span class="validation-chip ${check.pass ? 'pass' : 'fail'}" title="${esc(check.detail || '')}">${esc(check.id)} · ${check.pass ? 'Pass' : 'Fail'}</span>`).join('')}</div>
+      </div>
+      <div class="workspace-actions"><button class="btn btn-primary btn-lg" id="wv-open">Open wiring view</button></div>
+    </div>`;
+  el.querySelector('#wv-open').onclick = async () => {
+    await ctx.switchTab(1);
+    document.getElementById('fv-card')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+}
+
+function schedulePrintSvg(conns) {
+  const grouped = new Map();
+  for (const row of buildSchedule(conns || [])) {
+    const key = [row.harness, row.network, row.gauge, row.length].join('|');
+    if (!grouped.has(key)) grouped.set(key, { ...row, qty: 0 });
+    grouped.get(key).qty += row.qty;
+  }
+  const rows = [...grouped.values()];
+  const W = 1680, H = 1188, x = [70, 430, 650, 1000, 1260, 1450];
+  let svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" font-family="Inter, Arial, sans-serif"><rect width="${W}" height="${H}" fill="#fff"/>`;
+  svg += '<text x="70" y="92" font-size="38" font-weight="700" fill="#18212f">Cable schedule &amp; BOM</text>';
+  const heads = ['Harness / part number', 'Network', 'Cable specification', 'Length (mm)', 'Quantity'];
+  heads.forEach((head, i) => { svg += `<text x="${x[i]}" y="160" font-size="18" font-weight="700" fill="#687386">${esc(head)}</text>`; });
+  svg += '<line x1="70" y1="178" x2="1610" y2="178" stroke="#cfd5dd" stroke-width="2"/>';
+  rows.slice(0, 24).forEach((row, index) => {
+    const y = 218 + index * 37;
+    const vals = [row.harness, row.network, row.gauge || '—', row.length, row.qty];
+    vals.forEach((value, i) => { svg += `<text x="${x[i]}" y="${y}" font-size="17" fill="#18212f">${esc(value)}</text>`; });
+    svg += `<line x1="70" y1="${y + 12}" x2="1610" y2="${y + 12}" stroke="#edf0f3"/>`;
+  });
+  const qty = rows.reduce((sum, row) => sum + row.qty, 0);
+  svg += `<text x="70" y="1125" font-size="20" font-weight="700" fill="#18212f">${rows.length} BOM line(s) · ${qty} cable(s)</text></svg>`;
+  return svg;
+}
+
+function projectPrintPages(project, conns) {
+  const numbering = (project.config && project.config.numbering) || {};
+  const cal = fvCalib(numbering.cal);
+  const groups = layoutGroups(project);
+  const canDraw = !!(cal.ok && project.underlay && project.underlay.kind === 'image' && project.underlay.src);
+  const frontSvg = canDraw
+    ? fvSvg(cal, { src: project.underlay.src }, layoutFrontView(groups, cal, {}), { width: 1680, sscLabels: true })
+    : '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1680 1188"><rect width="1680" height="1188" fill="#fff"/><text x="840" y="594" text-anchor="middle" font-family="Arial" font-size="28" fill="#687386">Front-view wiring is unavailable until the rack picture is calibrated.</text></svg>';
+  return buildPrintDocument({
+    sheetSvg: renderDiagramSVG(project, conns),
+    frontSvg: frontSvg,
+    scheduleSvg: schedulePrintSvg(conns),
+  });
+}
+
+function printDocumentHtml(project, pages, dateLabel) {
+  return (pages || []).map((page, index) => `<section class="print-page">
+    <header><strong>AYK WireFlow</strong><span>${esc(project.name || 'Wiring project')}</span><span>${esc(dateLabel)}</span></header>
+    <h1>${esc(page.title)}</h1><div class="print-svg">${page.svg}</div>
+    <footer>Page ${index + 1} of ${pages.length}</footer>
+  </section>`).join('');
+}
+
 /* ---- Guided export screen -------------------------------------------------
    Uses the existing deterministic exporters. Browser print is the PDF path so
    the drawing remains the same artifact already shown in Diagram. */
 async function tabExport(el, project, ctx) {
   const conns = await ctx.getNetlist();
   const checks = await ctx.getValidations();
-  const failed = checks.filter(x => !x.pass);
+  const failed = checks.filter(x => x.status !== 'pass');
+  const flow = (project.config && project.config.flow) || {};
+  const delivered = !!flow.deliveredAt;
+  const pages = projectPrintPages(project, conns);
+  const dateLabel = new Date().toLocaleDateString('en-GB', { year: 'numeric', month: 'short', day: '2-digit' });
   el.innerHTML = `
     <div class="export-screen">
       <div>
         <div class="workspace-kicker">Final step</div>
-        <h2>Export wiring package</h2>
-        <p class="muted">Review the release gate, then save the final drawing as PDF or download an editable engineering format.</p>
+        <h2>${delivered ? 'Project delivered' : 'Export wiring package'}</h2>
+        <p class="muted">${delivered ? 'The final wiring package has been marked as delivered.' : 'Print the complete three-page A3 deliverable, then confirm delivery.'}</p>
       </div>
+      ${delivered ? `<div class="delivery-complete"><div class="delivery-check">✓</div><div><strong>Delivery complete</strong><p>Marked delivered ${esc(new Date(flow.deliveredAt).toLocaleString())}.</p></div></div>` : ''}
       <div class="export-status ${failed.length ? 'blocked' : 'ready'}">
         <strong>${failed.length ? 'Release blocked' : 'Ready to export'}</strong>
         <span>${failed.length ? failed.length + ' validation check(s) need attention.' : 'All ' + checks.length + ' validation checks pass.'}</span>
       </div>
       <div class="workspace-actions">
         <button class="btn btn-primary btn-lg" id="e-pdf" ${failed.length ? 'disabled' : ''}>Export PDF</button>
-        <button class="btn btn-ghost" id="e-vsdx">Visio (.vsdx)</button>
-        <button class="btn btn-ghost" id="e-dxf">DXF</button>
-        <button class="btn btn-ghost" id="e-scr">AutoCAD script</button>
-        <button class="btn btn-ghost" id="e-csv">Cable schedule CSV</button>
+        <button class="btn btn-ghost" id="e-deliver" ${delivered ? 'disabled' : 'hidden'}>Mark project delivered</button>
       </div>
-      <div class="diagram-wrap export-preview">${renderDiagramSVG(project, conns)}</div>
-    </div>`;
-  el.querySelector('#e-pdf').onclick = async () => {
-    const flow = { ...((project.config && project.config.flow) || {}), exportedAt: new Date().toISOString() };
-    await ctx.saveProject({ config: { ...(project.config || {}), flow } });
+      <details class="other-formats"><summary>Other formats</summary><div class="btn-row">
+        <button class="btn btn-ghost" id="e-vsdx">Visio (.vsdx)</button><button class="btn btn-ghost" id="e-dxf">DXF</button>
+        <button class="btn btn-ghost" id="e-scr">AutoCAD script</button><button class="btn btn-ghost" id="e-csv">Cable schedule CSV</button>
+      </div></details>
+      <div class="diagram-wrap export-preview">${pages[0].svg}</div>
+    </div>
+    <div id="print-document" class="print-document" aria-hidden="true">${printDocumentHtml(project, pages, dateLabel)}</div>`;
+  el.querySelector('#e-pdf').onclick = () => {
     window.print();
+    el.querySelector('#e-deliver').hidden = false;
+  };
+  el.querySelector('#e-deliver').onclick = async () => {
+    const nextFlow = { ...flow, printedAt: new Date().toISOString(), deliveredAt: new Date().toISOString() };
+    const ok = await ctx.saveProject({ config: { ...(project.config || {}), flow: nextFlow } });
+    if (!ok) return;
+    toast('Project marked delivered.');
+    await tabExport(el, project, ctx);
   };
   el.querySelector('#e-vsdx').onclick = () => download(`${project.name || 'wiring'}.vsdx`, vsdxExport(conns, project), 'application/vnd.ms-visio.drawing.main+xml');
   el.querySelector('#e-dxf').onclick = () => download(`${project.name || 'wiring'}.dxf`, dxfExport(conns, project), 'application/dxf');

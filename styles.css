@@ -202,11 +202,30 @@ section h2 { text-align: center; color: var(--navy-deep); font-size: 30px; margi
 .import-report dt { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
 .import-report dd { margin: 2px 0 0; color: var(--text); font-size: 12px; font-weight: 700; }
 .export-screen { display: grid; gap: 20px; }
+.wire-summary { display: grid; gap: 18px; }
+.summary-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+.summary-card { padding: 20px; display: grid; gap: 3px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow); }
+.summary-card span, .summary-card small { color: var(--muted); }
+.summary-card strong { font-size: 29px; letter-spacing: -.03em; color: var(--text); }
+.chain-summary-list { display: grid; }
+.chain-summary-row { display: grid; grid-template-columns: 16px 1fr repeat(3, minmax(120px, auto)); align-items: center; gap: 10px; padding: 11px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+.chain-summary-row:last-child { border-bottom: 0; }
+.validation-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.validation-chip { padding: 6px 10px; border-radius: 999px; font-size: 12px; font-weight: 750; }
+.validation-chip.pass { color: #0c6c39; background: #e8f8ef; }
+.validation-chip.fail { color: #a62d2d; background: #fdecec; }
 .export-status { display: flex; justify-content: space-between; gap: 16px; padding: 14px 18px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
 .export-status.ready { border-color: color-mix(in srgb, var(--ok) 35%, var(--border)); background: #f2fbf6; }
 .export-status.blocked { border-color: color-mix(in srgb, var(--danger) 35%, var(--border)); background: #fff7f7; }
 .export-status span { color: var(--muted); }
 .export-preview { margin-top: 8px; }
+.other-formats { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); padding: 12px 16px; }
+.other-formats summary { cursor: pointer; color: var(--muted); font-weight: 700; }
+.other-formats .btn-row { margin-top: 12px; }
+.delivery-complete { display: flex; gap: 14px; align-items: center; padding: 18px; border: 1px solid color-mix(in srgb, var(--ok) 35%, var(--border)); border-radius: var(--radius); background: #f2fbf6; }
+.delivery-complete p { color: var(--muted); }
+.delivery-check { width: 38px; height: 38px; display: grid; place-items: center; border-radius: 50%; color: #fff; background: var(--ok); font-weight: 900; }
+.print-document { display: none; }
 
 /* cards + tables */
 .card-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; }
@@ -301,11 +320,21 @@ table.data tr:hover td { background: #f8fafc; }
   .flow-step { grid-template-columns: 34px 1fr; justify-items: start; align-items: center; }
   .flow-step::after { top: 43px; left: 22px; width: 2px; height: 24px; }
   .import-report dl { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .summary-grid { grid-template-columns: 1fr; }
+  .chain-summary-row { grid-template-columns: 16px 1fr; }
 }
 
 @media print {
-  .side, .proj-head, .advanced, .export-screen > :not(.export-preview), #toast-wrap { display: none !important; }
-  .shell { display: block; }
-  .main { padding: 0; max-width: none; }
-  .export-preview { border: 0; box-shadow: none; padding: 0; }
+  @page { size: A3 landscape; margin: 0; }
+  html, body { width: 420mm; margin: 0; background: #fff; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  body * { visibility: hidden !important; }
+  .print-document, .print-document * { visibility: visible !important; }
+  .print-document { display: block !important; position: absolute; inset: 0; width: 420mm; }
+  .print-page { width: 420mm; height: 297mm; padding: 9mm 11mm 8mm; display: grid; grid-template-rows: 8mm 10mm 1fr 6mm; gap: 2mm; overflow: hidden; background: #fff; break-after: page; page-break-after: always; }
+  .print-page:last-child { break-after: auto; page-break-after: auto; }
+  .print-page header { display: flex; justify-content: space-between; align-items: center; border-bottom: .3mm solid #d8dde4; color: #354052; font-size: 10pt; }
+  .print-page h1 { font-size: 15pt; color: #18212f; }
+  .print-svg { min-height: 0; display: grid; place-items: center; }
+  .print-svg > svg { width: 100%; height: 100%; max-height: 250mm; }
+  .print-page footer { text-align: right; color: #687386; font-size: 8pt; }
 }
