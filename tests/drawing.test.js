@@ -63,7 +63,9 @@ function loadEngine() {
   const zipSrc = fs.readFileSync(path.join(path.dirname(ENGINE), 'zip.js'), 'utf8');
   const vsdxSrc = fs.readFileSync(path.join(path.dirname(ENGINE), 'vsdx.js'), 'utf8')
     + '\nreturn { vsdxExport, VSDX_LAYERS };';
-  const vsdxFactory = new Function(src + '\n' + zipSrc + '\n' + vsdxSrc);
+  const vsdxFactory = new Function(src + '\n' + zipSrc + '\n' +
+    fs.readFileSync(path.join(path.dirname(ENGINE), 'rack.js'), 'utf8') + '\n' +
+    fs.readFileSync(path.join(path.dirname(ENGINE), 'numbering.js'), 'utf8') + '\n' + vsdxSrc);
   const vsdxOut = vsdxFactory();
   E.vsdxExport = vsdxOut.vsdxExport;
   E.VSDX_LAYERS = vsdxOut.VSDX_LAYERS;
@@ -1116,6 +1118,12 @@ ok('device slots are labelled on the rack too',
 ok('numbering is only drawn when a rack drawing is attached',
   E.buildSheetLayout(JSON.parse(JSON.stringify(project)), conns).primitives
     .filter(p => p.layer === 'NUMBER').length === 0, 'clean without underlay');
+
+/* ...and the same numbering reaches the Visio export. */
+const vsdxNum = Buffer.from(E.vsdxExport(connsSnake, projNum)).toString('latin1');
+ok('VSDX export carries the rack numbering as shapes',
+  vsdxNum.includes('<Text>M1</Text>') && vsdxNum.includes('<Text>M24</Text>') &&
+  vsdxNum.includes('<Text>SSC</Text>'), 'M1..M24 + device labels');
 
 /* resolveNumbering repairs an incomplete saved order. */
 const projPartial = JSON.parse(JSON.stringify(project));

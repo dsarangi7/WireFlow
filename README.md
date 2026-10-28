@@ -51,7 +51,7 @@ docs/visio-rack-wiring-skill.md  Visio production workflow learned from the AYK 
 docs/module-numbering.md  How the physical numbering is chosen (auto + custom) and what it costs
 js/aps.js           Autodesk APS client (token, OSS upload, translate, viewer)
 js/app.js           Router, landing page, auth (email OTP), dashboard, workspace UI
-tests/drawing.test.js  260-assertion regression suite (node tests/drawing.test.js)
+tests/drawing.test.js  261-assertion regression suite (node tests/drawing.test.js)
 ```
 
 ## Running locally
@@ -71,7 +71,7 @@ deterministic engine outputs (netlist → validation → exports all run client-
 
 ```bash
 node tests/drawing.test.js
-# PASSED: 260  FAILED: 0
+# PASSED: 261  FAILED: 0
 ```
 
 Covers: netlist/validation regression, release-gate matrix, sheet bounds at extreme
