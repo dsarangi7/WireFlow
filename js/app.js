@@ -509,6 +509,13 @@ async function renderProjectPage(id) {
     const complete = flowStepCompletion(project);
     const current = complete.findIndex(done => !done);
     const currentStep = current < 0 ? FLOW_STEPS.length - 1 : current;
+    const guidance = [
+      'No rack drawing yet — import a VSDX, DXF, PNG, JPG or SVG to begin.',
+      'The rack is ready — calibrate the first and last module positions next.',
+      'Calibration is complete — number the modules and apply one chain per SSC.',
+      'Chains are ready — review wiring totals and resolve every failed validation.',
+      'No delivered package yet — export the A3 PDF, then mark the project delivered.',
+    ];
     home.innerHTML = `
       <section class="workspace-hero" aria-labelledby="workspace-title">
         <div class="workspace-kicker">Guided workspace</div>
@@ -520,6 +527,7 @@ async function renderProjectPage(id) {
             <span>${esc(step.label)}</span>
           </button>`).join('')}
         </div>
+        <div class="flow-guidance"><span aria-hidden="true">→</span><span>${guidance[currentStep]}</span></div>
         <div class="workspace-actions">
           <button class="btn btn-primary btn-lg" id="workspace-import">Import rack drawing</button>
           <button class="btn btn-ghost" id="workspace-continue">Continue where I left off</button>
@@ -1678,10 +1686,21 @@ async function tabWireValidate(el, project, ctx) {
   const segs = canDraw ? layoutFrontView(groups, cal, {}) : [];
   const perSsc = layoutFrontViewSummary(segs, groups);
   const passed = checks.filter(check => check.pass).length;
+  const failed = checks.length - passed;
+  const emptyGuidance = !project.underlay_url
+    ? 'No rack drawing imported — return to step 1 and import the rack first.'
+    : !cal.ok
+      ? 'The rack is not calibrated — open the wiring view and complete the two calibration clicks.'
+      : !groups.length
+        ? 'No SSC chains applied — return to Numbering and apply the chains to the project.'
+        : failed
+          ? `${failed} validation check(s) need attention before export.`
+          : 'Wiring and validations are complete — continue to Export PDF.';
   el.innerHTML = `
     <div class="wire-summary">
       <div><div class="workspace-kicker">Step 4</div><h2>Wire & validate</h2>
         <p class="muted">A live release summary from the saved rack numbering, SSC chains and engineering rules.</p></div>
+      <div class="flow-empty ${failed ? 'danger' : passed === checks.length ? 'success' : ''}"><span>${failed ? '!' : '✓'}</span><p>${esc(emptyGuidance)}</p></div>
       <div class="summary-grid">
         <div class="summary-card"><span>Modules numbered</span><strong>${numbered}/${required}</strong><small>${numbered === required ? 'Complete' : required - numbered + ' remaining'}</small></div>
         <div class="summary-card"><span>SSC chains</span><strong>${totals.sscs}</strong><small>${(totals.bomMm / 1000).toFixed(1)} m cable total</small></div>
@@ -1777,6 +1796,7 @@ async function tabExport(el, project, ctx) {
         <strong>${failed.length ? 'Release blocked' : 'Ready to export'}</strong>
         <span>${failed.length ? failed.length + ' validation check(s) need attention.' : 'All ' + checks.length + ' validation checks pass.'}</span>
       </div>
+      ${failed.length ? `<div class="flow-empty danger"><span>!</span><p>Resolve the failed validation checks before creating the delivery PDF.</p></div>` : (!delivered ? `<div class="flow-empty"><span>→</span><p>No delivered package yet — export the PDF, then mark the project delivered.</p></div>` : '')}
       <div class="workspace-actions">
         <button class="btn btn-primary btn-lg" id="e-pdf" ${failed.length ? 'disabled' : ''}>Export PDF</button>
         <button class="btn btn-ghost" id="e-deliver" ${delivered ? 'disabled' : 'hidden'}>Mark project delivered</button>

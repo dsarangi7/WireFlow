@@ -57,3 +57,13 @@ colors and page breaks. Browser Save as PDF is therefore the PDF generator;
 there are no extra libraries. DXF, SCR, VSDX and CSV remain under **Other
 formats**. Printing reveals **Mark project delivered**, which saves
 `config.flow.deliveredAt` and completes the final step.
+
+## Guided-flow presentation
+
+The guided screens use the shared 4/8/12/16/24 spacing tokens, neutral
+navigation states and semantic success/warning/danger colors. Orange is
+reserved for primary action buttons. Keyboard users receive consistent
+`focus-visible` outlines, and each incomplete stage has a one-line next-action
+message covering missing import, calibration, chains, failed validations and
+delivery. Step transitions are disabled when `prefers-reduced-motion` is set,
+and the summary layout tightens at 1280px before switching to the mobile stack.
