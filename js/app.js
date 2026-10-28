@@ -1390,8 +1390,11 @@ async function tabDiagram(el, project, ctx) {
     });
     const layers = st.doc.pages[st.page].layers;
     $('#vsdx-layers').innerHTML = layers.length
-      ? `<span class="muted small">Layers:</span>` + layers.map((l) =>
-          `<label class="check"><input type="checkbox" data-layer="${l.ix}" checked> ${esc(l.name)}</label>`).join('')
+      ? `<span class="muted small">Layers:</span>` + layers.map((l) => {
+          const label = typeof vsdxLayerLabel === 'function' ? vsdxLayerLabel(l.name) : l.name;
+          const tip = label !== l.name ? ` title="${escAttr(l.name)} (original layer name in the file)"` : '';
+          return `<label class="check"${tip}><input type="checkbox" data-layer="${l.ix}" checked> ${esc(label)}</label>`;
+        }).join('')
       : '';
     el.querySelectorAll('[data-layer]').forEach((c) => c.onchange = () => {
       const boxes = [...el.querySelectorAll('[data-layer]')];

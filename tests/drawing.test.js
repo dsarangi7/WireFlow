@@ -1330,7 +1330,7 @@ let vsdxTests = Promise.resolve();
   const fvSrc = fs.readFileSync(path.join(path.dirname(ENGINE), 'frontview.js'), 'utf8');
   const zipSrc2 = fs.readFileSync(path.join(path.dirname(ENGINE), 'zip.js'), 'utf8');
   const names = ['emfBounds', 'emfDraw', 'vsdxOpen', 'vsdxZipRead', 'vsdxXml', 'vsdxCells', 'geomPath', 'vsdxNum', 'vsdxWrap', 'ZipWriter',
-    'fvCalib', 'fvTerminals', 'fvWiring', 'fvSvg', 'fvSummary', 'fvPxToSheet'];
+    'fvCalib', 'fvTerminals', 'fvWiring', 'fvSvg', 'fvSummary', 'fvPxToSheet', 'vsdxLayerLabel'];
   const IMPL = new Function(emfSrc + '\n' + zipSrc2 + '\n' + impSrc + '\n' + fvSrc + '\nreturn {' + names.join(',') + '};')();
   const IM = Object.assign(IMPL, {});
 
@@ -1478,6 +1478,18 @@ let vsdxTests = Promise.resolve();
     const rHidden = await doc.renderPage(0, { layersOn: new Set([1]) });   /* only "Wires" on */
     ok('VSDX layer visibility filters shapes',
       !/Hello Rack/.test(rHidden.svg) && rHidden.stats.shapes === 0, 'layer 0 hidden -> empty page');
+
+    /* the engineer's Visio file keeps Chinese AutoCAD layer names — the UI
+       shows them in English (regression for the Diagram-tab layer chips) */
+    ok('Chinese AutoCAD layer names translate to English in the UI',
+      typeof IM.vsdxLayerLabel === 'function' &&
+      IM.vsdxLayerLabel('图框') === 'Drawing frame' &&
+      IM.vsdxLayerLabel('细实线层') === 'Thin solid line' &&
+      IM.vsdxLayerLabel('中心线') === 'Centre line' &&
+      IM.vsdxLayerLabel('标注层') === 'Dimensions' &&
+      IM.vsdxLayerLabel('CAD Drawing') === 'CAD Drawing' &&
+      IM.vsdxLayerLabel('0') === '0',
+      `图框→${IM.vsdxLayerLabel && IM.vsdxLayerLabel('图框')} 细实线层→${IM.vsdxLayerLabel && IM.vsdxLayerLabel('细实线层')}`);
   })().catch((e) => ok('VSDX import suite runs', false, e.message));
 
   ok('POLYLINE(...) formulas expand into local coordinates',

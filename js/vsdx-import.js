@@ -565,6 +565,33 @@ function escXml(s) {
 }
 function escAttr(s) { return escXml(s).replace(/'/g, '&#39;'); }
 
+/* ---- layer names ------------------------------------------------------- */
+/* The engineer's Visio file keeps the original AutoCAD layer names, which are
+   in Chinese (图框, 细实线层, …). The Diagram tab shows them translated so the
+   whole UI stays English; the original name rides along in the tooltip. */
+const VSDX_LAYER_EN = {
+  '图框': 'Drawing frame', '边框': 'Border', '标题栏': 'Title block',
+  '细实线': 'Thin solid line', '粗实线': 'Thick solid line',
+  '虚线': 'Dashed line', '点划线': 'Dot-dash line', '双点划线': 'Phantom line',
+  '中心线': 'Centre line', '剖面线': 'Hatching', '波浪线': 'Wavy line',
+  '文字': 'Text', '文本': 'Text', '说明': 'Notes', '注释': 'Notes',
+  '标注': 'Dimensions', '尺寸': 'Dimensions', '尺寸标注': 'Dimensions',
+  '表格': 'Tables', '会签': 'Sign-off', '视口': 'Viewport', '原点': 'Origin',
+  '设备': 'Equipment', '电池': 'Battery', '电池架': 'Battery rack',
+  '线缆': 'Cables', '导线': 'Wires', '母线': 'Busbar', '接地': 'Earth',
+  '端子': 'Terminals', '电气': 'Electrical', '布线': 'Wiring',
+  '接线': 'Connections', '线号': 'Wire numbers', '图例': 'Legend',
+};
+function vsdxLayerLabel(name) {
+  const n = String(name == null ? '' : name).trim();
+  if (!n) return n;
+  if (VSDX_LAYER_EN[n]) return VSDX_LAYER_EN[n];
+  /* “细实线层” → stem + 层 — try the stem so “xxx层” names still translate */
+  const stem = n.replace(/层$/, '');
+  if (stem !== n && VSDX_LAYER_EN[stem]) return VSDX_LAYER_EN[stem];
+  return n;
+}
+
 if (typeof module !== 'undefined' && module.exports) {
   try { module.exports = { vsdxOpen, vsdxZipRead, vsdxXml, vsdxCells, geomPath, vsdxNum, vsdxRels }; } catch (e) { /* browser */ }
 }
