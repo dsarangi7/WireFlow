@@ -1134,15 +1134,178 @@ ok('an incomplete custom order falls back to the cheapest automatic plan',
   resolved && resolved.mode === 'auto' && resolved.order.length === 24, 'auto-repaired');
 
 /* ============================================================
+ * VSDX IMPORT + EMF (read the engineer's real Visio file back)
+ * ============================================================ */
+if (typeof Path2D === 'undefined') {
+  global.Path2D = class { moveTo() {} lineTo() {} closePath() {} };
+}
+let vsdxTests = Promise.resolve();
+{
+  const emfSrc = fs.readFileSync(path.join(path.dirname(ENGINE), 'emf.js'), 'utf8');
+  const impSrc = fs.readFileSync(path.join(path.dirname(ENGINE), 'vsdx-import.js'), 'utf8');
+  const zipSrc2 = fs.readFileSync(path.join(path.dirname(ENGINE), 'zip.js'), 'utf8');
+  const names = ['emfBounds', 'emfDraw', 'vsdxOpen', 'vsdxZipRead', 'vsdxXml', 'vsdxCells', 'geomPath', 'vsdxNum', 'vsdxWrap', 'ZipWriter'];
+  const IMPL = new Function(emfSrc + '\n' + zipSrc2 + '\n' + impSrc + '\nreturn {' + names.join(',') + '};')();
+  const IM = Object.assign(IMPL, {});
+
+  /* ---- tiny synthetic EMF: red pen line + solid red triangle ---- */
+  function rec(type, payloadDwords, extra) {
+    const size = 8 + payloadDwords.length * 4 + (extra || 0);
+    const b = new Uint8Array(size);
+    const dv = new DataView(b.buffer);
+    dv.setUint32(0, type, true);
+    dv.setUint32(4, size, true);
+    payloadDwords.forEach((v, i) => dv.setInt32(8 + i * 4, v, true));
+    return b;
+  }
+  const header = new Uint8Array(88);
+  {
+    const dv = new DataView(header.buffer);
+    dv.setUint32(0, 1, true); dv.setUint32(4, 88, true);
+    dv.setInt32(8, 0, true); dv.setInt32(12, 0, true); dv.setInt32(16, 1000, true); dv.setInt32(20, 500, true);
+    dv.setInt32(24, 0, true); dv.setInt32(28, 0, true); dv.setInt32(32, 254, true); dv.setInt32(36, 127, true);
+    dv.setUint32(40, 0x464d4520, true); dv.setUint32(44, 0x00010000, true);
+    dv.setUint32(48, 88, true); dv.setUint32(52, 9, true);
+    dv.setUint16(56, 2, true); dv.setUint16(58, 0, true);
+    dv.setUint32(60, 0, true); dv.setUint32(64, 0, true); dv.setUint32(68, 0, true);
+    dv.setInt32(72, 1920, true); dv.setInt32(76, 1080, true);
+    dv.setInt32(80, 508, true); dv.setInt32(84, 285, true);
+  }
+  const emfParts = [
+    header,
+    rec(9, [1000, 500]),            // SETWINDOWEXTEX
+    rec(10, [0, 0]),                // SETWINDOWORGEX
+    rec(39, [1, 0, 0, 0x000000ff]), // CREATEBRUSHINDIRECT solid red
+    rec(37, [1]),                   // SELECTOBJECT brush
+    rec(27, [100, 100]),            // MOVETOEX
+    rec(54, [900, 400]),            // LINETO
+    rec(86, [0, 0, 1000, 500, 3, 900, 100, 100, 400, 900, 400]), // POLYGON16 (bounds+cpts+3 pts)
+    rec(14, [0, 88, 88]),           // EOF
+  ];
+  const emfTotal = emfParts.reduce((t, p) => t + p.length, 0);
+  const emfBuf = new Uint8Array(emfTotal);
+  let emfOff = 0;
+  for (const p of emfParts) { emfBuf.set(p, emfOff); emfOff += p.length; }
+
+  const bnds = IM.emfBounds(emfBuf.buffer.slice(emfBuf.byteOffset, emfBuf.byteOffset + emfBuf.byteLength));
+  ok('EMF header bounds are parsed', bnds.width === 1000 && bnds.height === 500,
+    `${bnds.width}x${bnds.height}`);
+
+  const drawn = { strokes: 0, fills: 0, points: 0, colors: [] };
+  const ctx = {
+    save() {}, restore() {}, fillRect() {}, fillText() {},
+    fill(p) { drawn.fills++; },
+    stroke(p) { drawn.strokes++; },
+    fillRect2: null,
+  };
+  let curColor = null;
+  Object.defineProperty(ctx, 'strokeStyle', { set: (v) => { curColor = v; }, get: () => curColor });
+  Object.defineProperty(ctx, 'fillStyle', { set: (v) => { drawn.colors.push(v); }, get: () => '' });
+  Object.defineProperty(ctx, 'lineWidth', { set: () => {}, get: () => 1 });
+  Object.defineProperty(ctx, 'font', { set: () => {}, get: () => '' });
+  Object.defineProperty(ctx, 'lineJoin', { set: () => {}, get: () => '' });
+  Object.defineProperty(ctx, 'lineCap', { set: () => {}, get: () => '' });
+  global.Path2D = class { moveTo() { drawn.points++; } lineTo() { drawn.points++; } closePath() {} };
+  const stat = IM.emfDraw(ctx, emfBuf.buffer.slice(emfBuf.byteOffset, emfBuf.byteOffset + emfBuf.byteLength), { x: 0, y: 0, w: 2000, h: 1000 });
+  ok('EMF records are parsed and batched',
+    stat.records === 9 && drawn.strokes >= 1 && drawn.fills >= 1 && drawn.points >= 6,
+    `records=${stat.records} strokes=${drawn.strokes} fills=${drawn.fills} pts=${drawn.points}`);
+  ok('EMF colour mapping is BGR (0x000000ff -> #ff0000)',
+    drawn.colors.includes('#ff0000'), drawn.colors.join(','));
+
+  /* ---- synthetic .vsdx package (stored zip via our own ZipWriter) ---- */
+  const pageXml = `<?xml version="1.0" encoding="utf-8"?>
+<PageContents xmlns="http://schemas.microsoft.com/office/visio/2012/main">
+<Shapes><Shape ID="1" Type="Shape">
+<Cell N="PinX" V="2"/><Cell N="PinY" V="1.5"/><Cell N="Width" V="4"/><Cell N="Height" V="2"/>
+<Cell N="LocPinX" V="2"/><Cell N="LocPinY" V="1"/><Cell N="Angle" V="0"/>
+<Cell N="LayerMember" V="0"/>
+<Cell N="LineColor" V="#ff0000"/><Cell N="LineWeight" V="0.01"/>
+<Cell N="FillForegnd" V="#00ff00"/><Cell N="FillPattern" V="1"/>
+<Section N="Geometry" IX="0">
+<Row T="MoveTo" IX="1"><Cell N="X" V="0"/><Cell N="Y" V="0"/></Row>
+<Row T="LineTo" IX="2"><Cell N="X" V="4"/><Cell N="Y" V="0"/></Row>
+<Row T="LineTo" IX="3"><Cell N="X" V="4"/><Cell N="Y" V="2"/></Row>
+<Row T="LineTo" IX="4"><Cell N="X" V="0"/><Cell N="Y" V="2"/></Row>
+<Row T="LineTo" IX="5"><Cell N="X" V="0"/><Cell N="Y" V="0"/></Row>
+</Section>
+<Section N="Character"><Row IX="0"><Cell N="Size" V="0.15"/><Cell N="Color" V="#0000cc"/></Row></Section>
+<Text>Hello Rack</Text>
+</Shape></Shapes></PageContents>`;
+  const pagesXml2 = `<?xml version="1.0" encoding="utf-8"?>
+<Pages xmlns="http://schemas.microsoft.com/office/visio/2012/main">
+<Page ID="1" NameU="Test">
+<PageSheet><Cell N="PageWidth" V="8"/><Cell N="PageHeight" V="6"/>
+<Section N="Layer"><Row IX="0"><Cell N="Name" V="Frame"/><Cell N="Visible" V="1"/></Row>
+<Row IX="1"><Cell N="Name" V="Wires"/><Cell N="Visible" V="1"/></Row></Section>
+</PageSheet>
+<Rel r:id="rId1"/></Page></Pages>`;
+  const zw = new IMPL.ZipWriter();
+  zw.add('[Content_Types].xml', '<Types/>');
+  zw.add('_rels/.rels', '<?xml version="1.0"?><Relationships/>');
+  zw.add('visio/pages/pages.xml', pagesXml2);
+  zw.add('visio/pages/_rels/pages.xml.rels',
+    '<?xml version="1.0"?><Relationships><Relationship Id="rId1" Target="page1.xml"/></Relationships>');
+  zw.add('visio/pages/_rels/page1.xml.rels', '<?xml version="1.0"?><Relationships/>');
+  zw.add('visio/pages/page1.xml', pageXml);
+  const vsdxBytes = zw.build();
+
+  vsdxTests = (async () => {
+    const doc = await IM.vsdxOpen(vsdxBytes.buffer.slice(vsdxBytes.byteOffset, vsdxBytes.byteOffset + vsdxBytes.byteLength));
+    ok('VSDX package opens with page metadata',
+      doc.pages.length === 1 && doc.pages[0].name === 'Test' && doc.pages[0].w === 8 && doc.pages[0].h === 6,
+      `pages=${doc.pages.length} ${doc.pages[0] && doc.pages[0].name} ${doc.pages[0] && doc.pages[0].w}x${doc.pages[0] && doc.pages[0].h}`);
+    ok('VSDX page layers are read',
+      doc.pages[0].layers.length === 2 && doc.pages[0].layers[0].name === 'Frame',
+      doc.pages[0].layers.map((l) => l.name).join('|'));
+
+    const r = await doc.renderPage(0, null);
+    ok('VSDX shape geometry is rebuilt as SVG paths',
+      /M 0 0 L 4 0 L 4 2 L 0 2 L 0 0/.test(r.svg) && /stroke="#ff0000"/.test(r.svg) && /fill="#00ff00"/.test(r.svg),
+      'rect path with red stroke + green fill');
+    ok('VSDX text is rendered upright and wrapped-ready',
+      /Hello Rack/.test(r.svg) && /scale\(1 -1\)/.test(r.svg) && /font-size="0\.15/.test(r.svg),
+      'text element with un-flip transform');
+    ok('VSDX page sheet gives the SVG its size',
+      /viewBox="0 0 768 576"/.test(r.svg), '8x6 in at 96 dpi');
+    ok('VSDX render reports its stats',
+      r.stats.shapes === 1 && r.stats.texts === 1, JSON.stringify(r.stats));
+
+    const rHidden = await doc.renderPage(0, { layersOn: new Set([1]) });   /* only "Wires" on */
+    ok('VSDX layer visibility filters shapes',
+      !/Hello Rack/.test(rHidden.svg) && rHidden.stats.shapes === 0, 'layer 0 hidden -> empty page');
+  })().catch((e) => ok('VSDX import suite runs', false, e.message));
+
+  ok('POLYLINE(...) formulas expand into local coordinates',
+    /L 0\.0000 0\.0000 L 10\.0000 20\.0000/.test(IM.geomPath({ children: [
+      { tag: 'Row', attrs: { T: 'MoveTo' }, children: [
+        { tag: 'Cell', attrs: { N: 'X', V: '0' }, children: [], text: '' },
+        { tag: 'Cell', attrs: { N: 'Y', V: '0' }, children: [], text: '' }] },
+      { tag: 'Row', attrs: { T: 'PolylineTo' }, children: [
+        { tag: 'Cell', attrs: { N: 'X', V: '0' }, children: [], text: '' },
+        { tag: 'Cell', attrs: { N: 'Y', V: '0' }, children: [], text: '' },
+        { tag: 'Cell', attrs: { N: 'A', V: 'POLYLINE(0,0,1,1)' }, children: [], text: '' }] },
+    ] }, 10, 20)), 'normalised points scaled by Width/Height');
+
+  ok('text wrapper breaks long lines to the block width',
+    IM.vsdxWrap('a'.repeat(120), 2, 0.1).length > 3 &&
+    IM.vsdxWrap('short text', 10, 0.1).length === 1,
+    'long text wraps, short text stays one line');
+}
+
+/* ============================================================
  * SUMMARY
  * ============================================================ */
-console.log('\n---------------------------------------------');
-console.log('PASSED: ' + passed + '   FAILED: ' + failures.length);
-if (failures.length) {
-  console.log('\nFailed assertions:');
-  failures.forEach((f, i) => console.log('  ' + (i + 1) + '. ' + f));
-  process.exitCode = 1;
-} else {
-  console.log('All assertions passed.');
-  process.exitCode = 0;
-}
+(async () => {
+  await vsdxTests;
+  console.log('\n---------------------------------------------');
+  console.log('PASSED: ' + passed + '   FAILED: ' + failures.length);
+  if (failures.length) {
+    console.log('\nFailed assertions:');
+    failures.forEach((f, i) => console.log('  ' + (i + 1) + '. ' + f));
+    process.exitCode = 1;
+  } else {
+    console.log('All assertions passed.');
+    process.exitCode = 0;
+  }
+})().catch((e) => { console.error('FATAL', e); process.exit(1); });

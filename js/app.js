@@ -965,7 +965,135 @@ async function tabDiagram(el, project, ctx) {
   <div class="page-head slim">
     <div><h2>Wiring diagram preview</h2><p class="muted">Schematic preview of the generated power & communication routing for string 1. Power and communication run on separated rails (R01).</p></div>
   </div>
-  <div class="diagram-wrap">${renderDiagramSVG(project, conns)}</div>`;
+
+  <div class="card" id="vsdx-card">
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      <h3 style="margin:0">Your Visio drawing</h3>
+      <input type="file" id="vsdx-file" accept=".vsdx" style="display:none">
+      <button class="btn btn-primary btn-sm" id="btn-vsdx-open">Open Visio file…</button>
+      <span id="vsdx-saved"></span>
+      <span class="muted small" id="vsdx-status"></span>
+    </div>
+    <p class="muted small" style="margin:6px 0 0">Open the engineer's own .vsdx and it is drawn here exactly as Visio shows it — frame, title block, the AutoCAD rack picture and all pages. Nothing is uploaded to render it.</p>
+    <div id="vsdx-pages" class="btn-row" style="margin:10px 0 4px"></div>
+    <div id="vsdx-layers" class="btn-row" style="margin:0 0 8px"></div>
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
+      <label class="muted small">Zoom</label>
+      <select id="vsdx-zoom" class="input" style="width:auto;padding:4px 8px">
+        <option value="fit" selected>Fit width</option>
+        <option value="0.5">50%</option>
+        <option value="1">100%</option>
+        <option value="1.5">150%</option>
+        <option value="2">200%</option>
+      </select>
+      <button class="btn btn-ghost btn-sm" id="btn-vsdx-save" style="display:none">Save file to project</button>
+    </div>
+    <div id="vsdx-view" style="overflow:auto;max-height:80vh;background:#eef1f6;border-radius:8px;padding:6px"></div>
+  </div>
+
+  <div class="diagram-wrap" style="margin-top:16px">${renderDiagramSVG(project, conns)}</div>`;
+
+  const st = { doc: null, page: 0, layersOn: null, file: null, savedRow: null };
+  const $ = (s) => el.querySelector(s);
+
+  /* ---- offer a previously saved .vsdx ---- */
+  try {
+    const { data: saved } = await cloud.database.from('project_files')
+      .select('*').eq('project_id', project.id).order('created_at', { ascending: false });
+    const row = (saved || []).find((f) => /\.vsdx$/i.test(f.filename || ''));
+    if (row) {
+      st.savedRow = row;
+      const wrap = $('#vsdx-saved');
+      wrap.innerHTML = `<button class="btn btn-ghost btn-sm">Load saved: ${esc(row.filename)}</button>`;
+      wrap.firstChild.onclick = async () => {
+        try {
+          $('#vsdx-status').textContent = 'Downloading saved file…';
+          const { data, error } = await cloud.storage.createSignedUrl(row.storage_path, 600);
+          if (error) throw error;
+          const res = await fetch(data.url || data);
+          if (!res.ok) throw new Error('download failed (' + res.status + ')');
+          await openBuffer(await res.arrayBuffer(), row.filename);
+        } catch (e) { $('#vsdx-status').textContent = ''; toast('Could not load saved Visio file: ' + e.message, 'error'); }
+      };
+    }
+  } catch (e) { /* file list unavailable — ignore */ }
+
+  $('#btn-vsdx-open').onclick = () => $('#vsdx-file').click();
+  $('#vsdx-file').addEventListener('change', async () => {
+    const file = $('#vsdx-file').files[0];
+    if (file) await openBuffer(await file.arrayBuffer(), file.name, file);
+  });
+
+  async function openBuffer(buf, name, file) {
+    const status = $('#vsdx-status');
+    try {
+      status.textContent = 'Reading package…';
+      st.doc = await vsdxOpen(buf, { emfPx: 2400 });
+      st.page = 0; st.layersOn = null; st.file = file || null;
+      status.textContent = `${name} — ${st.doc.pages.length} page${st.doc.pages.length > 1 ? 's' : ''}, ${(buf.byteLength / 1024 / 1024).toFixed(1)} MB`;
+      $('#btn-vsdx-save').style.display = file ? '' : 'none';
+      renderTabs();
+      await render();
+    } catch (e) {
+      status.textContent = '';
+      toast('Could not open ' + name + ': ' + e.message, 'error');
+    }
+  }
+
+  function renderTabs() {
+    $('#vsdx-pages').innerHTML = st.doc.pages.map((p, i) =>
+      `<button class="btn ${i === st.page ? 'btn-primary' : 'btn-ghost'} btn-sm" data-page="${i}">${esc(p.name)}</button>`).join('');
+    el.querySelectorAll('[data-page]').forEach((b) => b.onclick = async () => {
+      st.page = +b.dataset.page; st.layersOn = null; renderTabs(); await render();
+    });
+    const layers = st.doc.pages[st.page].layers;
+    $('#vsdx-layers').innerHTML = layers.length
+      ? `<span class="muted small">Layers:</span>` + layers.map((l) =>
+          `<label class="check"><input type="checkbox" data-layer="${l.ix}" checked> ${esc(l.name)}</label>`).join('')
+      : '';
+    el.querySelectorAll('[data-layer]').forEach((c) => c.onchange = () => {
+      const boxes = [...el.querySelectorAll('[data-layer]')];
+      const allOn = boxes.every((b) => b.checked);
+      st.layersOn = allOn ? null : new Set(boxes.filter((b) => b.checked).map((b) => +b.dataset.layer));
+      render();
+    });
+  }
+
+  async function render() {
+    const t0 = performance.now();
+    const r = await st.doc.renderPage(st.page, { layersOn: st.layersOn });
+    const view = $('#vsdx-view');
+    view.innerHTML = r.svg;
+    const zoom = $('#vsdx-zoom').value;
+    const svg = view.querySelector('svg');
+    if (svg) {
+      if (zoom === 'fit') { svg.style.width = '100%'; svg.style.height = 'auto'; }
+      else { svg.style.width = Math.round(r.page.w * 96 * parseFloat(zoom)) + 'px'; svg.style.height = 'auto'; }
+    }
+    $('#vsdx-status').textContent = `${st.doc.pages[st.page].name}: ${r.stats.shapes} shapes, ${r.stats.texts} labels`
+      + (r.stats.foreign ? `, ${r.stats.foreign} embedded picture${r.stats.foreign > 1 ? 's' : ''}` : '')
+      + ` · ${Math.round(performance.now() - t0)} ms`;
+  }
+
+  $('#vsdx-zoom').onchange = () => { if (st.doc) render(); };
+  $('#btn-vsdx-save').onclick = async () => {
+    if (!st.file) return;
+    const status = $('#vsdx-status');
+    try {
+      if (!session) throw new Error('Sign in required');
+      status.textContent = 'Saving to project storage…';
+      const path = cloud.storage.userPath(session.user.id, `vsdx/${Date.now()}_${st.file.name}`);
+      const up = await cloud.storage.upload(path, st.file, { contentType: 'application/vnd.ms-visio.drawing.main+xml' });
+      if (up.error) throw up.error;
+      await unwrap(cloud.database.from('project_files').insert({
+        project_id: project.id, filename: st.file.name, storage_path: path,
+        size_bytes: st.file.size, aps_status: 'stored', owner_name: currentUser?.name || null,
+      }).select(), 'Save Visio file');
+      status.textContent += ' · saved ✓';
+      toast('Visio file saved to the project.');
+      $('#btn-vsdx-save').style.display = 'none';
+    } catch (e) { toast(e.message || 'Save failed', 'error'); status.textContent = status.textContent.replace(/ · saved ✓$/, ''); }
+  };
 }
 
 /* ---- Tab 8: Drawings (DWG + Autodesk) ---- */
