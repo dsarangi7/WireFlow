@@ -57,15 +57,17 @@ js/emf.js           Minimal EMF (Enhanced Metafile) vector renderer for embedded
 js/vsdx-import.js   .vsdx reader: zip + XML/shape parser, page-to-SVG rebuild (import, not export)
 js/frontview.js     Wiring on the real rack picture: calibration, terminal anchors, hop geometry
 js/numbering.js     Physical module numbering: rack slot model, plan scoring, custom order
+js/sscplan.js       VARIABLE LAYOUT planner: one shortest-cable chain per SSC, per-chain validation
 visio-bridge/visio_bridge.ps1  Visio COM bridge: draws spec wires into the house template (Windows + Visio)
 visio-bridge/RUN-BRIDGE.cmd    One-click demo runner for the Visio bridge
 docs/visio-rack-wiring-skill.md  Visio production workflow learned from the AYK template
 docs/module-numbering.md  How the physical numbering is chosen (auto + custom) and what it costs
 docs/vsdx-import.md  How the Visio import works (zip read, masters, EMF rack picture)
 docs/front-view-wiring.md  Wiring on the real rack: calibration model, geometry, limits
+docs/variable-ssc-layout.md  Variable rack layout: per-SSC chains, assignment, general diagram
 js/aps.js           Autodesk APS client (token, OSS upload, translate, viewer)
 js/app.js           Router, landing page, auth (email OTP), dashboard, workspace UI
-tests/drawing.test.js  285-assertion regression suite (node tests/drawing.test.js)
+tests/drawing.test.js  312-assertion regression suite (node tests/drawing.test.js)
 ```
 
 ## Running locally

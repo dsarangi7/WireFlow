@@ -30,10 +30,47 @@ function download(name, content, mime = 'text/plain') {
   a.href = URL.createObjectURL(new Blob([content], { type: mime }));
   a.download = name; a.click(); URL.revokeObjectURL(a.href);
 }
-async function unwrap(promise, label) {
-  const { data, error } = await promise;
+async function unwrap(promise, label) {  const { data, error } = await promise;
   if (error) { toast(`${label}: ${error.message || error.code}`, 'error'); throw error; }
   return data;
+}
+
+/* ---------------- Visio file → rack underlay ----------------
+ * Lifts the embedded AutoCAD rack picture out of the engineer's .vsdx so the
+ * underlay can be imported straight from the Visio file (no AutoCAD round
+ * trip, no DWG translation). Used by the Configuration import and available
+ * to any tab that needs the real rack picture.
+ * @param {File} file The .vsdx chosen by the engineer.
+ * @return {{blob: Blob, fit: {x,y,w,h}, pages: number}} PNG blob + sheet fit.
+ */
+async function underlayFromVsdxFile(file, onStatus) {
+  const say = (m) => { if (onStatus) onStatus(m); };
+  say('Reading Visio package…');
+  const doc = await vsdxOpen(await file.arrayBuffer(), { emfPx: 2400 });
+  let best = null;
+  for (let i = 0; i < doc.pages.length; i++) {
+    say('Scanning page ' + (i + 1) + ' of ' + doc.pages.length + '…');
+    const r = await doc.renderPage(i, {});
+    for (const f of (r.foreigns || [])) {
+      if (!f.blob && !f.href) continue;
+      if (!best || f.w * f.h > best.f.w * f.h) best = { f: f, page: doc.pages[i] };
+    }
+  }
+  if (!best) {
+    throw new Error('No embedded rack picture was found in this Visio file. Open it in the Diagram tab to see its pages, or export the rack from AutoCAD as DXF/PNG.');
+  }
+  const blob = best.f.blob || vsdxHrefToBlob(best.f.href);
+  if (!blob) throw new Error('The rack picture inside the Visio file could not be decoded.');
+  /* Same page→sheet mapping as the Diagram tab: 101.6 sheet units per inch,
+     0.25 mm per unit, y flipped (page inches are Y-up, the sheet is Y-down). */
+  const U = 101.6;
+  const fit = {
+    x: +(best.f.x * U).toFixed(1),
+    y: +((best.page.h - best.f.y - best.f.h) * U).toFixed(1),
+    w: +(best.f.w * U).toFixed(1),
+    h: +(best.f.h * U).toFixed(1),
+  };
+  return { blob: blob, fit: fit, pages: doc.pages.length };
 }
 
 /* ---------------- auth gate ---------------- */
@@ -426,9 +463,9 @@ function tabConfig(el, project, ctx) {
     </div>
     <div class="card">
       <h3>Rack drawing (underlay)</h3>
-      <p class="muted small">Import your own rack drawing and AYK WireFlow draws the wiring over it. Supports DXF (AutoCAD "Save as DXF"), PNG, JPG and SVG. Binary DWG needs the Autodesk translation — use the Drawings tab for that.</p>
+      <p class="muted small">Import your own rack drawing and AYK WireFlow draws the wiring over it. Supports the engineer's <b>.vsdx</b> (the embedded AutoCAD rack picture is lifted out automatically), DXF (AutoCAD "Save as DXF"), PNG, JPG and SVG. Binary DWG cannot be read in the browser — see the note when you pick one.</p>
       <div class="field inline"><label>Status</label><span class="muted" id="u-status">${project.underlay_url ? esc('Imported: ' + (project.underlay_kind || 'image')) : 'No rack drawing imported'}</span></div>
-      <input type="file" id="u-file" accept=".dxf,.png,.jpg,.jpeg,.svg" style="display:none">
+      <input type="file" id="u-file" accept=".dxf,.png,.jpg,.jpeg,.svg,.vsdx" style="display:none">
       <div class="btn-row">
         <button class="btn btn-ghost" id="u-pick">Import rack drawing…</button>
         <button class="btn btn-ghost" id="u-align">Align to module grid</button>
@@ -494,15 +531,27 @@ function tabConfig(el, project, ctx) {
     try {
       if (!session) throw new Error('Sign in required');
       if (/\.dwg$/i.test(file.name)) {
-        throw new Error('Binary DWG needs Autodesk translation. In AutoCAD use "Save As" -> DXF, then import the DXF here.');
+        throw new Error('Binary DWG cannot be read in the browser. Two ways to get your rack in: (1) in AutoCAD use Save As → DXF and import that DXF here, or (2) if you have the Visio version, pick the .vsdx here — WireFlow takes the embedded rack picture out of it automatically.');
       }
       const isDxf = /\.dxf$/i.test(file.name);
       uStatus.textContent = 'Uploading rack drawing…';
-      const path = cloud.storage.userPath(session.user.id, `underlay/${Date.now()}_${file.name}`);
-      const up = await cloud.storage.upload(path, file, { contentType: file.type || 'application/octet-stream' });
+      let fit = fitFromInputs();
+      let blob = file;
+      let kind = isDxf ? 'dxf' : 'image';
+      let contentType = file.type || 'application/octet-stream';
+      if (/\.vsdx$/i.test(file.name)) {
+        const got = await underlayFromVsdxFile(file, (m) => { uStatus.textContent = m; });
+        blob = new Blob([got.blob], { type: 'image/png' });
+        contentType = 'image/png';
+        kind = 'image';
+        fit = got.fit;
+        uStatus.textContent = 'Uploading rack picture from the Visio file…';
+      }
+      const safeName = /\.vsdx$/i.test(file.name) ? file.name.replace(/\.vsdx$/i, '') + (kind === 'dxf' ? '.dxf' : '.png') : file.name;
+      const path = cloud.storage.userPath(session.user.id, `underlay/${Date.now()}_${safeName}`);
+      const up = await cloud.storage.upload(path, blob, { contentType });
       if (up.error) throw up.error;
-      const fit = fitFromInputs();
-      const ok = await ctx.saveProject({ underlay_url: path, underlay_kind: isDxf ? 'dxf' : 'image', ...fit });
+      const ok = await ctx.saveProject({ underlay_url: path, underlay_kind: kind, ...fit });
       if (!ok) throw new Error('Could not save the underlay reference');
       el.querySelector('#u-remove').disabled = false;
       await afterUnderlayChange('Rack drawing imported.');
@@ -554,6 +603,27 @@ function tabNumbering(el, project, ctx) {
   if (!st.order.length) st.order = rackModuleCells(st.rack);
   const required = Math.max(1, Math.round(rules.modulesPerString || 24)) * Math.max(1, Math.round(rules.strings || 1));
 
+  /* ---- variable layout state: one chain per SSC ---- */
+  const savedLay = (project.config && project.config.layout) || null;
+  st.layoutMode = savedLay && savedLay.mode === 'manual' ? 'manual' : 'auto';
+  st.sscBrush = '';
+  st.layoutTouched = false;
+  st.sscs = []; st.assignment = {};
+  function initLayout() {
+    const lay0 = layoutEnsure({ config: { rules: rules, numbering: saved || null, layout: savedLay } });
+    st.sscs = lay0.sscs;
+    st.assignment = lay0.assignment;
+  }
+  initLayout();
+  function fakeProj() {
+    return { config: {
+      rules: rules,
+      numbering: Object.assign({}, (project.config && project.config.numbering) || {}, { rack: st.rack }),
+      layout: { version: 1, mode: st.layoutMode, sscs: st.sscs, assignment: st.assignment },
+    } };
+  }
+  const groupsNow = () => layoutGroups(fakeProj(), {});
+
   const fmtM = mm => (mm / 1000).toFixed(1) + ' m';
   const metricLine = m =>
     `Cable to buy <b>${fmtM(m.bomMm)}</b> · physical span ${fmtM(m.geomMm)} · ` +
@@ -568,6 +638,12 @@ function tabNumbering(el, project, ctx) {
     const w = rack.cols * cw, h = rack.rows * ch;
     const rank = new Map();
     st.order.forEach((id, i) => rank.set(id, i + 1));
+    /* SSC chain colours on the rack grid — the engineer sees which module
+       belongs to which SSC while assigning */
+    const gcolor = new Map();
+    try {
+      groupsNow().forEach((g, i) => g.order.forEach(id => gcolor.set(id, SSC_PALETTE[i % SSC_PALETTE.length])));
+    } catch (e) { /* grid stays neutral */ }
     let s = '<svg class="rack-grid" viewBox="0 0 ' + w + ' ' + h +
       '" xmlns="http://www.w3.org/2000/svg" font-family="Helvetica, Arial, sans-serif">';
     const pts = st.order.map(id => { const c = slotCell(id); return [(c.c + 0.5) * cw, (c.r + 0.5) * ch]; });
@@ -581,7 +657,7 @@ function tabNumbering(el, project, ctx) {
       const x = cell.c * cw + 2, y = cell.r * ch + 2, bw = cw - 4, bh = ch - 4;
       s += '<rect data-slot="' + cell.c + ',' + cell.r + '" x="' + x.toFixed(1) + '" y="' + y.toFixed(1) +
         '" width="' + bw.toFixed(1) + '" height="' + bh.toFixed(1) + '" rx="3" fill="' + rackKind(cell.kind).color +
-        '" stroke="#94a3b8" stroke-width="1"/>';
+        '" stroke="' + (gcolor.get(slotKey(cell.c, cell.r)) || '#94a3b8') + '" stroke-width="' + (gcolor.has(slotKey(cell.c, cell.r)) ? 2 : 1) + '"/>';
       const n = rank.get(slotKey(cell.c, cell.r));
       const label = n ? String(n) : (cell.kind === 'module' ? '' : (cell.label || rackKind(cell.kind).short));
       if (label) {
@@ -677,6 +753,73 @@ function tabNumbering(el, project, ctx) {
     el.querySelector('#num-fill-serp').onclick = () => { st.order = numberingAutoFill(st.rack, st.order, 'serpentine'); render(); };
   }
 
+  /* ---- variable layout cards ---- */
+  function sscCard() {
+    const groups = groupsNow();
+    const t = layoutTotals(groups);
+    const rows = groups.map((g, i) => {
+      const c = SSC_PALETTE[i % SSC_PALETTE.length];
+      return `<tr>
+        <td><span class="ssc-dot" style="background:${c}"></span>${esc(g.label)}</td>
+        <td class="mono">${esc(g.slot)}</td>
+        <td>${g.modules.length} of ${g.capacity}${g.modules.length > g.capacity ? ' <span class="warn">over</span>' : ''}</td>
+        <td>${fmtM(g.metrics.bomMm)}</td>
+        <td>${g.metrics.longHops} of ${g.metrics.hops}</td>
+        <td>${g.metrics.overflow ? `<span class="warn">${g.metrics.overflow} need release</span>` : '<span class="chip chip-ok">approved parts</span>'}</td>
+        <td class="muted small">${esc(g.planTitle || 'hand-pointed chain')}</td>
+      </tr>`;
+    }).join('');
+    return `
+    <p class="muted small">Every rack is different: the number of SSCs, how many modules each SSC controls and the module arrangement all follow the rack layout diagram. WireFlow plans each SSC's chain independently — shortest cable first, scored against the approved harness catalogue — and the general diagram shows every chain on the real rack.</p>
+    <table class="ssc-table">
+      <thead><tr><th>SSC</th><th>Slot</th><th>Modules</th><th>Cable to buy</th><th>Long jumpers</th><th>Harnesses</th><th>Chain plan</th></tr></thead>
+      <tbody>${rows || '<tr><td colspan="7" class="muted">No SSC on the rack — paint an SSC slot in section 2.</td></tr>'}</tbody>
+    </table>
+    <p class="muted small" style="margin-top:8px">Total: ${t.sscs} SSC chain(s) · ${t.modules} modules · <b>${fmtM(t.bomMm)}</b> of cable · ${t.longHops} long jumper(s)${t.overflow ? ` · <span class="warn">${t.overflow} hop(s) need an engineering release</span>` : ' · everything buildable from approved parts'}</p>
+    <div class="btn-row" style="margin-top:8px">
+      <button class="btn btn-ghost btn-sm" id="ssc-auto">Auto — nearest cable</button>
+      <button class="btn btn-ghost btn-sm" id="ssc-cols">Split by columns</button>
+      <button class="btn btn-ghost btn-sm" id="ssc-rowsB">Split by rows</button>
+      <button class="btn btn-ghost btn-sm" id="ssc-reopt">Re-optimise chains</button>
+      <button class="btn btn-ghost btn-sm" id="ssc-hand">${st.layoutMode === 'manual' ? 'Hand mode ON' : 'Hand mode'}</button>
+    </div>
+    <div class="field inline" style="margin-top:8px"><label>Assign by hand</label>
+      <select id="ssc-pick" style="max-width:220px">
+        <option value="">— pick an SSC, then click modules —</option>
+        ${st.sscs.map((s, i) => `<option value="${esc(s.id)}" ${st.sscBrush === s.id ? 'selected' : ''}>${esc(s.label)} (slot ${esc(s.slot)})</option>`).join('')}
+      </select>
+      <button class="btn btn-ghost btn-sm" id="ssc-clear-order">Clear hand chain</button>
+    </div>`;
+  }
+
+  function genCard() {
+    const groups = groupsNow();
+    const legend = groups.map((g, i) => {
+      const c = SSC_PALETTE[i % SSC_PALETTE.length];
+      const per = st._genSummary && st._genSummary[i];
+      return `<div class="gen-legend-item">
+        <span class="ssc-dot" style="background:${c}"></span>
+        <b>${esc(g.label)}</b> · ${g.order.length} modules${per ? ` · red ${(per.powerMm / 1000).toFixed(1)} m · green ${(per.commMm / 1000).toFixed(1)} m · longest hop ${Math.round(per.maxHopMm)} mm` : ''}
+      </div>`;
+    }).join('');
+    if (fvReady() && st.cal.ok) {
+      const segs = st.showWiring ? layoutFrontView(groups, st.cal, {}) : [];
+      st._genSummary = layoutFrontViewSummary(segs, groups);
+      return `<div id="gen-view" style="border:1px solid #e2e8f0;border-radius:8px;overflow:hidden">${fvSvg(st.cal, { src: project.underlay.src }, segs, { width: 920, sscLabels: true })}</div>
+        <div class="gen-legend" style="margin-top:8px">${legend}</div>
+        <p class="muted small">The general diagram: every SSC's own chain on the real rack — power red, communication green, module numbers colour-coded per SSC. Each chain starts and ends at its own SSC.</p>`;
+    }
+    return `<div class="num-plans">${groups.map((g, i) => `
+      <div class="num-plan">
+        <div>${numberingPreviewSVG(st.rack, g.order, { width: 150, height: 110 })}</div>
+        <div>
+          <div style="font-weight:700;color:${SSC_PALETTE[i % SSC_PALETTE.length]}">${esc(g.label)} — ${g.order.length} modules</div>
+          <div class="plan-metrics">${metricLine(g.metrics)}</div>
+          <div class="muted small">Calibrate the grid on the rack picture (below) to draw this chain on the real rack.</div>
+        </div>
+      </div>`).join('')}</div>`;
+  }
+
   function render() {
     st.cal.cols = st.rack.cols; st.cal.rows = st.rack.rows;
     if (st.cal.ok && st.cal.pitchX > 0) {
@@ -688,6 +831,11 @@ function tabNumbering(el, project, ctx) {
     <div class="page-head slim">
       <div><h2>Physical module numbering</h2>
         <p class="muted">M1…M${required} is a property of the rack, not of the schematic: the chain starts and ends next to the SSC and has to skip the ACDP, MSM and junction-box slots. Set it once — the netlist, the cable schedule and the drawing all follow it.</p></div>
+    </div>
+    <div class="card" style="margin-bottom:16px">
+      <h3>0 · Variable layout — one chain per SSC</h3>
+      ${sscCard()}
+      <div class="actions" style="margin-top:10px"><button class="btn btn-primary" id="ssc-apply">Apply chains to the project (netlist · schedule · general diagram)</button><span class="muted" id="ssc-saved"></span></div>
     </div>
     <div class="card-grid">
       <div class="card">
@@ -730,6 +878,10 @@ function tabNumbering(el, project, ctx) {
       <h3>Wiring on the real rack</h3>
       ${fvInner()}
     </div>
+    <div class="card" style="margin-top:16px" id="gen-card">
+      <h3>General diagram — every SSC chain on the real rack</h3>
+      ${genCard()}
+    </div>
     <div class="card" style="margin-top:16px">
       <h3>3 · Numbering</h3>
       <div class="btn-row">
@@ -766,6 +918,7 @@ function tabNumbering(el, project, ctx) {
       st.order = st.order.filter(id => rackIsModule(st.rack, id));
       if (!st.order.length) st.order = rackModuleCells(st.rack);
       st.plans = null;
+      initLayout();
       render();
       toast('Rack layout applied.');
     };
@@ -773,6 +926,7 @@ function tabNumbering(el, project, ctx) {
       st.rack = defaultRack(rules.modulesPerString);
       st.order = rackModuleCells(st.rack);
       st.plans = null;
+      initLayout();
       render();
       toast('Rack reset to the default 3-column layout.');
     };
@@ -783,6 +937,8 @@ function tabNumbering(el, project, ctx) {
       const t = e.target.closest('[data-slot]');
       if (!t) return;
       const id = t.dataset.slot;
+      /* hand-assigning modules to an SSC chain has priority over painting */
+      if (st.sscBrush) { assignSsc(id); return; }
       if (st.mode === 'custom') {
         if (!rackIsModule(st.rack, id)) { toast('That slot is not a battery module — paint it as a module first.', 'error'); return; }
         st.order = numberingToggle(st.order, id);
@@ -829,6 +985,7 @@ function tabNumbering(el, project, ctx) {
       const ctr = fvSlotCenter(st.cal, c, r);
       if (Math.abs(px - ctr.x) > st.cal.pitchX * 0.55 || Math.abs(py - ctr.y) > st.cal.pitchY * 0.55) return;
       const id = c + ',' + r;
+      if (st.sscBrush) { assignSsc(id); return; }
       if (st.mode === 'custom') {
         if (!rackIsModule(st.rack, id)) { toast('That slot is not a battery module — paint it as a module first.', 'error'); return; }
         st.order = numberingToggle(st.order, id);
@@ -837,6 +994,61 @@ function tabNumbering(el, project, ctx) {
       }
       if (st.brush !== 'module') { st.cal.devices[st.brush] = pt; render(); }
     });
+    /* ---- variable layout handlers ---- */
+    function assignSsc(id) {
+      if (!rackIsModule(st.rack, id)) { toast('Pick a battery module slot for ' + st.sscBrush + '.', 'error'); return; }
+      st.assignment[id] = st.sscBrush;
+      const s = st.sscs.find(x => x.id === st.sscBrush);
+      if (s) {
+        const at = s.order.indexOf(id);
+        if (at >= 0) s.order.splice(at, 1); else s.order.push(id);
+      }
+      st.layoutTouched = true;
+      render();
+    }
+    const reassign = (how) => {
+      st.assignment = layoutAssign(fakeProj(), how);
+      st.sscs.forEach(s => { s.order = []; });
+      st.layoutTouched = true;
+      render();
+      toast('Modules shared out over the SSCs (' + how + ') — press "Apply chains" to make it the project layout.');
+    };
+    el.querySelector('#ssc-auto').onclick = () => reassign('nearest');
+    el.querySelector('#ssc-cols').onclick = () => reassign('column');
+    el.querySelector('#ssc-rowsB').onclick = () => reassign('row');
+    el.querySelector('#ssc-reopt').onclick = () => {
+      st.layoutMode = 'auto';
+      st.sscs.forEach(s => { s.order = []; });
+      st.layoutTouched = true;
+      render();
+      toast('Chains re-optimised for shortest cable from each SSC.');
+    };
+    el.querySelector('#ssc-hand').onclick = () => {
+      st.layoutMode = st.layoutMode === 'manual' ? 'auto' : 'manual';
+      if (st.layoutMode === 'manual') st.sscs.forEach(s => { s.order = []; });
+      st.layoutTouched = true;
+      render();
+      toast(st.layoutMode === 'manual'
+        ? 'Hand mode: pick an SSC below, then click its modules in chain order (M1 first).'
+        : 'Back to automatic — the shortest chains are computed for you.');
+    };
+    el.querySelector('#ssc-pick').onchange = (e) => { st.sscBrush = e.target.value; render(); };
+    el.querySelector('#ssc-clear-order').onclick = () => {
+      st.sscs.forEach(s => { s.order = []; });
+      st.layoutTouched = true;
+      render();
+    };
+    el.querySelector('#ssc-apply').onclick = async () => {
+      const groups = groupsNow();
+      if (!groups.length) { toast('No SSC on the rack layout — paint an SSC slot first.', 'error'); return; }
+      layoutApply(project, groups);
+      const ok = await ctx.saveProject({ config: project.config });
+      if (!ok) return;
+      await ctx.getNetlist(true);
+      el.querySelector('#ssc-saved').textContent =
+        `Applied — ${groups.length} chain(s), ${groups.reduce((a, g) => a + g.order.length, 0)} modules ✓`;
+      toast('Variable layout applied: strings, netlist, schedule, validations and the drawings now follow the per-SSC chains.');
+    };
     el.querySelector('#num-save').onclick = async () => {
       const m2 = numberMetrics(st.rack, rules, st.order);
       const num = {
@@ -1100,7 +1312,11 @@ async function tabDiagram(el, project, ctx) {
           const res = await fetch(data.url || data);
           if (!res.ok) throw new Error('download failed (' + res.status + ')');
           await openBuffer(await res.arrayBuffer(), row.filename);
-        } catch (e) { $('#vsdx-status').textContent = ''; toast('Could not load saved Visio file: ' + e.message, 'error'); }
+        } catch (e) {
+          $('#vsdx-status').textContent = '';
+          toast('Could not load the saved Visio file (' + (e && e.message ? e.message : 'network error') +
+            '). Open the .vsdx from your disk with "Open Visio file…" instead.', 'error');
+        }
       };
     }
   } catch (e) { /* file list unavailable — ignore */ }
@@ -1176,7 +1392,15 @@ async function tabDiagram(el, project, ctx) {
       if (!session) throw new Error('Sign in required');
       status.textContent = 'Preparing wiring base…';
       const f = r.foreigns.reduce((a, b) => (a.w * a.h >= b.w * b.h ? a : b));
-      const blob = await (await fetch(f.href)).blob();
+      /* The picture blob travels with the render record — no fetch needed.
+         A fetch on the data:/blob: href is exactly what fails with
+         "Failed to fetch" in some browsers, so it is only a fallback. */
+      let blob = f.blob || null;
+      if (!blob) {
+        try { blob = await (await fetch(f.href)).blob(); }
+        catch (e1) { blob = vsdxHrefToBlob(f.href); }
+      }
+      if (!blob) throw new Error('The embedded rack picture could not be read from this page — re-open the .vsdx from disk and try again.');
       const path = cloud.storage.userPath(session.user.id, `underlay/${Date.now()}_rack-from-visio.png`);
       const up = await cloud.storage.upload(path, blob, { contentType: 'image/png' });
       if (up.error) throw up.error;

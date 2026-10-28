@@ -14,7 +14,7 @@ const start = app.indexOf('function tabNumbering(el, project, ctx) {');
 const end = app.indexOf('/* ---- Tab 3: Netlist ---- */');
 if (start < 0 || end < 0) throw new Error('tabNumbering bounds');
 const scope = new Function(src + '\n' + fs.readFileSync('js/rack.js', 'utf8') + '\n' +
-  fs.readFileSync('js/numbering.js', 'utf8') + '\n' + fv + '\n' +
+  fs.readFileSync('js/numbering.js', 'utf8') + '\n' + fs.readFileSync('js/sscplan.js', 'utf8') + '\n' + fv + '\n' +
   'const esc = s => String(s ?? ""); const toast = m => console.log("TOAST:", m);\n' +
   app.slice(start, end) + '\nreturn tabNumbering;');
 const tabNumbering = scope();

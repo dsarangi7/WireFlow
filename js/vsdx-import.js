@@ -219,12 +219,12 @@ async function vsdxOpen(buf, opts) {
         if (pkg.has(p2)) {
           return /\.(emf|wmf)$/i.test(p2)
             ? await emfImage(pkg.get(p2), emfPx, mediaCache, p2)
-            : { href: vsdxDataUrl(pkg.get(p2), p2), note: 'ole' };
+            : Object.assign({ note: 'ole' }, vsdxImageBytes(pkg.get(p2), p2));
         }
       }
       return null;
     }
-    return { href: vsdxDataUrl(bytes, path), note: null };
+    return Object.assign({ note: null }, vsdxImageBytes(bytes, path));
   }
 
   async function renderPage(ix, popts) {
@@ -270,7 +270,8 @@ async function vsdxOpen(buf, opts) {
             const hw = (Math.abs(W / 2 * Math.cos(ang)) + Math.abs(H / 2 * Math.sin(ang)));
             const hh = (Math.abs(W / 2 * Math.sin(ang)) + Math.abs(H / 2 * Math.cos(ang)));
             foreigns.push({
-              href: img.href, note: img.note || fd.attrs.ForeignType || 'foreign',
+              href: img.href, blob: img.blob || null,
+              note: img.note || fd.attrs.ForeignType || 'foreign',
               x: vsdxNum(cells.PinX) - hw, y: vsdxNum(cells.PinY) - hh,
               w: hw * 2, h: hh * 2,
             });
@@ -491,23 +492,59 @@ function lineStyle(cells) {
 }
 
 /* ---------- images ---------------------------------------- */
-function vsdxDataUrl(bytes, path) {
+/* Turns raw media bytes into { href, blob }. The blob is kept on the record
+ * so downstream consumers ("use as wiring base") never have to re-fetch the
+ * href — a fetch on a data:/blob: URL is the thing that fails hardest. */
+function vsdxImageBytes(bytes, path) {
   const mime = /\.png$/i.test(path) ? 'image/png' : /\.jpe?g$/i.test(path) ? 'image/jpeg'
     : /\.gif$/i.test(path) ? 'image/gif' : /\.svg$/i.test(path) ? 'image/svg+xml' : /\.bmp$/i.test(path) ? 'image/bmp'
     : /\.emf$/i.test(path) ? 'image/x-emf' : 'application/octet-stream';
+  let blob = null;
+  try {
+    if (typeof Blob !== 'undefined' && bytes) blob = new Blob([bytes], { type: mime });
+  } catch (e) { blob = null; }
   let bin = '';
   const chunk = 0x8000;
   for (let i = 0; i < bytes.length; i += chunk) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
-  return 'data:' + mime + ';base64,' + (typeof btoa === 'function' ? btoa(bin) : Buffer.from(bin, 'binary').toString('base64'));
+  const href = 'data:' + mime + ';base64,' + (typeof btoa === 'function' ? btoa(bin) : Buffer.from(bin, 'binary').toString('base64'));
+  return { href: href, blob: blob };
+}
+
+/* Recovers a Blob from an href when the record lost its blob reference
+ * (data: URL parse, never a network call). */
+function vsdxHrefToBlob(href) {
+  if (href && /^data:/i.test(href)) {
+    const m = String(href).match(/^data:([^;,]+)?(;base64)?,(.*)$/s);
+    if (!m) return null;
+    try {
+      const mime = m[1] || 'application/octet-stream';
+      if (m[2]) {
+        const bin = atob(m[3]);
+        const arr = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+        return new Blob([arr], { type: mime });
+      }
+      return new Blob([decodeURIComponent(m[3])], { type: mime });
+    } catch (e) { return null; }
+  }
+  return null;
 }
 
 async function emfImage(bytes, maxPx, cache, path) {
   if (cache.has(path)) return cache.get(path);
   const cv = emfToCanvas(bytes, maxPx);
-  const href = typeof cv.canvas.convertToBlob === 'function'
-    ? await (async () => { const b = await cv.canvas.convertToBlob({ type: 'image/png' }); return URL.createObjectURL(b); })()
-    : cv.canvas.toDataURL('image/png');
-  const rec = { href: href, note: 'emf', stats: cv.stats, width: cv.width, height: cv.height };
+  let blob = null;
+  if (typeof cv.canvas.convertToBlob === 'function') {
+    blob = await cv.canvas.convertToBlob({ type: 'image/png' });
+  }
+  let href = null;
+  if (blob && typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function') {
+    href = URL.createObjectURL(blob);
+  } else {
+    href = cv.canvas.toDataURL('image/png');
+    blob = blob || vsdxHrefToBlob(href);
+  }
+  const rec = { href: href, blob: blob, note: 'emf', stats: cv.stats, width: cv.width, height: cv.height };
   cache.set(path, rec);
   return rec;
 }

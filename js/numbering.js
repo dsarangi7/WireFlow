@@ -295,10 +295,18 @@ function numberingHopKind(rack, a, b) {
  * @param {Array<string>} order Numbered slot keys (M1 first).
  * @return {Object} Metrics record.
  */
-function numberMetrics(rack, rules, order) {
+function numberMetrics(rack, rules, order, countsOpt) {
   const r = Object.assign({}, DEFAULT_RULES, rules || {});
-  const N = Math.max(1, Math.round(rackNum(r.modulesPerString, 24)));
-  const S = Math.max(1, Math.round(rackNum(r.strings, 1)));
+  const counts = (Array.isArray(countsOpt) && countsOpt.length)
+    ? countsOpt.map((n) => Math.max(1, Math.round(rackNum(n, 1))))
+    : (() => {
+      const N0 = Math.max(1, Math.round(rackNum(r.modulesPerString, 24)));
+      const S0 = Math.max(1, Math.round(rackNum(r.strings, 1)));
+      const a = [];
+      for (let s = 0; s < S0; s++) a.push(N0);
+      return a;
+    })();
+  const S = counts.length;
   const cat = harnessCatalogue(r);
   const ids = (Array.isArray(order) ? order : []).filter(id => rackIsModule(rack, id));
   const sscCells = rackDeviceCells(rack, 'ssc');
@@ -310,8 +318,11 @@ function numberMetrics(rack, rules, order) {
   let bomMm = 0, geomMm = 0, longHops = 0, maxHopMm = 0, hops = 0, shortMm = 0;
   let overflow = 0, unnumbered = 0;
 
+  let off = 0;
   for (let s = 0; s < S; s++) {
-    const block = ids.slice(s * N, (s + 1) * N);
+    const N = counts[s];
+    const block = ids.slice(off, off + N);
+    off += N;
     if (block.length < N) unnumbered += N - block.length;
     const ssc = sscCells[s] || sscCells[0] || null;
 
@@ -356,7 +367,7 @@ function numberMetrics(rack, rules, order) {
 
   return {
     moduleCount: ids.length,
-    required: N * S,
+    required: counts.reduce((a, b) => a + b, 0),
     unnumbered: unnumbered,
     hops: hops,
     longHops: longHops,
@@ -624,7 +635,7 @@ function resolveNumbering(project) {
   if (!num || !num.rack) return null;
   const rack = rackEnsure(num.rack);
   const stored = (Array.isArray(num.order) ? num.order : []).filter(id => rackIsModule(rack, id));
-  const metrics = numberMetrics(rack, rules, stored);
+  const metrics = numberMetrics(rack, rules, stored, num.counts);
   if (stored.length && !metrics.unnumbered) {
     return { order: stored, mode: num.mode || 'custom', planId: num.planId || null, planTitle: num.planTitle || null, metrics: metrics, rack: rack };
   }
@@ -647,9 +658,19 @@ function resolveNumbering(project) {
  */
 function numberingHopInfo(num, rules, s, m) {
   if (!num || !num.rack || !Array.isArray(num.order) || !num.order.length) return null;
-  const N = Math.max(1, Math.round(rackNum(rules && rules.modulesPerString, 24)));
-  const a = num.order[s * N + (m - 1)];
-  const b = num.order[s * N + m];
+  /* VARIABLE LAYOUT: strings start at their own offset when the numbering
+     carries per-chain counts (one chain per SSC). */
+  const offs = (typeof numberingOffsets === 'function')
+    ? numberingOffsets(num, rules)
+    : (() => {
+      const N0 = Math.max(1, Math.round(rackNum(rules && rules.modulesPerString, 24)));
+      const o = [];
+      for (let i = 0; i < Math.max(1, Math.round(rackNum(rules && rules.strings, 1))); i++) o.push(i * N0);
+      return o;
+    })();
+  const base = offs[s] !== undefined ? offs[s] : s * Math.max(1, Math.round(rackNum(rules && rules.modulesPerString, 24)));
+  const a = num.order[base + (m - 1)];
+  const b = num.order[base + m];
   if (!a || !b) return null;
   return { kind: numberingHopKind(num.rack, a, b), mm: rackSpan(num.rack, a, b, 'power') };
 }

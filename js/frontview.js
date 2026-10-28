@@ -87,26 +87,44 @@ function fvDist(a, b) { return Math.hypot(b.x - a.x, b.y - a.y); }
  *   comm   SSC S → M1 N,  Mx S → Mx+1 N (zig-zag),           MN S → SSC N
  * Riser runs use a vertical rail right of the rack, as the engineer does.
  * Every segment carries its physical length in mm.
+ *
+ * Variable layout (multi-SSC) options:
+ *   opts.sscSlot     'c,r' slot key of THIS chain's SSC (its own anchor)
+ *   opts.railOffset  n   shifts the riser rail right so chains never
+ *                        overprint each other
+ *   opts.group / groupLabel / groupColor   tag every segment with the
+ *                        chain it belongs to (general diagram)
  * ---------------------------------------------------------------------- */
 function fvWiring(order, cal, opts) {
   const o = opts || {};
   const slot = (id) => { const [c, r] = id.split(',').map(Number); return { c: c, r: r }; };
+  const railShift = fvNum(o.railOffset, 0) * cal.pitchX * 0.06;
   const railX = fvNum(o.railX, NaN) ||
-    Math.min(cal.imgW - cal.pitchX * 0.15, fvSlotCenter(cal, cal.cols - 1, 0).x + cal.pitchX * 0.62);
+    Math.min(cal.imgW - cal.pitchX * 0.15, fvSlotCenter(cal, cal.cols - 1, 0).x + cal.pitchX * 0.62) + railShift;
   const segs = [];
   const push = (kind, pts, m) => {
     let len = 0;
     for (let i = 1; i < pts.length; i++) len += fvDist(pts[i - 1], pts[i]);
-    segs.push({ kind: kind, pts: pts, lenMm: len * cal.mmPerPx, m: m });
+    segs.push({
+      kind: kind, pts: pts, lenMm: len * cal.mmPerPx, m: m,
+      group: o.group, groupLabel: o.groupLabel, groupColor: o.groupColor,
+    });
   };
 
   const mods = (order || []).map(slot);
   mods.forEach((s, i) => {
     const t = fvTerminals(cal, s.c, s.r);
-    segs.push({ kind: 'label', pts: [{ x: t.face.left + t.face.w / 2, y: t.face.top + t.face.h * 0.3 }], m: i + 1, lenMm: 0 });
+    segs.push({
+      kind: 'label', pts: [{ x: t.face.left + t.face.w / 2, y: t.face.top + t.face.h * 0.3 }],
+      m: i + 1, lenMm: 0,
+      group: o.group, groupLabel: o.groupLabel, groupColor: o.groupColor,
+    });
   });
 
-  const ssc = cal.devices && cal.devices.ssc;
+  const sscSlotCell = o.sscSlot ? slot(o.sscSlot) : null;
+  const ssc = (sscSlotCell && Number.isFinite(sscSlotCell.c) && Number.isFinite(sscSlotCell.r))
+    ? fvSlotCenter(cal, sscSlotCell.c, sscSlotCell.r)
+    : (cal.devices && cal.devices.ssc);
   const anchor = ssc || { x: fvSlotCenter(cal, Math.floor((cal.cols - 1) / 2), cal.rows).x,
                           y: fvSlotCenter(cal, 0, cal.rows - 1).y + cal.pitchY * 1.35 };
 
@@ -197,12 +215,24 @@ function fvSvg(cal, img, segs, opts) {
       s += `<circle cx="${(p.x * sx).toFixed(1)}" cy="${(p.y * sy).toFixed(1)}" r="${(k.width * Math.min(sx, sy)).toFixed(2)}" fill="${k.color}" pointer-events="none"/>`;
     }
   }
-  /* M labels */
+  /* M labels — colour-coded per SSC chain on the general diagram */
   for (const seg of segs) {
     if (seg.kind !== 'label') continue;
+    const fill = seg.groupColor || '#0f172a';
     s += `<text data-slot-label="${seg.m}" x="${(seg.pts[0].x * sx).toFixed(1)}" y="${(seg.pts[0].y * sy).toFixed(1)}" ` +
-      `text-anchor="middle" font-weight="700" font-size="${fs.toFixed(1)}" fill="#0f172a" ` +
+      `text-anchor="middle" font-weight="700" font-size="${fs.toFixed(1)}" fill="${fill}" ` +
       `stroke="#ffffff" stroke-width="${(fs * 0.16).toFixed(1)}" paint-order="stroke" pointer-events="none">M${seg.m}</text>`;
+    if (o.sscLabels && seg.groupLabel) {
+      const fs2 = fs * 0.62;
+      s += `<text x="${(seg.pts[0].x * sx).toFixed(1)}" y="${((seg.pts[0].y + fs * 0.95) * sy).toFixed(1)}" ` +
+        `text-anchor="middle" font-weight="700" font-size="${fs2.toFixed(1)}" fill="${fill}" ` +
+        `stroke="#ffffff" stroke-width="${(fs2 * 0.16).toFixed(1)}" paint-order="stroke" pointer-events="none">${escXmlFv(seg.groupLabel)}</text>`;
+    }
   }
   return s + '</svg>';
+}
+
+/* Escapes label text for the SVG (module/SSC labels are engineering names). */
+function escXmlFv(s) {
+  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }

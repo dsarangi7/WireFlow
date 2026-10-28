@@ -51,10 +51,16 @@ function loadEngine() {
     'numberingHopKind', 'numberMetrics', 'rackTraverse', 'tspOrder', 'numberingPlans',
     'numberingToggle', 'numberingAutoFill', 'resolveNumbering', 'numberingHopInfo',
     'numberingSheetPrimitives', 'numberingPreviewSVG',
+    'stringModuleCounts', 'numberingOffsets',
+    'layoutEnsure', 'layoutAssign', 'layoutGroups', 'layoutGroupOrder', 'layoutTsp',
+    'groupMetrics', 'layoutValidate', 'layoutApply', 'layoutTotals',
+    'layoutFrontView', 'layoutFrontViewSummary', 'layoutAssignmentRows', 'SSC_PALETTE',
   ];
   const factory = new Function(src + '\n' +
     fs.readFileSync(path.join(path.dirname(ENGINE), 'rack.js'), 'utf8') + '\n' +
-    fs.readFileSync(path.join(path.dirname(ENGINE), 'numbering.js'), 'utf8') +
+    fs.readFileSync(path.join(path.dirname(ENGINE), 'numbering.js'), 'utf8') + '\n' +
+    fs.readFileSync(path.join(path.dirname(ENGINE), 'frontview.js'), 'utf8') + '\n' +
+    fs.readFileSync(path.join(path.dirname(ENGINE), 'sscplan.js'), 'utf8') +
     '\nreturn {' + exportNames.join(',') + '};');
   const E = factory();
   /* VSDX export lives in its own file but shares the engine's globals
@@ -65,7 +71,8 @@ function loadEngine() {
     + '\nreturn { vsdxExport, VSDX_LAYERS };';
   const vsdxFactory = new Function(src + '\n' + zipSrc + '\n' +
     fs.readFileSync(path.join(path.dirname(ENGINE), 'rack.js'), 'utf8') + '\n' +
-    fs.readFileSync(path.join(path.dirname(ENGINE), 'numbering.js'), 'utf8') + '\n' + vsdxSrc);
+    fs.readFileSync(path.join(path.dirname(ENGINE), 'numbering.js'), 'utf8') + '\n' +
+    fs.readFileSync(path.join(path.dirname(ENGINE), 'sscplan.js'), 'utf8') + '\n' + vsdxSrc);
   const vsdxOut = vsdxFactory();
   E.vsdxExport = vsdxOut.vsdxExport;
   E.VSDX_LAYERS = vsdxOut.VSDX_LAYERS;
@@ -1132,6 +1139,183 @@ projPartial.config.numbering = { mode: 'custom', rack: RACK24, order: ['0,0', '0
 const resolved = E.resolveNumbering(projPartial);
 ok('an incomplete custom order falls back to the cheapest automatic plan',
   resolved && resolved.mode === 'auto' && resolved.order.length === 24, 'auto-repaired');
+
+/* ============================================================
+ * VARIABLE LAYOUT — one chain per SSC (js/sscplan.js)
+ * The rack layout changes per project: how many SSCs, how many
+ * modules each SSC controls and the module arrangement.
+ * ============================================================ */
+{
+  /* 4×4 rack: 12 modules + TWO SSCs (left/right) with ACDP and MSM between.
+     The SSCs sit under their own halves so the approved M2S harnesses reach. */
+  const cells = [];
+  for (let r = 0; r < 3; r++) for (let c = 0; c < 4; c++) cells.push({ c, r, kind: 'module', label: '' });
+  cells.push({ c: 0, r: 3, kind: 'ssc', label: 'SSC-1' });
+  cells.push({ c: 1, r: 3, kind: 'acdp', label: 'ACDP' });
+  cells.push({ c: 2, r: 3, kind: 'msm', label: 'MSM' });
+  cells.push({ c: 3, r: 3, kind: 'ssc', label: 'SSC-2' });
+  const RACK2 = Object.assign(E.rackEnsure(null), {
+    cols: 4, rows: 4, pitchX: 420, pitchY: 240, moduleW: 380, moduleH: 210, termInsetY: 50,
+    cells: cells,
+  });
+  const RULES2 = Object.assign({}, E.DEFAULT_RULES, {
+    strings: 1, modulesPerString: 24, m2sPowerLen: 1200, m2sCommLen: 1200,
+  });
+  const projVar = {
+    name: 'Variable rack', config: {
+      rules: RULES2,
+      layout: {
+        version: 1, mode: 'auto',
+        sscs: [
+          { id: 'SSC-1', label: 'SSC-1', slot: '0,3', jb: 'JB-1', capacity: 6, order: [] },
+          { id: 'SSC-2', label: 'SSC-2', slot: '3,3', jb: 'JB-2', capacity: 6, order: [] },
+        ],
+        assignment: null,
+      },
+    },
+  };
+  projVar.config.numbering = { mode: 'auto', rack: RACK2, order: [] };
+
+  const lay = E.layoutEnsure(projVar);
+  ok('variable layout: the SSC device slots on the rack become the chains',
+    lay.sscs.length === 2 && lay.sscs[0].slot === '0,3' && lay.sscs[1].slot === '3,3',
+    lay.sscs.map(s => s.id + '@' + s.slot).join(' '));
+  ok('variable layout: saved capacities survive normalisation',
+    lay.sscs[0].capacity === 6 && lay.sscs[1].capacity === 6, '6 + 6');
+
+  const assign = E.layoutAssign(projVar, 'nearest');
+  const per1 = Object.values(assign).filter(v => v === 'SSC-1').length;
+  const per2 = Object.values(assign).filter(v => v === 'SSC-2').length;
+  ok('variable layout: nearest assignment honours the per-SSC capacities',
+    per1 === 6 && per2 === 6, `SSC-1=${per1} SSC-2=${per2}`);
+
+  const bands = E.layoutAssign(projVar, 'column');
+  const band1 = Object.keys(bands).filter(k => bands[k] === 'SSC-1');
+  ok('variable layout: band assignment splits the rack into contiguous bands',
+    band1.length === 6 && band1.every(id => E.slotCell(id).c < 2), 'SSC-1 owns the left half');
+
+  const groups = E.layoutGroups(projVar);
+  const flat = groups.reduce((a, g) => a.concat(g.order), []);
+  ok('variable layout: every module lands in exactly one SSC chain',
+    flat.length === 12 && new Set(flat).size === 12, `${groups.map(g => g.label + ':' + g.order.length).join(' ')}`);
+  ok('variable layout: each chain is scored with its own harness cable',
+    groups.every(g => g.metrics.moduleCount === g.order.length && g.metrics.hops === g.order.length - 1),
+    groups.map(g => `${g.label} ${g.metrics.bomMm}mm`).join(' '));
+  const m2sFix = 2 * RULES2.m2sPowerLen + 2 * RULES2.m2sCommLen;
+  ok('variable layout: chain cable includes the four M2S harnesses',
+    groups.every(g => g.metrics.bomMm >= m2sFix), `fixed part ${m2sFix}mm`);
+
+  /* chain quality: the optimised chain must beat the reading order on
+     physical span (the whole point of the planner) */
+  const reading = E.rackModuleCells(RACK2);
+  const readHalf = reading.slice(0, 7);
+  const opt = E.layoutGroupOrder(RACK2, E.DEFAULT_RULES, '2,3', readHalf);
+  ok('variable layout: the optimised chain is at least as good as reading order',
+    opt.metrics.geomMm <= E.groupMetrics(RACK2, E.DEFAULT_RULES, '2,3', readHalf).geomMm,
+    `opt ${opt.metrics.geomMm} vs reading ${E.groupMetrics(RACK2, E.DEFAULT_RULES, '2,3', readHalf).geomMm} (${opt.planId})`);
+
+  /* overflow: a hop longer than any approved harness must be flagged */
+  const far = E.groupMetrics(RACK2, E.DEFAULT_RULES, '2,3', ['0,0', '3,2']);
+  ok('variable layout: a hop past the catalogue cap needs an engineering release',
+    far.overflow > 0 && far.maxHopMm > 0, `overflow=${far.overflow} max=${far.maxHopMm}mm`);
+
+  const vals = E.layoutValidate(projVar);
+  ok('variable layout: all L-checks pass on a complete layout',
+    vals.every(v => v.status === 'pass') && vals.length === 6,
+    vals.map(v => v.id + '=' + v.status).join(' '));
+
+  /* break it: capacities that cannot take every module must fail L02 —
+     the overfull chain is flagged, never silently dropped */
+  const broken = JSON.parse(JSON.stringify(projVar));
+  broken.config.layout.sscs[1].capacity = 3;
+  const valsBroken = E.layoutValidate(broken);
+  ok('variable layout: an overfull SSC fails L02, never passes silently',
+    valsBroken.find(v => v.id === 'L02').status === 'fail', 'over capacity detected');
+
+  /* write-back: chains become strings */
+  E.layoutApply(projVar, groups);
+  ok('variable layout: apply writes one string per SSC with per-chain counts',
+    projVar.config.rules.strings === 2 &&
+    JSON.stringify(projVar.config.numbering.counts) === '[6,6]' &&
+    projVar.config.numbering.order.length === 12,
+    `strings=${projVar.config.rules.strings} counts=${projVar.config.numbering.counts}`);
+  ok('stringModuleCounts: variable counts win over the uniform rules',
+    JSON.stringify(E.stringModuleCounts(projVar)) === '[6,6]', '[6,6]');
+  const projUniform = { config: { rules: Object.assign({}, E.DEFAULT_RULES, { strings: 2, modulesPerString: 24 }) } };
+  ok('stringModuleCounts: without a layout it stays uniform (regression guard)',
+    JSON.stringify(E.stringModuleCounts(projUniform)) === '[24,24]', '[24,24]');
+
+  /* netlist on the variable layout */
+  const connsVar = E.generateNetlist(projVar);
+  const cnt = (cls) => connsVar.filter(c => c.cls === cls).length;
+  ok('variable netlist: one M2M power hop per chain link (5 + 5)',
+    cnt('M2M-PWR') === 10, `M2M-PWR=${cnt('M2M-PWR')}`);
+  ok('variable netlist: M2S and bus harnesses follow the chain count',
+    cnt('M2S-PWR') === 4 && cnt('M2S-COMM') === 4 && cnt('SSC-JB') === 4,
+    `M2S-PWR=${cnt('M2S-PWR')} M2S-COMM=${cnt('M2S-COMM')} SSC-JB=${cnt('SSC-JB')}`);
+  ok('variable netlist: the second chain starts at its own M1',
+    connsVar.some(c => c.from === 'S1-SSC:P+' && c.to === 'S1:M1:P+') &&
+    connsVar.some(c => c.from === 'S2-SSC:P+' && c.to === 'S2:M1:P+'), 'two chain anchors');
+  ok('variable netlist: the last module of EACH chain closes on its SSC minus (R05)',
+    connsVar.some(c => c.from === 'S1-SSC:P-' && c.to === 'S1:M6:P-') &&
+    connsVar.some(c => c.from === 'S2-SSC:P-' && c.to === 'S2:M6:P-'), 'both chains closed');
+
+  const valsVar = E.runValidations(projVar, connsVar);
+  const v01 = valsVar.find(v => v.id === 'V01');
+  ok('variable validations: V01 counts each chain at its own length',
+    v01.status === 'pass' && /\[6, 6\]/.test(v01.detail), v01.detail);
+  ok('variable validations: V02–V05 hold for every chain',
+    ['V02', 'V03', 'V04', 'V05'].every(id => valsVar.find(v => v.id === id).status === 'pass'),
+    valsVar.filter(v => ['V02', 'V03', 'V04', 'V05'].includes(v.id)).map(v => v.id + '=' + v.status).join(' '));
+
+  /* hop info honours the per-chain offsets: hop 1 of string 2 is the
+     first link of the second chain, NOT slot 25 of one long chain */
+  const hop = E.numberingHopInfo(projVar.config.numbering, projVar.config.rules, 1, 1);
+  const c7 = E.slotCell(projVar.config.numbering.order[6]);
+  const c8 = E.slotCell(projVar.config.numbering.order[7]);
+  ok('variable numbering: hop lookup uses the per-chain offsets',
+    hop && c7 && c8 && hop.mm === Math.round(E.rackSpan(RACK2, E.slotKey(c7.c, c7.r), E.slotKey(c8.c, c8.r), 'power')),
+    `kind=${hop && hop.kind} mm=${hop && hop.mm}`);
+
+  /* sheet layout draws exactly the modules each chain controls */
+  const sheetVar = E.buildSheetLayout(projVar, connsVar);
+  const labels = sheetVar.modules.map(m => m.label);
+  ok('variable sheet: S1 draws 6 modules and S2 draws 6',
+    labels.filter(l => l.startsWith('S1:')).length === 6 && labels.filter(l => l.startsWith('S2:')).length === 6,
+    `S1=${labels.filter(l => l.startsWith('S1:')).length} S2=${labels.filter(l => l.startsWith('S2:')).length}`);
+
+  /* front view: chains carry their own anchor, rail and colour */
+  const cal = E.fvCalib ? null : null; /* fvCalib lives in the import scope */
+  {
+    const fvSrc2 = fs.readFileSync(path.join(path.dirname(ENGINE), 'frontview.js'), 'utf8');
+    const fvNames = ['fvCalib', 'fvWiring', 'fvSvg', 'fvSummary'];
+    const fv2 = new Function(fvSrc2 + '\nreturn {' + fvNames.join(',') + '};')();
+    const cal2 = fv2.fvCalib({ imgW: 1000, imgH: 700, x0: 80, y0: 60, pitchX: 120, pitchY: 90, cols: 4, rows: 4, mmPerPx: 1 });
+    const segs = E.layoutFrontView(groups, cal2, { showWiring: true });
+    ok('variable front view: each chain gets its own riser pair and colour',
+      segs.filter(s => s.kind === 'sscp').length === 4 &&
+      segs.every(s => s.group === 0 || s.group === 1) &&
+      segs.filter(s => s.group === 0).every(s => s.groupColor === E.SSC_PALETTE[0]),
+      `risers=${segs.filter(s => s.kind === 'sscp').length}`);
+    const r0 = segs.find(s => s.kind === 'sscp' && s.group === 0).pts[1].x;
+    const r1 = segs.find(s => s.kind === 'sscp' && s.group === 1).pts[1].x;
+    ok('variable front view: the chains use separate riser rails',
+      r1 > r0, `rail0=${r0.toFixed(0)} rail1=${r1.toFixed(0)}`);
+    const per = E.layoutFrontViewSummary(segs, groups);
+    ok('variable front view: per-SSC cable summary',
+      per.length === 2 && per.every(p => p.powerMm > 0 && p.commMm > 0 && p.modules > 0),
+      per.map(p => `${p.label} red=${p.powerMm.toFixed(0)}`).join(' '));
+    const svgGen = fv2.fvSvg(cal2, { src: 'data:image/png;base64,STUB' }, segs, { sscLabels: true });
+    ok('variable front view: general diagram labels the chains',
+      /SSC-1/.test(svgGen) && /SSC-2/.test(svgGen), 'legend labels present');
+  }
+
+  /* layoutTotals reconciles with the chains */
+  const tot = E.layoutTotals(groups);
+  ok('variable layout: totals reconcile with the per-SSC metrics',
+    tot.sscs === 2 && tot.modules === 12 && tot.bomMm === groups.reduce((a, g) => a + g.metrics.bomMm, 0),
+    `bom=${tot.bomMm}mm`);
+}
 
 /* ============================================================
  * VSDX IMPORT + EMF (read the engineer's real Visio file back)

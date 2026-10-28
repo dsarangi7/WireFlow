@@ -85,14 +85,67 @@ function numberingHopFor(num, rules, s, m) {
   try { return numberingHopInfo(num, rules, s, m); } catch (e) { return null; }
 }
 
+/**
+ * Modules per string — the VARIABLE layout aware form.
+ * Every SSC controls its own number of modules (the rack layout decides),
+ * so the netlist and the validations work with one count per chain.
+ * @param {Object} project Project record.
+ * @return {Array<number>} Module count for each string / SSC chain.
+ */
+function stringModuleCounts(project) {
+  const cfg = (project && project.config) || {};
+  const rules = Object.assign({}, DEFAULT_RULES, cfg.rules || {});
+  const num = cfg.numbering || null;
+  if (num && Array.isArray(num.counts) && num.counts.length) {
+    const counts = num.counts.map((n) => Math.max(1, Math.round(+n || 1)));
+    if (counts.reduce((a, b) => a + b, 0) > 0) return counts;
+  }
+  if (typeof layoutGroups === 'function' && cfg.layout) {
+    try {
+      const groups = layoutGroups(project);
+      if (groups.length) return groups.map((g) => Math.max(1, g.order.length));
+    } catch (e) { /* fall through to the configured uniform layout */ }
+  }
+  const N = Math.max(1, Math.round(+rules.modulesPerString || 1));
+  const S = Math.max(1, Math.round(+rules.strings || 1));
+  const out = [];
+  for (let s = 0; s < S; s++) out.push(N);
+  return out;
+}
+
+/**
+ * Start index of every string inside the flat numbering order.
+ * @param {Object} num Saved numbering block (may carry variable counts).
+ * @param {Object} rules Engine rules (uniform fallback).
+ * @return {Array<number>} Offset per string.
+ */
+function numberingOffsets(num, rules) {
+  if (num && Array.isArray(num.counts) && num.counts.length) {
+    const offs = [];
+    let acc = 0;
+    for (const raw of num.counts) {
+      const n = Math.max(1, Math.round(+raw || 1));
+      offs.push(acc);
+      acc += n;
+    }
+    return offs;
+  }
+  const N = Math.max(1, Math.round(rackNum(rules && rules.modulesPerString, 24)));
+  const S = Math.max(1, Math.round(rackNum(rules && rules.strings, 1)));
+  const offs = [];
+  for (let s = 0; s < S; s++) offs.push(s * N);
+  return offs;
+}
+
 /* ---------- netlist generation (deterministic) ---------- */
 function generateNetlist(project) {
   const cfg = project.config || {};
   const rules = { ...DEFAULT_RULES, ...(cfg.rules || {}) };
   const exceptions = cfg.exceptions || [];
   const spans = cfg.spans || [];
-  const N = rules.modulesPerString;
-  const S = rules.strings;
+  /* VARIABLE LAYOUT: each SSC chain carries its own module count. */
+  const counts = stringModuleCounts(project);
+  const S = counts.length;
   const cat = harnessCatalogue(rules);
   const conns = [];
   let seq = 1;
@@ -100,6 +153,7 @@ function generateNetlist(project) {
 
   for (let s = 0; s < S; s++) {
     const sid = `S${s + 1}`;
+    const N = counts[s];
     // R04: SSC String plus -> M1 plus (M2S power)
     push({ network: 'power', cls: 'M2S-PWR', from: `${sid}-SSC:P+`, to: `${sid}:M1:P+`, routedLen: rules.m2sPowerLen });
     // R05: SSC String minus -> M24 minus (M2S power)
@@ -217,14 +271,18 @@ function runValidations(project, conns) {
   const cfg = project.config || {};
   const rules = { ...DEFAULT_RULES, ...(cfg.rules || {}) };
   const exceptions = cfg.exceptions || [];
-  const N = rules.modulesPerString, S = rules.strings;
+  /* VARIABLE LAYOUT: one module count per SSC chain. */
+  const counts = stringModuleCounts(project);
+  const S = counts.length;
+  const N = Math.max.apply(null, counts);
   const out = [];
   const add = (id, ok, detail) => out.push({ id, label: validationLabel(id), status: ok ? 'pass' : 'fail', detail });
 
   /* Hard gate: an unconfigured project produces an empty netlist, and an empty
      netlist used to satisfy every check trivially. Bail out before V01 so the
-     release gate can never be passed by a project with no modules. */
-  if (!(Number(S) >= 1) || !(Number(N) >= 1)) {
+     release gate can never be passed by a project with no modules. The gate
+     tests the CONFIGURED rules — the variable layout can only refine them. */
+  if (!(Number(rules.strings) >= 1) || !(Number(rules.modulesPerString) >= 1)) {
     return VALIDATION_SPEC.map(v => ({ id: v.id, label: v.label, status: 'fail', detail: NO_CONFIG_DETAIL }));
   }
 
@@ -236,29 +294,32 @@ function runValidations(project, conns) {
   });
   let v01ok = true, v01detail = [];
   for (let s = 0; s < S; s++) {
-    for (let m = 1; m <= N; m++) if (!modRefs.has(`S${s + 1}:M${m}`)) { v01ok = false; v01detail.push(`S${s + 1}:M${m} unconnected`); }
+    for (let m = 1; m <= counts[s]; m++) if (!modRefs.has(`S${s + 1}:M${m}`)) { v01ok = false; v01detail.push(`S${s + 1}:M${m} unconnected`); }
   }
-  add('V01', v01ok, v01ok ? `${S} strings × ${N} modules present` : v01detail.join(', '));
+  add('V01', v01ok, v01ok ? `${S} SSC chain(s) × [${counts.join(', ')}] modules present` : v01detail.join(', '));
 
   // V02 power degree: every module exactly one in + one out (power)
   const pIn = {}, pOut = {};
   conns.filter(c => c.network === 'power').forEach(c => { pOut[c.from] = (pOut[c.from] || 0) + 1; pIn[c.to] = (pIn[c.to] || 0) + 1; });
   let v02bad = [];
-  for (let s = 0; s < S; s++) for (let m = 1; m <= N; m++) {
-    const pin = pIn[`S${s + 1}:M${m}:P+`] || 0;
-    // interior modules feed the next module's plus; the last module's minus receives from SSC minus (R05)
-    const pout = m < N ? (pOut[`S${s + 1}:M${m}:P-`] || 0) : (pIn[`S${s + 1}:M${N}:P-`] || 0);
-    if (pin !== 1 || pout !== 1) v02bad.push(`S${s + 1}:M${m}`);
+  for (let s = 0; s < S; s++) {
+    const Ns = counts[s];
+    for (let m = 1; m <= Ns; m++) {
+      const pin = pIn[`S${s + 1}:M${m}:P+`] || 0;
+      // interior modules feed the next module's plus; the last module's minus receives from SSC minus (R05)
+      const pout = m < Ns ? (pOut[`S${s + 1}:M${m}:P-`] || 0) : (pIn[`S${s + 1}:M${Ns}:P-`] || 0);
+      if (pin !== 1 || pout !== 1) v02bad.push(`S${s + 1}:M${m}`);
+    }
   }
   add('V02', v02bad.length === 0, v02bad.length ? `Degree mismatch: ${v02bad.join(', ')}` : 'All modules have exactly one power in and one power out');
 
   // V03 polarity sequence: Mx- -> Mx+1+ exists for every adjacent pair
   let v03missing = [];
-  for (let s = 0; s < S; s++) for (let m = 1; m < N; m++) {
+  for (let s = 0; s < S; s++) for (let m = 1; m < counts[s]; m++) {
     const ok = conns.some(c => c.network === 'power' && c.cls === 'M2M-PWR' && c.from === `S${s + 1}:M${m}:P-` && c.to === `S${s + 1}:M${m + 1}:P+`);
     if (!ok) v03missing.push(`S${s + 1}:M${m}→M${m + 1}`);
   }
-  add('V03', v03missing.length === 0, v03missing.length ? `Missing links: ${v03missing.slice(0, 4).join(', ')}${v03missing.length > 4 ? '…' : ''}` : 'SSC+ → M1+ … M24− → SSC− verified');
+  add('V03', v03missing.length === 0, v03missing.length ? `Missing links: ${v03missing.slice(0, 4).join(', ')}${v03missing.length > 4 ? '…' : ''}` : 'SSC+ → M1+ … last module − → SSC− verified');
   function num(ref) { const m = ref.match(/M(\d+)/); return m ? +m[1] : 0; }
 
   // V04 communication predecessor/successor
@@ -266,13 +327,14 @@ function runValidations(project, conns) {
   conns.filter(c => c.network === 'comm').forEach(c => { cOut[c.from] = (cOut[c.from] || 0) + 1; cIn[c.to] = (cIn[c.to] || 0) + 1; });
   let v04bad = [];
   for (let s = 0; s < S; s++) {
-    for (let m = 1; m < N; m++) {
+    const Ns = counts[s];
+    for (let m = 1; m < Ns; m++) {
       const din = cIn[`S${s + 1}:M${m}:N`] || 0, dout = cOut[`S${s + 1}:M${m}:S`] || 0;
       if (din !== 1 || dout !== 1) v04bad.push(`S${s + 1}:M${m}`);
     }
     // endpoint module: receives on N (from M(N-1)) and on S (from SSC N) — both must be present
-    const dinEnd = cIn[`S${s + 1}:M${N}:N`] || 0, dinTerm = cIn[`S${s + 1}:M${N}:S`] || 0;
-    if (dinEnd !== 1 || dinTerm !== 1) v04bad.push(`S${s + 1}:M${N}`);
+    const dinEnd = cIn[`S${s + 1}:M${Ns}:N`] || 0, dinTerm = cIn[`S${s + 1}:M${Ns}:S`] || 0;
+    if (dinEnd !== 1 || dinTerm !== 1) v04bad.push(`S${s + 1}:M${Ns}`);
   }
   add('V04', v04bad.length === 0, v04bad.length ? `Chain broken at: ${v04bad.join(', ')}` : 'Daisy chain closed from SSC S to SSC N');
 
@@ -627,8 +689,10 @@ function buildSheetLayout(project, conns) {
   const p = project || {};
   const cfg = p.config || {};
   const rules = Object.assign({}, DEFAULT_RULES, cfg.rules || {});
-  const N = sheetClampInt(rules.modulesPerString, 1, 96);
-  const stringsConfigured = sheetClampInt(rules.strings, 1, 96);
+  /* VARIABLE LAYOUT: every SSC chain draws only the modules it controls. */
+  const counts = stringModuleCounts(p).map((n) => sheetClampInt(n, 1, 96));
+  const stringsConfigured = counts.length;
+  const N = Math.max.apply(null, counts.concat([1]));
   /* One sheet carries at most 4 strings; longer configurations need continuation
      sheets and must say so on the drawing instead of silently dropping strings. */
   const S = Math.min(stringsConfigured, 4);
@@ -787,7 +851,7 @@ function buildSheetLayout(project, conns) {
       const colX = gridX + c * (colW + colGap);
       for (let r = 0; r < rows; r++) {
         const m = c * rows + r + 1;
-        if (m > N) continue;
+        if (m > counts[s]) continue;
         const my = blockY + r * rowH;
         mods.push({
           s: s, c: c, r: r, m: m,
