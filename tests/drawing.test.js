@@ -46,9 +46,15 @@ function loadEngine() {
     'scheduleCSV', 'harnessCatalogue', 'sheetLayer', 'sheetTextWidth', 'sheetAscii',
     'buildSheetLayout', 'renderDiagramSVG', 'dxfExport', 'scrExport', 'specJson',
     'rackParseDxf', 'rackFitDxf', 'rackDefaultFit',
+    'RACK_CELL_KINDS', 'slotKey', 'slotCell', 'defaultRack', 'rackEnsure', 'rackCell',
+    'rackIsModule', 'rackModuleCells', 'rackDeviceCells', 'rackPoint', 'rackSpan',
+    'numberingHopKind', 'numberMetrics', 'rackTraverse', 'tspOrder', 'numberingPlans',
+    'numberingToggle', 'numberingAutoFill', 'resolveNumbering', 'numberingHopInfo',
+    'numberingSheetPrimitives', 'numberingPreviewSVG',
   ];
   const factory = new Function(src + '\n' +
-    fs.readFileSync(path.join(path.dirname(ENGINE), 'rack.js'), 'utf8') +
+    fs.readFileSync(path.join(path.dirname(ENGINE), 'rack.js'), 'utf8') + '\n' +
+    fs.readFileSync(path.join(path.dirname(ENGINE), 'numbering.js'), 'utf8') +
     '\nreturn {' + exportNames.join(',') + '};');
   const E = factory();
   /* VSDX export lives in its own file but shares the engine's globals
@@ -982,7 +988,142 @@ ok('VSDX with image underlay: media/image2 part + page rel rId2 + Foreign shape 
 const vsdxNoU = Buffer.from(E.vsdxExport(conns, project)).toString('latin1');
 eq('VSDX without underlay has no image2 part', vsdxNoU.includes('image2.'), false);
 
-eq('VSDX layer count includes RACK', E.VSDX_LAYERS.length, 13);
+eq('VSDX layer count includes RACK and NUMBER', E.VSDX_LAYERS.length, 14);
+ok('VSDX carries a NUMBER layer for the physical module numbers',
+  E.VSDX_LAYERS.some(l => l.name === 'NUMBER'), 'NUMBER present');
+
+/* ============================================================
+ * Physical module numbering (M1..MN on the rack)
+ * ============================================================ */
+const N24 = Object.assign({}, E.DEFAULT_RULES, { strings: 1 });   /* one rack = one string */
+const RACK24 = E.defaultRack(24);
+eq('default rack: three columns of modules', RACK24.cols, 3);
+eq('default rack: module rows plus a device row', RACK24.rows, 9);
+eq('default rack: 24 module slots for a 24-module string',
+  E.rackModuleCells(RACK24).length, 24);
+eq('default rack: one SSC slot', E.rackDeviceCells(RACK24, 'ssc').length, 1);
+ok('default rack: SSC, ACDP and MSM sit in the bottom device row',
+  E.rackDeviceCells(RACK24, 'ssc').concat(E.rackDeviceCells(RACK24, 'acdp'), E.rackDeviceCells(RACK24, 'msm'))
+    .every(id => E.slotCell(id).r === RACK24.rows - 1),
+  'device row ' + (RACK24.rows - 1));
+
+/* Serpentine: down column 1, up column 2, down column 3 — every hop
+   lands on a physical neighbour, so no long jumper is needed. */
+const snake = E.rackTraverse(RACK24, { major: 'col', colDir: 1, rowDir: 1, serpentine: true });
+eq('serpentine traversal numbers every module slot', snake.length, 24);
+eq('serpentine starts top-left', snake[0], '0,0');
+eq('serpentine folds at the bottom of the first column', snake[8], '1,7');
+eq('serpentine continues upward in the second column', snake[9], '1,6');
+const snakeM = E.numberMetrics(RACK24, N24, snake);
+eq('serpentine needs no long jumper', snakeM.longHops, 0);
+eq('serpentine numbers every required module', snakeM.unnumbered, 0);
+
+const raster = E.rackTraverse(RACK24, { major: 'col', colDir: 1, rowDir: 1, serpentine: false });
+const rasterM = E.numberMetrics(RACK24, N24, raster);
+ok('straight raster costs more cable than the serpentine',
+  rasterM.longHops > snakeM.longHops && rasterM.bomMm > snakeM.bomMm,
+  'raster ' + rasterM.longHops + ' long hops / ' + rasterM.bomMm + ' mm vs snake ' +
+  snakeM.longHops + ' / ' + snakeM.bomMm + ' mm');
+
+eq('hop classification: vertical neighbour', E.numberingHopKind(RACK24, '0,0', '0,1'), 'adjacent');
+eq('hop classification: horizontal neighbour', E.numberingHopKind(RACK24, '0,0', '1,0'), 'adjacent');
+eq('hop classification: column change', E.numberingHopKind(RACK24, '0,0', '1,7'), 'column');
+eq('hop classification: skipped slot', E.numberingHopKind(RACK24, '0,0', '0,3'), 'gap');
+
+const plans = E.numberingPlans(RACK24, N24, { limit: 6 });
+ok('automatic mode offers several scored options', plans.length >= 4 && plans.length <= 6,
+  plans.length + ' options');
+ok('options are ranked cheapest cable first',
+  plans.every((p, i) => i === 0 ||
+    (plans[i - 1].metrics.overflow <= p.metrics.overflow &&
+      plans[i - 1].metrics.bomMm <= p.metrics.bomMm)),
+  plans.map(p => p.metrics.bomMm).join(' <= '));
+ok('every option only numbers module slots (devices skipped)',
+  plans.every(p => p.order.every(id => E.rackIsModule(RACK24, id))), 'all slots are modules');
+ok('the best option is at least as good as the naive reading order',
+  plans[0].metrics.bomMm <= E.numberMetrics(RACK24, N24, E.rackModuleCells(RACK24)).bomMm,
+  plans[0].metrics.bomMm + ' mm');
+ok('every option numbers all 24 modules',
+  plans.every(p => p.order.length === 24), '24 each');
+ok('option previews are SVG', plans.every(p =>
+  E.numberingPreviewSVG(RACK24, p.order, {}).startsWith('<svg')), 'previews render');
+
+/* Custom mode: the engineer clicks slots, removes one, auto-fills the rest. */
+let custom = [];
+custom = E.numberingToggle(custom, '0,0');
+custom = E.numberingToggle(custom, '0,1');
+eq('custom mode: two clicks number M1 and M2', custom.length, 2);
+custom = E.numberingToggle(custom, '0,0');
+eq('custom mode: clicking a numbered slot removes it', custom.length, 1);
+custom = E.numberingAutoFill(RACK24, custom, 'nearest');
+eq('custom mode: auto-fill completes the order', custom.length, 24);
+eq('custom mode: the first click the engineer keeps stays M1', custom[0], '0,1');
+const customM = E.numberMetrics(RACK24, N24, custom);
+eq('custom mode: no module left unnumbered', customM.unnumbered, 0);
+
+/* Netlist follows the numbering: a zig-zag order jumps between columns,
+   so those hops must be built with the long jumper (R09 / R10). */
+const zig = [];
+for (let r = 0; r < 8; r++) { zig.push(E.slotKey(0, r)); zig.push(E.slotKey(1, r)); zig.push(E.slotKey(2, r)); }
+const projZig = JSON.parse(JSON.stringify(project));
+projZig.config.rules = Object.assign({}, E.DEFAULT_RULES, { strings: 1 });
+projZig.config.numbering = { mode: 'custom', rack: RACK24, order: zig };
+const connsZig = E.generateNetlist(projZig);
+const longZig = connsZig.filter(c => c.cls === 'M2M-PWR' && c.length === E.DEFAULT_RULES.longPower);
+ok('zig-zag numbering drives the long power jumper on the column hops',
+  longZig.length === 7, longZig.length + ' of 23 hops need R09 445 mm');
+ok('derived hops are marked as coming from the rack numbering',
+  longZig.every(c => /derived from rack numbering/.test(c.exception || '')), 'flagged');
+const projSnake = JSON.parse(JSON.stringify(project));
+projSnake.config.rules = Object.assign({}, E.DEFAULT_RULES, { strings: 1 });
+projSnake.config.numbering = { mode: 'auto', planId: 'serpentine', rack: RACK24, order: snake };
+const connsSnake = E.generateNetlist(projSnake);
+eq('serpentine numbering keeps every hop on the standard jumper',
+  connsSnake.filter(c => c.cls === 'M2M-PWR' && c.length === E.DEFAULT_RULES.powerJumper).length, 23);
+ok('netlist carries the physical span of every hop',
+  connsSnake.filter(c => c.cls === 'M2M-PWR').every(c => typeof c.geometryMm === 'number' && c.geometryMm > 0),
+  'geometry_mm present');
+
+/* specJson exposes the numbering so downstream tools can label the rack. */
+const specZig = JSON.parse(E.specJson(connsZig, projZig));
+ok('JSON spec carries the numbering block',
+  !!specZig.numbering && specZig.numbering.sequence.length === 24 &&
+  specZig.numbering.mode === 'custom', 'sequence of 24');
+ok('JSON spec records the device slots that the numbering skips',
+  specZig.numbering.rack.devices.some(d => d.kind === 'ssc') &&
+  specZig.numbering.rack.devices.some(d => d.kind === 'acdp') &&
+  specZig.numbering.rack.devices.some(d => d.kind === 'msm'), 'SSC + ACDP + MSM');
+ok('JSON spec records the physical span per connection',
+  specZig.connections.some(c => typeof c.geometry_mm === 'number'), 'geometry_mm');
+
+/* The numbers are drawn onto the imported rack. */
+const projNum = JSON.parse(JSON.stringify(project));
+projNum.underlay_url = 'underlay/demo.dxf';
+projNum.underlay_x = 120; projNum.underlay_y = 280;
+projNum.underlay_w = 1000; projNum.underlay_h = 640;
+projNum.config.rules = Object.assign({}, E.DEFAULT_RULES, { strings: 1 });
+projNum.config.numbering = { mode: 'auto', rack: RACK24, order: snake };
+const layNum = E.buildSheetLayout(projNum, connsSnake);
+const numPrims = layNum.primitives.filter(p => p.layer === 'NUMBER');
+const numText = numPrims.filter(p => p.type === 'text').map(p => p.text);
+ok('the rack drawing gets one circled number per module',
+  numPrims.filter(p => p.type === 'circle').length === 24 &&
+  numText.indexOf('M1') >= 0 && numText.indexOf('M24') >= 0,
+  numPrims.length + ' NUMBER prims');
+ok('device slots are labelled on the rack too',
+  numText.indexOf('SSC') >= 0 && numText.indexOf('ACDP') >= 0 && numText.indexOf('MSM') >= 0,
+  numText.filter(t => !/^M\d+$/.test(t)).join(','));
+ok('numbering is only drawn when a rack drawing is attached',
+  E.buildSheetLayout(JSON.parse(JSON.stringify(project)), conns).primitives
+    .filter(p => p.layer === 'NUMBER').length === 0, 'clean without underlay');
+
+/* resolveNumbering repairs an incomplete saved order. */
+const projPartial = JSON.parse(JSON.stringify(project));
+projPartial.config.rules = Object.assign({}, E.DEFAULT_RULES, { strings: 1 });
+projPartial.config.numbering = { mode: 'custom', rack: RACK24, order: ['0,0', '0,1'] };
+const resolved = E.resolveNumbering(projPartial);
+ok('an incomplete custom order falls back to the cheapest automatic plan',
+  resolved && resolved.mode === 'auto' && resolved.order.length === 24, 'auto-repaired');
 
 /* ============================================================
  * SUMMARY

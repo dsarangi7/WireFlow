@@ -9,6 +9,11 @@ rule engine implementing the Wiring Diagram Tool Engineering Rules (R01–R12, V
 
 ## Features
 
+- **Physical module numbering** — M1…MN is derived from the rack itself: the chain starts
+  and ends next to the SSC and skips the ACDP / MSM / junction-box slots. Automatic mode
+  scores serpentine, straight-raster and optimised (nearest-neighbour + 2-opt) paths against
+  the approved harness catalogue and lists the cheapest options; custom mode lets the
+  engineer click the order straight onto the imported rack drawing
 - **Rule-driven netlists** — normal string power sequence (SSC+ → M1+ … M24− → SSC−)
   and communication daisy-chain (S/N) generated from the approved connection templates
 - **Golden-sheet drawings** — A3 engineering sheet with frame, zone ticks, title block,
@@ -37,14 +42,16 @@ styles.css          Full application styling
 js/config.js        Cloud service public config (endpoint + publishable key)
 js/engine.js        Deterministic wiring engine + sheet layout + SVG/DXF/SCR renderers
 js/zip.js           Minimal store-method ZIP writer (for .vsdx packaging)
-js/vsdx.js          Visio .vsdx generator (OPC package, 13 layers, 1D wires, logo, underlay, Notes page)
+js/vsdx.js          Visio .vsdx generator (OPC package, 14 layers, 1D wires, logo, underlay, Notes page)
 js/rack.js          Rack underlay import: DXF parser + sheet fitting
+js/numbering.js     Physical module numbering: rack slot model, plan scoring, custom order
 visio-bridge/visio_bridge.ps1  Visio COM bridge: draws spec wires into the house template (Windows + Visio)
 visio-bridge/RUN-BRIDGE.cmd    One-click demo runner for the Visio bridge
 docs/visio-rack-wiring-skill.md  Visio production workflow learned from the AYK template
+docs/module-numbering.md  How the physical numbering is chosen (auto + custom) and what it costs
 js/aps.js           Autodesk APS client (token, OSS upload, translate, viewer)
 js/app.js           Router, landing page, auth (email OTP), dashboard, workspace UI
-tests/drawing.test.js  221-assertion regression suite (node tests/drawing.test.js)
+tests/drawing.test.js  260-assertion regression suite (node tests/drawing.test.js)
 ```
 
 ## Running locally
@@ -64,13 +71,14 @@ deterministic engine outputs (netlist → validation → exports all run client-
 
 ```bash
 node tests/drawing.test.js
-# PASSED: 208  FAILED: 0
+# PASSED: 260  FAILED: 0
 ```
 
 Covers: netlist/validation regression, release-gate matrix, sheet bounds at extreme
 configurations, SVG well-formedness and text clipping, DXF R12 structure (validated with
-ezdxf), CAD text ASCII-safety (cp1252 boundary), and VSDX package integrity (CRC32 of
-every entry, central-directory geometry).
+ezdxf), CAD text ASCII-safety (cp1252 boundary), VSDX package integrity (CRC32 of every
+entry, central-directory geometry), and the physical numbering (rack slot model, plan
+scoring, custom click order, numbering → netlist → JSON spec → drawn numbers).
 
 ## Security notes
 
@@ -91,3 +99,4 @@ every entry, central-directory geometry).
 | R11 | Two bus power cables per SSC to the junction box |
 | R12 | 130 mm power deduction (configurable per cable family) |
 | V01–V12 | Mandatory validation gate — release blocked on any failure |
+| Numbering | A hop between two module slots that are not physical neighbours takes R09/R10 (445/650 mm) instead of R07/R08 (100/450 mm); hops are derived from the saved rack numbering |

@@ -209,6 +209,18 @@ table.data tr:hover td { background: #f8fafc; }
 
 .steps-ol { padding-left: 20px; display: grid; gap: 8px; color: #334155; font-size: 14px; }
 
+/* physical module numbering */
+.rack-grid { width: 100%; height: auto; display: block; max-width: 780px; }
+.rack-grid rect { cursor: pointer; }
+.rack-grid rect:hover { stroke: #f97316; stroke-width: 2.4; }
+.brush-row { display: flex; gap: 6px; flex-wrap: wrap; margin: 4px 0 14px; }
+.brush { padding: 6px 12px; border-radius: 8px; border: 1px solid var(--line); background: #fff; font-size: 13px; cursor: pointer; font-family: inherit; color: var(--ink); }
+.brush:hover { border-color: #cbd5e1; }
+.brush.on { border-color: var(--accent); background: var(--accent-soft); font-weight: 700; color: #c2410c; }
+.num-plan { display: grid; grid-template-columns: 150px 1fr auto; gap: 16px; align-items: center; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; margin-bottom: 10px; background: #fff; }
+.num-plan.best { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(249,115,22,.16); }
+.plan-metrics { font-size: 13px; color: #475569; margin-top: 4px; }
+
 @media (max-width: 900px) {
   .hero { grid-template-columns: 1fr; }
   .feature-grid, .price-grid { grid-template-columns: 1fr; }
@@ -217,4 +229,5 @@ table.data tr:hover td { background: #f8fafc; }
   .side-nav { flex-direction: row; }
   .main { padding: 20px; }
   .strip { flex-direction: column; }
+  .num-plan { grid-template-columns: 1fr; }
 }

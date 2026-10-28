@@ -107,6 +107,7 @@ function renderLanding() {
     <div class="feature-grid">
       <div class="feature-card"><div class="f-ico">⚙</div><h3>Rule-driven netlists</h3><p>Normal string power and communication sequences (SSC+ → M1+ … M24− → SSC−, daisy-chain S/N) generated from the approved connection templates — no manual netlist entry.</p></div>
       <div class="feature-card"><div class="f-ico">📐</div><h3>Cable length model</h3><p>Cross-rack cables computed from three route segments plus installation allowance, with the power deduction and rounding rules applied exactly as engineering defined them.</p></div>
+      <div class="feature-card"><div class="f-ico">🔢</div><h3>Physical module numbering</h3><p>M1…MN is chosen against the real rack: the chain starts and ends next to the SSC and skips the ACDP / MSM slots. Automatic mode scores serpentine, raster and optimised paths against the harness catalogue; custom mode lets the engineer click the order straight onto the imported rack drawing.</p></div>
       <div class="feature-card"><div class="f-ico">✅</div><h3>Validation gate</h3><p>Twelve mandatory checks — polarity, communication chain, harness compatibility, quantity reconciliation, exception approvals — block release on any unresolved item.</p></div>
       <div class="feature-card"><div class="f-ico">🗂</div><h3>Cable schedule &amp; BOM</h3><p>Every drawn cable appears exactly once in the schedule with harness part number, manufactured length and quantity. One-click CSV export.</p></div>
       <div class="feature-card"><div class="f-ico">🧩</div><h3>Autodesk integration</h3><p>Upload DWG references, translate and inspect them in the embedded Autodesk Viewer, and export DXF / AutoCAD scripts that feed Design Automation.</p></div>
@@ -326,7 +327,7 @@ async function renderProjectPage(id) {
   const cfg = project.config || { rules: { ...DEFAULT_RULES }, exceptions: [], spans: [] };
   let netlist = null, validations = null;
 
-  const tabs = ['Configuration', 'Netlist', 'Exceptions', 'Validation', 'Schedule & BOM', 'Diagram', 'Drawings (DWG)'];
+  const tabs = ['Configuration', 'Numbering', 'Netlist', 'Exceptions', 'Validation', 'Schedule & BOM', 'Diagram', 'Drawings (DWG)'];
   shell(`
     <div class="proj-head">
       <a class="back" href="#/app">← Projects</a>
@@ -341,7 +342,7 @@ async function renderProjectPage(id) {
   `, 'dash');
 
   const body = document.getElementById('tab-body');
-  const views = [tabConfig, tabNetlist, tabExceptions, tabValidation, tabSchedule, tabDiagram, tabDrawings];
+  const views = [tabConfig, tabNumbering, tabNetlist, tabExceptions, tabValidation, tabSchedule, tabDiagram, tabDrawings];
 
   async function saveProject(patch) {
     const { data, error } = await cloud.database.from('projects').update({ ...patch, updated_at: new Date().toISOString() }).eq('id', id).select();
@@ -533,7 +534,256 @@ function tabConfig(el, project, ctx) {
   };
 }
 
-/* ---- Tab 2: Netlist ---- */
+/* ---- Tab 2: Numbering (physical M1..MN order on the rack) ---- */
+function tabNumbering(el, project, ctx) {
+  const rules = { ...DEFAULT_RULES, ...(project.config?.rules || {}) };
+  const saved = (project.config && project.config.numbering) || null;
+  const st = {
+    rack: rackEnsure(saved && saved.rack ? saved.rack : defaultRack(rules.modulesPerString)),
+    mode: (saved && saved.mode) === 'custom' ? 'custom' : 'auto',
+    planId: (saved && saved.planId) || '',
+    planTitle: (saved && saved.planTitle) || '',
+    brush: 'module',
+    plans: null,
+  };
+  st.order = (saved && Array.isArray(saved.order) && saved.order.length)
+    ? saved.order.filter(id => rackIsModule(st.rack, id))
+    : rackModuleCells(st.rack);
+  if (!st.order.length) st.order = rackModuleCells(st.rack);
+  const required = Math.max(1, Math.round(rules.modulesPerString || 24)) * Math.max(1, Math.round(rules.strings || 1));
+
+  const fmtM = mm => (mm / 1000).toFixed(1) + ' m';
+  const metricLine = m =>
+    `Cable to buy <b>${fmtM(m.bomMm)}</b> · physical span ${fmtM(m.geomMm)} · ` +
+    `<b>${m.longHops}</b> long jumper${m.longHops === 1 ? '' : 's'} of ${m.hops} hops · longest ${m.maxHopMm} mm` +
+    (m.overflow ? ` · <span class="warn">${m.overflow} needs engineering release</span>` : ' · all approved harnesses');
+
+  /* Interactive rack: one rect per slot, numbered in the current order. */
+  function gridSvg() {
+    const rack = st.rack;
+    const cw = Math.max(54, Math.min(130, 760 / rack.cols));
+    const ch = Math.max(34, Math.min(78, 520 / rack.rows));
+    const w = rack.cols * cw, h = rack.rows * ch;
+    const rank = new Map();
+    st.order.forEach((id, i) => rank.set(id, i + 1));
+    let s = '<svg class="rack-grid" viewBox="0 0 ' + w + ' ' + h +
+      '" xmlns="http://www.w3.org/2000/svg" font-family="Helvetica, Arial, sans-serif">';
+    const pts = st.order.map(id => { const c = slotCell(id); return [(c.c + 0.5) * cw, (c.r + 0.5) * ch]; });
+    if (pts.length > 1) {
+      s += '<polyline points="' + pts.map(p => p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' ') +
+        '" fill="none" stroke="#f97316" stroke-width="2" stroke-linejoin="round"/>';
+    }
+    const font = Math.min(15, ch * 0.34);
+    for (let i = 0; i < rack.cells.length; i++) {
+      const cell = rack.cells[i];
+      const x = cell.c * cw + 2, y = cell.r * ch + 2, bw = cw - 4, bh = ch - 4;
+      s += '<rect data-slot="' + cell.c + ',' + cell.r + '" x="' + x.toFixed(1) + '" y="' + y.toFixed(1) +
+        '" width="' + bw.toFixed(1) + '" height="' + bh.toFixed(1) + '" rx="3" fill="' + rackKind(cell.kind).color +
+        '" stroke="#94a3b8" stroke-width="1"/>';
+      const n = rank.get(slotKey(cell.c, cell.r));
+      const label = n ? String(n) : (cell.kind === 'module' ? '' : (cell.label || rackKind(cell.kind).short));
+      if (label) {
+        s += '<text x="' + (x + bw / 2).toFixed(1) + '" y="' + (y + bh / 2 + font * 0.36).toFixed(1) +
+          '" text-anchor="middle" style="font-size:' + font.toFixed(1) + 'px;font-weight:700" fill="' +
+          (n ? '#0f172a' : '#334155') + '" pointer-events="none">' + esc(label) + '</text>';
+      }
+    }
+    return s + '</svg>';
+  }
+
+  function planRows() {
+    if (!st.plans) return '';
+    return st.plans.map((p, i) => `
+      <div class="num-plan ${i === 0 ? 'best' : ''}">
+        <div>${numberingPreviewSVG(st.rack, p.order, { width: 150, height: 110 })}</div>
+        <div>
+          <div style="font-weight:700;color:#0f172a">${esc(p.title)} ${i === 0 ? '<span class="chip chip-ok">recommended</span>' : ''}</div>
+          <div class="muted small">${esc(p.note)}</div>
+          <div class="plan-metrics">${metricLine(p.metrics)}</div>
+        </div>
+        <div><button class="btn ${i === 0 ? 'btn-primary' : 'btn-ghost'} btn-sm" data-use="${i}">Use this</button></div>
+      </div>`).join('');
+  }
+
+  function renderMode() {
+    const box = el.querySelector('#num-mode');
+    if (!box) return;
+    if (st.mode === 'auto') {
+      if (!st.plans) st.plans = numberingPlans(st.rack, rules, { limit: 6 });
+      box.innerHTML = `
+        <div class="btn-row"><button class="btn btn-ghost" id="num-gen">Re-score options</button>
+          <span class="muted small">Every pattern is scored with the approved harness catalogue: the cheapest one that can be built from released parts is on top, then the shortest cable.</span></div>
+        <div id="num-plans" style="margin-top:12px">${planRows()}</div>`;
+      el.querySelector('#num-gen').onclick = () => { st.plans = numberingPlans(st.rack, rules, { limit: 6 }); renderMode(); };
+      box.querySelectorAll('[data-use]').forEach(b => {
+        b.onclick = () => {
+          const p = st.plans[+b.dataset.use];
+          if (!p) return;
+          st.order = p.order.slice();
+          st.planId = p.id;
+          st.planTitle = p.title;
+          render();
+          toast('Numbering set — press Save numbering to apply it.');
+        };
+      });
+      return;
+    }
+    box.innerHTML = `
+      <p class="muted small">Click the module slots on the rack in the order the chain must run. The first click is M1 (next to the SSC), the next is M2, and so on. Click a numbered slot again to take it out.</p>
+      <div class="btn-row">
+        <button class="btn btn-ghost btn-sm" id="num-undo">Undo last</button>
+        <button class="btn btn-ghost btn-sm" id="num-clear">Clear</button>
+        <button class="btn btn-ghost btn-sm" id="num-fill-near">Auto-fill rest (nearest)</button>
+        <button class="btn btn-ghost btn-sm" id="num-fill-serp">Auto-fill rest (serpentine)</button>
+      </div>
+      <div class="field inline" style="margin-top:10px"><label>Numbered by hand</label><span>${st.order.length} of ${required}</span></div>
+      <p class="muted small mono" style="word-break:break-all">${st.order.length
+        ? st.order.map((id, i) => 'M' + (i + 1) + ' ' + esc(id)).join(' · ')
+        : 'Nothing numbered yet — click the rack above.'}</p>`;
+    el.querySelector('#num-undo').onclick = () => { st.order = st.order.slice(0, -1); render(); };
+    el.querySelector('#num-clear').onclick = () => { st.order = []; render(); };
+    el.querySelector('#num-fill-near').onclick = () => { st.order = numberingAutoFill(st.rack, st.order, 'nearest'); render(); };
+    el.querySelector('#num-fill-serp').onclick = () => { st.order = numberingAutoFill(st.rack, st.order, 'serpentine'); render(); };
+  }
+
+  function render() {
+    const m = numberMetrics(st.rack, rules, st.order);
+    const dev = k => rackDeviceCells(st.rack, k).join(', ') || '—';
+    el.innerHTML = `
+    <div class="page-head slim">
+      <div><h2>Physical module numbering</h2>
+        <p class="muted">M1…M${required} is a property of the rack, not of the schematic: the chain starts and ends next to the SSC and has to skip the ACDP, MSM and junction-box slots. Set it once — the netlist, the cable schedule and the drawing all follow it.</p></div>
+    </div>
+    <div class="card-grid">
+      <div class="card">
+        <h3>1 · Rack layout</h3>
+        <div class="field inline"><label>Columns</label><input type="number" id="n-cols" value="${st.rack.cols}"></div>
+        <div class="field inline"><label>Rows</label><input type="number" id="n-rows" value="${st.rack.rows}"></div>
+        <div class="field inline"><label>Column pitch (mm)</label><input type="number" id="n-px" value="${st.rack.pitchX}"></div>
+        <div class="field inline"><label>Row pitch (mm)</label><input type="number" id="n-py" value="${st.rack.pitchY}"></div>
+        <div class="field inline"><label>Module width (mm)</label><input type="number" id="n-mw" value="${st.rack.moduleW}"></div>
+        <div class="field inline"><label>Module height (mm)</label><input type="number" id="n-mh" value="${st.rack.moduleH}"></div>
+        <div class="field inline"><label>Terminal inset from bottom (mm)</label><input type="number" id="n-inset" value="${st.rack.termInsetY}"></div>
+        <button class="btn btn-ghost" id="num-apply-rack">Apply layout</button>
+        <p class="muted small">The pitch is only used to estimate physical spans and to rank the options — the scheduled lengths still come from the approved harness catalogue.</p>
+      </div>
+      <div class="card">
+        <h3>2 · Device slots</h3>
+        <p class="muted small">Pick a device, then click a cell on the rack. SSC anchors the chain (M1 and M${required} sit next to it); ACDP, MSM and JB are skipped by the numbering.</p>
+        <div class="brush-row" id="num-brush">
+          ${RACK_CELL_KINDS.map(k => `<button class="brush ${k.key === st.brush ? 'on' : ''}" data-brush="${k.key}">${esc(k.label)}</button>`).join('')}
+        </div>
+        <div class="field inline"><label>Module slots</label><span>${rackModuleCells(st.rack).length} of ${required}</span></div>
+        <div class="field inline"><label>SSC</label><span class="mono">${dev('ssc')}</span></div>
+        <div class="field inline"><label>ACDP</label><span class="mono">${dev('acdp')}</span></div>
+        <div class="field inline"><label>MSM</label><span class="mono">${dev('msm')}</span></div>
+        <div class="field inline"><label>Junction box</label><span class="mono">${dev('jb')}</span></div>
+        <button class="btn btn-ghost" id="num-reset">Reset to default rack</button>
+      </div>
+    </div>
+    <div class="card" style="margin-top:16px">
+      <h3>Rack front view</h3>
+      <div id="num-grid">${gridSvg()}</div>
+      <p class="muted small">${st.mode === 'custom'
+        ? 'Custom mode: click a module to number it, click it again to remove it.'
+        : 'Auto mode: clicks paint the selected device. Switch to Custom to point the numbering yourself.'}</p>
+      <p class="muted small">${project.underlay_url
+        ? 'Rack drawing imported — after saving, M1…M' + required + ' are drawn onto it (use the fit rectangle in Configuration to align them).'
+        : 'No rack drawing imported yet — import it in the Configuration tab and the numbering will be drawn straight onto it.'}</p>
+    </div>
+    <div class="card" style="margin-top:16px">
+      <h3>3 · Numbering</h3>
+      <div class="btn-row">
+        <button class="btn ${st.mode === 'auto' ? 'btn-primary' : 'btn-ghost'}" id="num-auto">Automatic — shortest cable</button>
+        <button class="btn ${st.mode === 'custom' ? 'btn-primary' : 'btn-ghost'}" id="num-custom">Custom — I point the order</button>
+      </div>
+      <div id="num-mode" style="margin-top:14px"></div>
+    </div>
+    <div class="card" style="margin-top:16px">
+      <h3>Current numbering</h3>
+      <div class="field inline"><label>Numbered</label><span>${m.moduleCount} of ${m.required}${m.unnumbered ? ` <span class="warn">(${m.unnumbered} unnumbered)</span>` : ''}</span></div>
+      <div>${metricLine(m)}</div>
+      ${st.planTitle ? `<p class="muted small">Plan: ${esc(st.planTitle)}</p>` : ''}
+    </div>
+    <div class="actions"><button class="btn btn-primary" id="num-save">Save numbering</button><span class="muted" id="num-saved"></span></div>`;
+
+    el.querySelector('#num-auto').onclick = () => { st.mode = 'auto'; render(); };
+    el.querySelector('#num-custom').onclick = () => {
+      /* Entering custom mode with a machine-made order would make the first
+         click *remove* a module instead of starting the sequence — clear the
+         untouched default so the engineer really numbers from scratch. */
+      if (st.order.join('|') === rackModuleCells(st.rack).join('|')) st.order = [];
+      st.mode = 'custom';
+      render();
+    };
+    el.querySelector('#num-apply-rack').onclick = () => {
+      const v = id => +el.querySelector(id).value;
+      st.rack = rackEnsure({
+        ...st.rack,
+        cols: v('#n-cols'), rows: v('#n-rows'),
+        pitchX: v('#n-px'), pitchY: v('#n-py'),
+        moduleW: v('#n-mw'), moduleH: v('#n-mh'), termInsetY: v('#n-inset'),
+      });
+      st.order = st.order.filter(id => rackIsModule(st.rack, id));
+      if (!st.order.length) st.order = rackModuleCells(st.rack);
+      st.plans = null;
+      render();
+      toast('Rack layout applied.');
+    };
+    el.querySelector('#num-reset').onclick = () => {
+      st.rack = defaultRack(rules.modulesPerString);
+      st.order = rackModuleCells(st.rack);
+      st.plans = null;
+      render();
+      toast('Rack reset to the default 3-column layout.');
+    };
+    el.querySelectorAll('[data-brush]').forEach(b => {
+      b.onclick = () => { st.brush = b.dataset.brush; render(); };
+    });
+    el.querySelector('#num-grid').addEventListener('click', e => {
+      const t = e.target.closest('[data-slot]');
+      if (!t) return;
+      const id = t.dataset.slot;
+      if (st.mode === 'custom') {
+        if (!rackIsModule(st.rack, id)) { toast('That slot is not a battery module — paint it as a module first.', 'error'); return; }
+        st.order = numberingToggle(st.order, id);
+        render();
+        return;
+      }
+      const c = slotCell(id);
+      const rec = rackCell(st.rack, c.c, c.r);
+      if (!rec) return;
+      rec.kind = st.brush;
+      rec.label = rackKind(st.brush).short;
+      st.order = st.order.filter(x => x !== id);
+      if (st.brush === 'module') st.order.push(id);
+      st.plans = null;
+      render();
+    });
+    el.querySelector('#num-save').onclick = async () => {
+      const m2 = numberMetrics(st.rack, rules, st.order);
+      const num = {
+        mode: st.mode,
+        planId: st.mode === 'auto' ? st.planId : '',
+        planTitle: st.mode === 'auto' ? st.planTitle : '',
+        rack: st.rack,
+        order: st.order,
+        savedAt: new Date().toISOString(),
+      };
+      const ok = await ctx.saveProject({ config: { ...(project.config || {}), numbering: num } });
+      if (!ok) return;
+      await ctx.getNetlist(true);
+      el.querySelector('#num-saved').textContent =
+        `Saved — ${m2.moduleCount} modules · ${m2.longHops} long jumpers ✓`;
+      toast('Numbering saved. The netlist now carries the physical hop lengths.');
+    };
+    renderMode();
+  }
+
+  render();
+}
+
+/* ---- Tab 3: Netlist ---- */
 async function tabNetlist(el, project, ctx) {
   const conns = await ctx.getNetlist(true);
   el.innerHTML = `
@@ -568,7 +818,7 @@ async function tabNetlist(el, project, ctx) {
   el.querySelector('#n-vsdx').onclick = () => download(`${project.name || 'wiring'}.vsdx`, vsdxExport(conns, project), 'application/vnd.ms-visio.drawing.main+xml');
 }
 
-/* ---- Tab 3: Exceptions ---- */
+/* ---- Tab 4: Exceptions ---- */
 function tabExceptions(el, project, ctx) {
   const cfg = project.config || {};
   const exs = cfg.exceptions || [];
@@ -660,7 +910,7 @@ function tabExceptions(el, project, ctx) {
   };
 }
 
-/* ---- Tab 4: Validation ---- */
+/* ---- Tab 5: Validation ---- */
 async function tabValidation(el, project, ctx) {
   const results = await ctx.getValidations(true);
   const fails = results.filter(r => r.status === 'fail').length;
@@ -679,7 +929,7 @@ async function tabValidation(el, project, ctx) {
   </div>`;
 }
 
-/* ---- Tab 5: Schedule & BOM ---- */
+/* ---- Tab 6: Schedule & BOM ---- */
 async function tabSchedule(el, project, ctx) {
   const conns = await ctx.getNetlist();
   const sched = buildSchedule(conns);
@@ -708,7 +958,7 @@ async function tabSchedule(el, project, ctx) {
   el.querySelector('#s-vsdx').onclick = () => download(`${project.name || 'wiring'}.vsdx`, vsdxExport(conns, project), 'application/vnd.ms-visio.drawing.main+xml');
 }
 
-/* ---- Tab 6: Diagram ---- */
+/* ---- Tab 7: Diagram ---- */
 async function tabDiagram(el, project, ctx) {
   const conns = await ctx.getNetlist();
   el.innerHTML = `
@@ -718,7 +968,7 @@ async function tabDiagram(el, project, ctx) {
   <div class="diagram-wrap">${renderDiagramSVG(project, conns)}</div>`;
 }
 
-/* ---- Tab 7: Drawings (DWG + Autodesk) ---- */
+/* ---- Tab 8: Drawings (DWG + Autodesk) ---- */
 async function tabDrawings(el, project, ctx) {
   el.innerHTML = `<div class="loading">Loading drawing files…</div>`;
   const { data: files, error } = await cloud.database.from('project_files').select('*').eq('project_id', project.id).order('created_at', { ascending: false });

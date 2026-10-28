@@ -71,6 +71,20 @@ function isGapBetween(exceptions, stringIdx, a, b) {
     ((x.between[0] === a && x.between[1] === b) || (x.between[0] === b && x.between[1] === a)));
 }
 
+/**
+ * Physical hop information for one cable, taken from the rack
+ * numbering (js/numbering.js, optional at runtime).
+ * @param {Object} num Saved numbering block (may be null).
+ * @param {Object} rules Engine rules.
+ * @param {number} s String index (0-based).
+ * @param {number} m Hop index (1-based: the hop M(m) -> M(m+1)).
+ * @return {Object|null} {kind, mm} or null when no numbering is set.
+ */
+function numberingHopFor(num, rules, s, m) {
+  if (typeof numberingHopInfo !== 'function') return null;
+  try { return numberingHopInfo(num, rules, s, m); } catch (e) { return null; }
+}
+
 /* ---------- netlist generation (deterministic) ---------- */
 function generateNetlist(project) {
   const cfg = project.config || {};
@@ -98,22 +112,32 @@ function generateNetlist(project) {
     push({ network: 'power', cls: 'SSC-JB', from: `${sid}-SSC:BUS-`, to: `${sid}-JB:BUS-`, routedLen: rules.busPowerLen });
     // R02: Mx negative -> Mx+1 positive
     for (let m = 1; m < N; m++) {
-      const gap = isGapBetween(exceptions, s, m, m + 1);
+      const declared = isGapBetween(exceptions, s, m, m + 1);
+      const hop = numberingHopFor(cfg.numbering, rules, s, m);
+      const gap = declared || (hop && hop.kind !== 'adjacent');
       push({
         network: 'power', cls: 'M2M-PWR',
         from: `${sid}:M${m}:P-`, to: `${sid}:M${m + 1}:P+`,
         routedLen: gap ? rules.longPower : rules.powerJumper,
-        exception: gap ? 'in-rack gap / column transition' : null,
+        exception: gap ? (hop
+          ? (hop.kind === 'column' ? 'column transition (derived from rack numbering)' : 'in-rack gap (derived from rack numbering)')
+          : 'in-rack gap / column transition') : null,
+        geometryMm: hop ? Math.round(hop.mm) : null,
       });
     }
     // R03: Mx S -> Mx+1 N
     for (let m = 1; m < N; m++) {
-      const gap = isGapBetween(exceptions, s, m, m + 1);
+      const declared = isGapBetween(exceptions, s, m, m + 1);
+      const hop = numberingHopFor(cfg.numbering, rules, s, m);
+      const gap = declared || (hop && hop.kind !== 'adjacent');
       push({
         network: 'comm', cls: 'M2M-COMM',
         from: `${sid}:M${m}:S`, to: `${sid}:M${m + 1}:N`,
         routedLen: gap ? rules.longComm : rules.commJumper,
-        exception: gap ? 'in-rack gap / column transition' : null,
+        exception: gap ? (hop
+          ? (hop.kind === 'column' ? 'column transition (derived from rack numbering)' : 'in-rack gap (derived from rack numbering)')
+          : 'in-rack gap / column transition') : null,
+        geometryMm: hop ? Math.round(hop.mm) : null,
       });
     }
   }
@@ -371,17 +395,22 @@ function specJson(conns, project) {
       });
     }
   }
-  const connections = conns.map(c => ({
-    id: 'C-' + String(c.seq).padStart(3, '0'),
-    from: c.from,
-    to: c.to,
-    network: c.network,
-    class: c.cls,
-    color: c.network === 'power' ? '#c00000' : '#00b050',
-    label: c.harness || 'UNRELEASED',
-    gauge: c.gauge || '',
-    length_mm: c.length ?? c.routedLen ?? null,
-  }));
+  const connections = conns.map(c => {
+    const rec = {
+      id: 'C-' + String(c.seq).padStart(3, '0'),
+      from: c.from,
+      to: c.to,
+      network: c.network,
+      class: c.cls,
+      color: c.network === 'power' ? '#c00000' : '#00b050',
+      label: c.harness || 'UNRELEASED',
+      gauge: c.gauge || '',
+      length_mm: c.length ?? c.routedLen ?? null,
+    };
+    /* Physical span of the hop when a rack numbering is configured. */
+    if (c.geometryMm !== null && c.geometryMm !== undefined) rec.geometry_mm = c.geometryMm;
+    return rec;
+  });
   /* Wire geometry: only line primitives on the wire layers, converted from
      sheet units (y down) to inches (y up from the bottom-left corner) with
      6-decimal rounding so the Visio bridge gets stable coordinates. */
@@ -397,7 +426,7 @@ function specJson(conns, project) {
       y2: Math.round(((SHEET_H - pr.y2) * SHEET_UNIT_MM / 25.4) * 1e6) / 1e6,
     });
   }
-  return JSON.stringify({
+  const doc = {
     diagram_type: 'wiring',
     paper: { size: 'A3', orientation: 'landscape', width_in: toIn(L.w), height_in: toIn(L.h) },
     title: `${project.name || 'Wiring'} — Rack wiring diagram`,
@@ -405,7 +434,40 @@ function specJson(conns, project) {
     connections,
     wires,
     wire_color_map: { ...SPEC_WIRE_COLOR_MAP },
-  }, null, 2);
+  };
+  const numbering = numberingSpecBlock(project);
+  if (numbering) doc.numbering = numbering;
+  return JSON.stringify(doc, null, 2);
+}
+
+/**
+ * Machine-readable form of the saved physical numbering, so a
+ * downstream tool (Visio bridge, AutoCAD script, ERP import) can
+ * label the rack exactly the way the engineer numbered it.
+ * @param {Object} project Project record.
+ * @return {Object|null} Numbering block or null when not configured.
+ */
+function numberingSpecBlock(project) {
+  const num = project && project.config && project.config.numbering;
+  if (!num || !num.rack) return null;
+  const order = Array.isArray(num.order) ? num.order : [];
+  return {
+    mode: num.mode || 'auto',
+    plan: num.planId || null,
+    plan_title: num.planTitle || null,
+    rack: {
+      columns: +num.rack.cols || 3,
+      rows: +num.rack.rows || 9,
+      pitch_mm: { x: +num.rack.pitchX || 420, y: +num.rack.pitchY || 240 },
+      devices: (Array.isArray(num.rack.cells) ? num.rack.cells : [])
+        .filter(c => c && c.kind && c.kind !== 'module')
+        .map(c => ({ slot: `${c.c},${c.r}`, kind: c.kind, label: c.label || '' })),
+    },
+    sequence: order.map((slot, i) => ({
+      module: 'M' + (i + 1),
+      slot: slot,
+    })),
+  };
 }
 
 /* ============================================================
@@ -445,6 +507,7 @@ const SHEET_LAYERS = [
   { name: 'SSC',     dxf: 5,  stroke: '#4f46e5', width: 1.4 },
   { name: 'TERM',    dxf: 3,  stroke: '#16a34a', width: 1.4 },
   { name: 'RACK',    dxf: 8,  stroke: '#8a94a6', width: 0.8 },
+  { name: 'NUMBER',  dxf: 4,  stroke: '#b45309', width: 1.1 },
 ];
 
 const SHEET_W = 1680;          /* sheet width  in units (420 mm) */
@@ -956,6 +1019,19 @@ function buildSheetLayout(project, conns) {
       (nOpen ? ' | ' + nOpen + ' unreleased' : ' | all harnesses approved'))
     : 'Netlist preview - generate the netlist to populate the connection data.';
   addText('TEXT', notesX, notesTop + 26 + notesList.length * noteStep + 2, 10.5, summary);
+
+  /* ---------------- physical numbering on the imported rack ----------------
+     Last, so the M-numbers sit on top of the rack drawing and the
+     schematic blocks. Only when a rack drawing is attached and a
+     numbering has been saved (js/numbering.js). */
+  if ((u || p.underlay_url) && typeof numberingSheetPrimitives === 'function') {
+    const fit = {
+      x: +p.underlay_x || 120, y: +p.underlay_y || 280,
+      w: +p.underlay_w || 1000, h: +p.underlay_h || 640,
+    };
+    const numPrims = numberingSheetPrimitives(p, fit);
+    for (let i = 0; i < numPrims.length; i++) primitives.push(numPrims[i]);
+  }
 
   return {
     w: SHEET_W,

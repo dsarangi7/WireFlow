@@ -36,7 +36,7 @@ Frames + analysis in `../video-study/` (keyframes.json, sheets/, hi/, zoom_*).
 |---|---|---|
 | Open customer rack DWG | **Rack underlay import** (DXF/PNG/SVG upload, fit rect, RACK layer) — built | DXF import covers this; DWG needs APS |
 | Read module labels from rack | Labels are in the imported drawing | none |
-| Serpentine wiring order R02/R03 | Engine generates the same series chains | add **serpentine column order** option so chains follow M1→M9→M10(up)→M18→M19→M24 |
+| Serpentine module numbering | Engine generated the logical M1..M24 chain | **built** — Numbering tab: rack slot model, serpentine/raster/optimised auto options scored against the harness catalogue, and click-to-number custom mode (see `docs/module-numbering.md`) |
 | Draw diagonal hops on the rack | Schematic-style orthogonal layout | new **front-view wiring mode**: straight diagonal segments landing on actual terminal positions |
 | Terminals at known rack positions | Fit-rect maps the whole sheet, not per-terminal | **terminal anchor calibration**: mark M1's terminal pair + column pitch on the underlay; engine derives every other terminal |
 | Right-rail vertical M2S cables | M2S cables drawn as elbow polylines | in front-view mode route them along the rack's right rail |

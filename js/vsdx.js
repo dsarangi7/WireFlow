@@ -35,6 +35,7 @@ const VSDX_LAYERS = [
   { name: 'SSC',     color: '#6366f1' },
   { name: 'TERM',    color: '#00b050' },
   { name: 'RACK',    color: '#8a94a6' },
+  { name: 'NUMBER',  color: '#b45309' },
 ];
 const VSDX_WIRE_COLORS = {
   POWER: '#ff0000', SUBPWR: '#ff0000',
