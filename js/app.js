@@ -14,6 +14,31 @@ const app = document.getElementById('app');
 let session = null;
 let currentUser = null;
 
+/* The guided workspace is intentionally data-only: every step points at an
+   existing expert view and completion is derived from saved project state. */
+const FLOW_STEPS = Object.freeze([
+  { label: 'Import rack', view: 'Configuration' },
+  { label: 'Calibrate', view: 'Numbering' },
+  { label: 'Number & chains', view: 'Numbering' },
+  { label: 'Wire & validate', view: 'Numbering' },
+  { label: 'Export PDF', view: 'Export' },
+]);
+
+function flowStepCompletion(project) {
+  const cfg = (project && project.config) || {};
+  const numbering = cfg.numbering || {};
+  const cal = numbering.cal || {};
+  const layout = cfg.layout || {};
+  const hasUnderlay = !!(project && (project.underlay_url || project.underlay));
+  const calibrated = hasUnderlay && cal.ok === true;
+  const chainsApplied = calibrated && numbering.mode === 'layout' &&
+    Array.isArray(numbering.counts) && numbering.counts.length > 0 &&
+    Array.isArray(layout.sscs) && layout.sscs.length === numbering.counts.length;
+  const wiringShown = chainsApplied && Array.isArray(numbering.order) && numbering.order.length > 1;
+  const exported = !!(cfg.flow && cfg.flow.exportedAt);
+  return [hasUnderlay, calibrated, chainsApplied, wiringShown, exported];
+}
+
 /* ---------------- utilities ---------------- */
 function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
 function toast(msg, type = 'info') {
@@ -364,7 +389,7 @@ async function renderProjectPage(id) {
   const cfg = project.config || { rules: { ...DEFAULT_RULES }, exceptions: [], spans: [] };
   let netlist = null, validations = null;
 
-  const tabs = ['Configuration', 'Numbering', 'Netlist', 'Exceptions', 'Validation', 'Schedule & BOM', 'Diagram', 'Drawings (DWG)'];
+  const tabs = ['Configuration', 'Numbering', 'Netlist', 'Exceptions', 'Validation', 'Schedule & BOM', 'Diagram', 'Drawings (DWG)', 'Export'];
   shell(`
     <div class="proj-head">
       <a class="back" href="#/app">← Projects</a>
@@ -374,12 +399,18 @@ async function renderProjectPage(id) {
       </div>
       <p class="muted">${esc(project.vessel || '')} ${project.drawing_no ? '· ' + esc(project.drawing_no) + ' rev ' + esc(project.revision) : ''} · ${esc(project.product_family)}</p>
     </div>
-    <div class="tabs" id="tabs">${tabs.map((t, i) => `<button class="tab ${i === 0 ? 'on' : ''}" data-i="${i}">${t}</button>`).join('')}</div>
-    <div id="tab-body"></div>
+    <div id="workspace-home"></div>
+    <details class="advanced" id="advanced">
+      <summary>Advanced</summary>
+      <p class="muted small">All expert tools remain available here.</p>
+      <div class="tabs" id="tabs">${tabs.map((t, i) => `<button class="tab" data-i="${i}">${t}</button>`).join('')}</div>
+    </details>
+    <div id="tab-body" hidden></div>
   `, 'dash');
 
   const body = document.getElementById('tab-body');
-  const views = [tabConfig, tabNumbering, tabNetlist, tabExceptions, tabValidation, tabSchedule, tabDiagram, tabDrawings];
+  const home = document.getElementById('workspace-home');
+  const views = [tabConfig, tabNumbering, tabNetlist, tabExceptions, tabValidation, tabSchedule, tabDiagram, tabDrawings, tabExport];
 
   async function saveProject(patch) {
     const { data, error } = await cloud.database.from('projects').update({ ...patch, updated_at: new Date().toISOString() }).eq('id', id).select();
@@ -389,9 +420,46 @@ async function renderProjectPage(id) {
   }
 
   async function switchTab(i) {
+    home.hidden = true;
+    body.hidden = false;
+    document.getElementById('advanced').open = true;
     document.querySelectorAll('.tab').forEach(t => t.classList.toggle('on', +t.dataset.i === i));
     body.innerHTML = `<div class="loading">…</div>`;
     await views[i](body, project, { saveProject, getNetlist, getValidations, loadUnderlay });
+  }
+  function stepIndex(step) { return tabs.indexOf(step.view); }
+  async function renderWorkspace() {
+    body.hidden = true;
+    home.hidden = false;
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('on'));
+    const complete = flowStepCompletion(project);
+    const current = complete.findIndex(done => !done);
+    const currentStep = current < 0 ? FLOW_STEPS.length - 1 : current;
+    home.innerHTML = `
+      <section class="workspace-hero" aria-labelledby="workspace-title">
+        <div class="workspace-kicker">Guided workspace</div>
+        <h2 id="workspace-title">${esc(project.name)}</h2>
+        <p class="workspace-sub">Move from the rack drawing to a validated, production-ready wiring package.</p>
+        <div class="flow-stepper" aria-label="Project progress">
+          ${FLOW_STEPS.map((step, i) => `<button class="flow-step ${complete[i] ? 'complete' : ''} ${i === currentStep ? 'current' : ''}" data-flow="${i}">
+            <span class="flow-dot">${complete[i] ? '✓' : i + 1}</span>
+            <span>${esc(step.label)}</span>
+          </button>`).join('')}
+        </div>
+        <div class="workspace-actions">
+          <button class="btn btn-primary btn-lg" id="workspace-import">Import rack drawing</button>
+          <button class="btn btn-ghost" id="workspace-continue">Continue where I left off</button>
+        </div>
+        <p class="muted small">VSDX, DXF, PNG, JPG and SVG are supported.</p>
+      </section>`;
+    home.querySelectorAll('[data-flow]').forEach(button => {
+      button.onclick = () => switchTab(stepIndex(FLOW_STEPS[+button.dataset.flow]));
+    });
+    home.querySelector('#workspace-import').onclick = async () => {
+      await switchTab(stepIndex(FLOW_STEPS[0]));
+      body.querySelector('#u-file')?.click();
+    };
+    home.querySelector('#workspace-continue').onclick = () => switchTab(stepIndex(FLOW_STEPS[currentStep]));
   }
   async function getNetlist(force) {
     if (!netlist || force) netlist = generateNetlist(project);
@@ -436,7 +504,7 @@ async function renderProjectPage(id) {
     const b = e.target.closest('.tab'); if (b) switchTab(+b.dataset.i);
   });
   await loadUnderlay();
-  await switchTab(0);
+  await renderWorkspace();
 }
 
 /* ---- Tab 1: Configuration ---- */
@@ -1484,6 +1552,44 @@ async function tabDiagram(el, project, ctx) {
       $('#btn-vsdx-save').style.display = 'none';
     } catch (e) { toast(e.message || 'Save failed', 'error'); status.textContent = status.textContent.replace(/ · saved ✓$/, ''); }
   };
+}
+
+/* ---- Guided export screen -------------------------------------------------
+   Uses the existing deterministic exporters. Browser print is the PDF path so
+   the drawing remains the same artifact already shown in Diagram. */
+async function tabExport(el, project, ctx) {
+  const conns = await ctx.getNetlist();
+  const checks = await ctx.getValidations();
+  const failed = checks.filter(x => !x.pass);
+  el.innerHTML = `
+    <div class="export-screen">
+      <div>
+        <div class="workspace-kicker">Final step</div>
+        <h2>Export wiring package</h2>
+        <p class="muted">Review the release gate, then save the final drawing as PDF or download an editable engineering format.</p>
+      </div>
+      <div class="export-status ${failed.length ? 'blocked' : 'ready'}">
+        <strong>${failed.length ? 'Release blocked' : 'Ready to export'}</strong>
+        <span>${failed.length ? failed.length + ' validation check(s) need attention.' : 'All ' + checks.length + ' validation checks pass.'}</span>
+      </div>
+      <div class="workspace-actions">
+        <button class="btn btn-primary btn-lg" id="e-pdf" ${failed.length ? 'disabled' : ''}>Export PDF</button>
+        <button class="btn btn-ghost" id="e-vsdx">Visio (.vsdx)</button>
+        <button class="btn btn-ghost" id="e-dxf">DXF</button>
+        <button class="btn btn-ghost" id="e-scr">AutoCAD script</button>
+        <button class="btn btn-ghost" id="e-csv">Cable schedule CSV</button>
+      </div>
+      <div class="diagram-wrap export-preview">${renderDiagramSVG(project, conns)}</div>
+    </div>`;
+  el.querySelector('#e-pdf').onclick = async () => {
+    const flow = { ...((project.config && project.config.flow) || {}), exportedAt: new Date().toISOString() };
+    await ctx.saveProject({ config: { ...(project.config || {}), flow } });
+    window.print();
+  };
+  el.querySelector('#e-vsdx').onclick = () => download(`${project.name || 'wiring'}.vsdx`, vsdxExport(conns, project), 'application/vnd.ms-visio.drawing.main+xml');
+  el.querySelector('#e-dxf').onclick = () => download(`${project.name || 'wiring'}.dxf`, dxfExport(conns, project), 'application/dxf');
+  el.querySelector('#e-scr').onclick = () => download(`${project.name || 'wiring'}.scr`, scrExport(conns, project), 'text/plain');
+  el.querySelector('#e-csv').onclick = () => download(`${project.name || 'wiring'}-schedule.csv`, scheduleCSV(conns, project), 'text/csv');
 }
 
 /* ---- Tab 8: Drawings (DWG + Autodesk) ---- */

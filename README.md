@@ -65,9 +65,10 @@ docs/module-numbering.md  How the physical numbering is chosen (auto + custom) a
 docs/vsdx-import.md  How the Visio import works (zip read, masters, EMF rack picture)
 docs/front-view-wiring.md  Wiring on the real rack: calibration model, geometry, limits
 docs/variable-ssc-layout.md  Variable rack layout: per-SSC chains, assignment, general diagram
+docs/guided-workspace.md  Guided post-login workspace, progress derivation and Advanced access
 js/aps.js           Autodesk APS client (token, OSS upload, translate, viewer)
 js/app.js           Router, landing page, auth (email OTP), dashboard, workspace UI
-tests/drawing.test.js  312-assertion regression suite (node tests/drawing.test.js)
+tests/drawing.test.js  319-assertion regression suite (node tests/drawing.test.js)
 ```
 
 ## Running locally

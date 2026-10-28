@@ -444,6 +444,28 @@ ok('config tab save clamps strings to >= 1',
 ok('config tab save clamps modulesPerString to >= 2',
   /rules\.modulesPerString\s*=\s*Math\.max\(2,\s*Math\.round\(rules\.modulesPerString\)\s*\|\|\s*2\)/.test(tabConfigBody));
 
+// Guided workspace: one canonical step definition and a pure saved-state
+// derivation keep the premium flow in sync with the expert screens.
+const flowLabels = [...appSrc.matchAll(/\{ label: '([^']+)', view: '[^']+' \}/g)].map(m => m[1]);
+eq('FLOW_STEPS defines the five guided stages', flowLabels.join(' · '),
+  'Import rack · Calibrate · Number & chains · Wire & validate · Export PDF');
+const flowStepBody = fnBody(appSrc, 'flowStepCompletion');
+ok('fnBody extracted flowStepCompletion()', !!flowStepBody,
+  flowStepBody ? flowStepBody.length + ' chars' : 'not found');
+const deriveFlow = new Function('project', flowStepBody || 'return [];');
+eq('guided flow starts with every step incomplete',
+  JSON.stringify(deriveFlow({ config: {} })), '[false,false,false,false,false]');
+eq('guided flow derives import + calibration from saved project state',
+  JSON.stringify(deriveFlow({ underlay_url: 'rack.png', config: { numbering: { cal: { ok: true } } } })),
+  '[true,true,false,false,false]');
+const guidedComplete = { underlay_url: 'rack.png', config: {
+  numbering: { mode: 'layout', cal: { ok: true }, counts: [6, 6], order: ['0,0', '0,1'] },
+  layout: { sscs: [{ id: 'SSC-1' }, { id: 'SSC-2' }] },
+  flow: { exportedAt: '2026-10-28T00:00:00.000Z' },
+} };
+eq('guided flow derives applied chains, visible wiring and export',
+  JSON.stringify(deriveFlow(guidedComplete)), '[true,true,true,true,true]');
+
 /* ============================================================
  * 3. OUTPUT CORRECTNESS — SVG / DXF / SCR
  * ============================================================ */
