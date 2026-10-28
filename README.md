@@ -26,6 +26,11 @@ rule engine implementing the Wiring Diagram Tool Engineering Rules (R01–R12, V
   12 layers, auto-built Notes page), `.dxf` (R12, opens in AutoCAD),
   `.scr` (AutoCAD script), CSV cable schedule/BOM, and a machine-readable
   **JSON layout spec** for downstream automation tools
+- **Front-view wiring on the real rack** — the embedded AutoCAD rack from the
+  Visio file becomes the wiring base: two clicks calibrate the module grid on
+  the picture, the engineer numbers modules and drops SSC/ACDP/MSM anchors
+  directly on it, and the red power hops + green comm zig-zag (with rail
+  risers to the SSC) are drawn over the rack with live length totals
 - **Visio import (read the real drawing back)** — open any `.vsdx` in the Diagram tab and
   the actual Visio page is rebuilt in the browser: frame, layers, masters, text blocks and
   the embedded AutoCAD rack (rendered from its vector EMF preview by a built-in EMF
@@ -50,15 +55,17 @@ js/vsdx.js          Visio .vsdx generator (OPC package, 14 layers, 1D wires, log
 js/rack.js          Rack underlay import: DXF parser + sheet fitting
 js/emf.js           Minimal EMF (Enhanced Metafile) vector renderer for embedded CAD pictures
 js/vsdx-import.js   .vsdx reader: zip + XML/shape parser, page-to-SVG rebuild (import, not export)
+js/frontview.js     Wiring on the real rack picture: calibration, terminal anchors, hop geometry
 js/numbering.js     Physical module numbering: rack slot model, plan scoring, custom order
 visio-bridge/visio_bridge.ps1  Visio COM bridge: draws spec wires into the house template (Windows + Visio)
 visio-bridge/RUN-BRIDGE.cmd    One-click demo runner for the Visio bridge
 docs/visio-rack-wiring-skill.md  Visio production workflow learned from the AYK template
 docs/module-numbering.md  How the physical numbering is chosen (auto + custom) and what it costs
 docs/vsdx-import.md  How the Visio import works (zip read, masters, EMF rack picture)
+docs/front-view-wiring.md  Wiring on the real rack: calibration model, geometry, limits
 js/aps.js           Autodesk APS client (token, OSS upload, translate, viewer)
 js/app.js           Router, landing page, auth (email OTP), dashboard, workspace UI
-tests/drawing.test.js  273-assertion regression suite (node tests/drawing.test.js)
+tests/drawing.test.js  285-assertion regression suite (node tests/drawing.test.js)
 ```
 
 ## Running locally
@@ -78,7 +85,7 @@ deterministic engine outputs (netlist → validation → exports all run client-
 
 ```bash
 node tests/drawing.test.js
-# PASSED: 273  FAILED: 0
+# PASSED: 285  FAILED: 0
 ```
 
 Covers: netlist/validation regression, release-gate matrix, sheet bounds at extreme
@@ -86,7 +93,8 @@ configurations, SVG well-formedness and text clipping, DXF R12 structure (valida
 ezdxf), CAD text ASCII-safety (cp1252 boundary), VSDX package integrity (CRC32 of every
 entry, central-directory geometry), the physical numbering (rack slot model, plan
 scoring, custom click order, numbering → netlist → JSON spec → drawn numbers), and the
-Visio import (synthetic .vsdx package round-trip, EMF record parsing, layer filtering).
+Visio import (synthetic .vsdx package round-trip, EMF record parsing, layer filtering),
+and the front-view wiring (calibration, terminal anchors, hop geometry, px→sheet mapping).
 
 ## Security notes
 

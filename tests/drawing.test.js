@@ -1143,9 +1143,11 @@ let vsdxTests = Promise.resolve();
 {
   const emfSrc = fs.readFileSync(path.join(path.dirname(ENGINE), 'emf.js'), 'utf8');
   const impSrc = fs.readFileSync(path.join(path.dirname(ENGINE), 'vsdx-import.js'), 'utf8');
+  const fvSrc = fs.readFileSync(path.join(path.dirname(ENGINE), 'frontview.js'), 'utf8');
   const zipSrc2 = fs.readFileSync(path.join(path.dirname(ENGINE), 'zip.js'), 'utf8');
-  const names = ['emfBounds', 'emfDraw', 'vsdxOpen', 'vsdxZipRead', 'vsdxXml', 'vsdxCells', 'geomPath', 'vsdxNum', 'vsdxWrap', 'ZipWriter'];
-  const IMPL = new Function(emfSrc + '\n' + zipSrc2 + '\n' + impSrc + '\nreturn {' + names.join(',') + '};')();
+  const names = ['emfBounds', 'emfDraw', 'vsdxOpen', 'vsdxZipRead', 'vsdxXml', 'vsdxCells', 'geomPath', 'vsdxNum', 'vsdxWrap', 'ZipWriter',
+    'fvCalib', 'fvTerminals', 'fvWiring', 'fvSvg', 'fvSummary', 'fvPxToSheet'];
+  const IMPL = new Function(emfSrc + '\n' + zipSrc2 + '\n' + impSrc + '\n' + fvSrc + '\nreturn {' + names.join(',') + '};')();
   const IM = Object.assign(IMPL, {});
 
   /* ---- tiny synthetic EMF: red pen line + solid red triangle ---- */
@@ -1231,6 +1233,11 @@ let vsdxTests = Promise.resolve();
 </Section>
 <Section N="Character"><Row IX="0"><Cell N="Size" V="0.15"/><Cell N="Color" V="#0000cc"/></Row></Section>
 <Text>Hello Rack</Text>
+</Shape><Shape ID="2" Type="Foreign">
+<Cell N="PinX" V="6"/><Cell N="PinY" V="4"/><Cell N="Width" V="2"/><Cell N="Height" V="1"/>
+<Cell N="LocPinX" V="1"/><Cell N="LocPinY" V="0.5"/><Cell N="Angle" V="0"/>
+<Cell N="LayerMember" V="0"/>
+<ForeignData ForeignType="Bitmap"><Rel r:id="rId1"/></ForeignData>
 </Shape></Shapes></PageContents>`;
   const pagesXml2 = `<?xml version="1.0" encoding="utf-8"?>
 <Pages xmlns="http://schemas.microsoft.com/office/visio/2012/main">
@@ -1246,7 +1253,10 @@ let vsdxTests = Promise.resolve();
   zw.add('visio/pages/pages.xml', pagesXml2);
   zw.add('visio/pages/_rels/pages.xml.rels',
     '<?xml version="1.0"?><Relationships><Relationship Id="rId1" Target="page1.xml"/></Relationships>');
-  zw.add('visio/pages/_rels/page1.xml.rels', '<?xml version="1.0"?><Relationships/>');
+  zw.add('visio/pages/_rels/page1.xml.rels',
+    '<?xml version="1.0"?><Relationships><Relationship Id="rId1" Target="../media/image1.png"/></Relationships>');
+  zw.add('visio/media/image1.png', Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64'));
   zw.add('visio/pages/page1.xml', pageXml);
   const vsdxBytes = zw.build();
 
@@ -1269,7 +1279,12 @@ let vsdxTests = Promise.resolve();
     ok('VSDX page sheet gives the SVG its size',
       /viewBox="0 0 768 576"/.test(r.svg), '8x6 in at 96 dpi');
     ok('VSDX render reports its stats',
-      r.stats.shapes === 1 && r.stats.texts === 1, JSON.stringify(r.stats));
+      r.stats.shapes === 2 && r.stats.texts === 1 && r.stats.foreign === 1, JSON.stringify(r.stats));
+    ok('VSDX embedded bitmap is reported with its page geometry',
+      r.foreigns && r.foreigns.length === 1 &&
+      Math.abs(r.foreigns[0].x - 5) < 1e-9 && Math.abs(r.foreigns[0].y - 3.5) < 1e-9 &&
+      r.foreigns[0].w === 2 && r.foreigns[0].h === 1 && /data:image\/png/.test(r.foreigns[0].href),
+      `foreigns=${JSON.stringify(r.foreigns && r.foreigns.map((f) => [f.x, f.y, f.w, f.h]))}`);
 
     const rHidden = await doc.renderPage(0, { layersOn: new Set([1]) });   /* only "Wires" on */
     ok('VSDX layer visibility filters shapes',
@@ -1291,7 +1306,77 @@ let vsdxTests = Promise.resolve();
     IM.vsdxWrap('a'.repeat(120), 2, 0.1).length > 3 &&
     IM.vsdxWrap('short text', 10, 0.1).length === 1,
     'long text wraps, short text stays one line');
+
+  /* ============================================================
+   * FRONT-VIEW WIRING (wiring drawn on the real rack picture)
+   * ============================================================ */
+  /* an uncalibrated grid must NOT silently become "ok" (the NaN→0 bug) */
+  const c0 = IM.fvCalib({});
+  ok('front view: empty calibration stays uncalibrated',
+    c0.ok === false && !Number.isFinite(c0.pitchX) && !Number.isFinite(c0.x0),
+    `ok=${c0.ok} pitchX=${c0.pitchX}`);
+
+  const cal = IM.fvCalib({
+    imgW: 1000, imgH: 700, x0: 100, y0: 100, pitchX: 100, pitchY: 80,
+    cols: 3, rows: 8, mmPerPx: 0.5, devices: { ssc: { x: 950, y: 640 } },
+  });
+  ok('front view: complete calibration is ok with the given scale',
+    cal.ok === true && cal.mmPerPx === 0.5, `ok=${cal.ok}`);
+
+  const t = IM.fvTerminals(cal, 1, 2);
+  ok('front view: comm pair sits left, power pair right (AYK convention)',
+    t.commS.x < t.commN.x && t.commN.x < 200 && t.pwrNeg.x > 200 && t.pwrNeg.x < t.pwrPos.x,
+    `commN=${t.commN.x.toFixed(1)} pwrNeg=${t.pwrNeg.x.toFixed(1)} pwrPos=${t.pwrPos.x.toFixed(1)}`);
+  ok('front view: terminals sit below the module centre (bottom face)',
+    t.commS.y > 100 + 80 * 2 && t.commS.y < 100 + 80 * 3,
+    `y=${t.commS.y.toFixed(1)}`);
+
+  const order = [];
+  for (let r = 0; r < 8; r++) for (let c = 0; c < 3; c++) order.push(c + ',' + r);
+  const segs = IM.fvWiring(order, cal);
+  const count = (k) => segs.filter((s) => s.kind === k).length;
+  ok('front view: one hop per gap plus four SSC risers and one label per module',
+    count('power') === 23 && count('comm') === 23 && count('sscp') === 2 && count('sscc') === 2 && count('label') === 24,
+    `power=${count('power')} comm=${count('comm')} sscp=${count('sscp')} sscc=${count('sscc')} labels=${count('label')}`);
+  ok('front view: every segment carries a physical length from the picture scale',
+    segs.filter((s) => s.kind !== 'label').every((s) => s.lenMm > 0),
+    'all lens > 0');
+
+  const sum = IM.fvSummary(segs);
+  ok('front view: summary adds the red and green cable metres',
+    sum.powerSegs === 25 && sum.commSegs === 25 && sum.powerMm > 0 && sum.commMm > 0 && sum.maxHopMm > 0,
+    `red=${sum.powerMm.toFixed(0)}mm green=${sum.commMm.toFixed(0)}mm max=${sum.maxHopMm.toFixed(0)}mm`);
+
+  /* reversing the order mirrors the chain: first riser now lands on the
+     opposite corner of the rack */
+  const rev = IM.fvWiring(order.slice().reverse(), cal);
+  const firstA = segs.find((s) => s.kind === 'sscp').pts[3];
+  const firstB = rev.find((s) => s.kind === 'sscp').pts[3];
+  ok('front view: the chain follows the chosen numbering, not the grid',
+    Math.abs(firstA.x - firstB.x) > 50 || Math.abs(firstA.y - firstB.y) > 50,
+    `A=(${firstA.x.toFixed(0)},${firstA.y.toFixed(0)}) B=(${firstB.x.toFixed(0)},${firstB.y.toFixed(0)})`);
+
+  /* a device-free calibration falls back to a bottom-centre anchor */
+  const noDev = IM.fvWiring(order, IM.fvCalib({ imgW: 1000, imgH: 700, x0: 100, y0: 100, pitchX: 100, pitchY: 80, cols: 3, rows: 8, mmPerPx: 0.5 }));
+  ok('front view: missing SSC anchor falls back instead of crashing',
+    noDev.filter((s) => s.kind === 'sscp').length === 2 &&
+    noDev.every((s) => s.pts.every((p) => Number.isFinite(p.x) && Number.isFinite(p.y))),
+    'risers present, all points finite');
+
+  const p = IM.fvPxToSheet(cal, { x: 101.6, y: 203.2, w: 1016, h: 508 }, 500, 350);
+  ok('front view: picture pixels map through the underlay fit rectangle',
+    Math.abs(p.x - 609.6) < 1e-9 && Math.abs(p.y - 457.2) < 1e-9,
+    `(${p.x.toFixed(2)}, ${p.y.toFixed(2)})`);
+
+  const svg = IM.fvSvg(cal, { src: 'data:image/png;base64,STUB' }, segs, { width: 900 });
+  ok('front view: SVG carries the picture, red/green polylines and M labels',
+    /href="data:image\/png;base64,STUB"/.test(svg) &&
+    (svg.match(/stroke="#e02020"/g) || []).length >= 23 &&
+    (svg.match(/stroke="#00a651"/g) || []).length >= 23 &&
+    (svg.match(/>M\d+<\/text>/g) || []).length === 24,
+    `polylines=${(svg.match(/<polyline/g) || []).length} labels=${(svg.match(/>M\d+<\/text>/g) || []).length}`);
 }
+
 
 /* ============================================================
  * SUMMARY

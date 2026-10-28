@@ -236,6 +236,7 @@ async function vsdxOpen(buf, opts) {
     const onLayers = popts && popts.layersOn ? popts.layersOn : null;   /* Set<number> of layer ix */
 
     const out = [];
+    const foreigns = [];
     let shapes = 0, texts = 0, foreign = 0;
 
     async function emit(shapesEl, inherited) {
@@ -263,6 +264,16 @@ async function vsdxOpen(buf, opts) {
           const W = vsdxNum(cells.Width), H = vsdxNum(cells.Height);
           if (img) {
             foreign++;
+            /* page-inch geometry for "use as wiring base": centre + size of
+               the picture on the page (rotation-aware bounding box). */
+            const ang = vsdxNum(cells.Angle) * Math.PI / 180;
+            const hw = (Math.abs(W / 2 * Math.cos(ang)) + Math.abs(H / 2 * Math.sin(ang)));
+            const hh = (Math.abs(W / 2 * Math.sin(ang)) + Math.abs(H / 2 * Math.cos(ang)));
+            foreigns.push({
+              href: img.href, note: img.note || fd.attrs.ForeignType || 'foreign',
+              x: vsdxNum(cells.PinX) - hw, y: vsdxNum(cells.PinY) - hh,
+              w: hw * 2, h: hh * 2,
+            });
             out.push(`<g transform="${t}">`
               + `<rect x="0" y="0" width="${W}" height="${H}" fill="#ffffff" stroke="none"/>`
               + `<image x="0" y="0" width="${W}" height="${H}" `
@@ -343,7 +354,7 @@ async function vsdxOpen(buf, opts) {
       + `class="vsdx-svg" data-page="${escAttr(page.name)}">`
       + `<rect x="0" y="0" width="${wpx}" height="${hpx}" fill="#ffffff"/>`
       + `<g transform="translate(0 ${hpx}) scale(96 -96)">${out.join('')}</g></svg>`;
-    return { svg: svg, stats: { shapes: shapes, texts: texts, foreign: foreign }, page: page };
+    return { svg: svg, stats: { shapes: shapes, texts: texts, foreign: foreign }, foreigns: foreigns, page: page };
   }
 
   return {

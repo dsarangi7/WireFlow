@@ -545,6 +545,8 @@ function tabNumbering(el, project, ctx) {
     planTitle: (saved && saved.planTitle) || '',
     brush: 'module',
     plans: null,
+    cal: fvCalib(saved && saved.cal),
+    calStep: 0, calClick: null, showWiring: true,
   };
   st.order = (saved && Array.isArray(saved.order) && saved.order.length)
     ? saved.order.filter(id => rackIsModule(st.rack, id))
@@ -605,6 +607,35 @@ function tabNumbering(el, project, ctx) {
       </div>`).join('');
   }
 
+  /* ---- front view: the real rack picture with wiring on top ---- */
+  const fvReady = () => !!(project.underlay && project.underlay.kind === 'image' && project.underlay.src);
+  function fvInner() {
+    if (!fvReady()) {
+      return `<p class="muted small">Import the rack drawing first — Configuration tab (DXF/PNG), or open the engineer's .vsdx in the Diagram tab and press <b>Use as wiring base</b>. The red/green wiring is then drawn straight over your real rack here.</p>`;
+    }
+    const cal = st.cal;
+    const status = cal.ok
+      ? `<span class="chip chip-ok">grid calibrated</span> <span class="muted small">pitch ${cal.pitchX.toFixed(0)}×${cal.pitchY.toFixed(0)} px · ${cal.mmPerPx.toFixed(2)} mm/px</span>`
+      : (st.calStep === 1 ? '<span class="chip chip-warn">click the centre of the FIRST module (M1)</span>'
+        : st.calStep === 2 ? '<span class="chip chip-warn">now click the centre of the LAST module</span>'
+        : '<span class="chip chip-warn">grid not calibrated</span>');
+    const segs = cal.ok && st.showWiring ? fvWiring(st.order, cal) : [];
+    const sum = fvSummary(segs);
+    return `
+    <div class="btn-row">
+      <button class="btn btn-ghost btn-sm" id="fv-cal">${cal.ok ? 'Recalibrate grid' : 'Calibrate grid (2 clicks)'}</button>
+      ${cal.ok ? `<button class="btn btn-ghost btn-sm" id="fv-wire">${st.showWiring ? 'Hide wiring' : 'Show wiring'}</button>` : ''}
+      <span id="fv-status">${status}</span>
+    </div>
+    <div id="fv-view" style="margin-top:10px;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden">${fvSvg(cal, { src: project.underlay.src }, segs, { width: 920, noGrid: !cal.ok })}</div>
+    ${cal.ok && st.showWiring ? `<p class="muted small">Red = power chain (${(sum.powerMm / 1000).toFixed(1)} m) · green = communication (${(sum.commMm / 1000).toFixed(1)} m) · longest hop ${Math.round(sum.maxHopMm)} mm. Lengths come from the picture scale — enter the real column/row pitch in section 1.</p>` : ''}
+    <p class="muted small">${cal.ok
+      ? (st.mode === 'custom'
+        ? 'Click a module on the picture to number it, click it again to remove it. With a device brush selected the click places the SSC / ACDP / MSM / JB anchor where it really sits.'
+        : 'Clicks place the selected device anchor. Switch to Custom to point the numbering on the picture itself.')
+      : 'Calibration: click the centre of the first numbered module, then the centre of the last one — grid, scale and wiring follow automatically.'}</p>`;
+  }
+
   function renderMode() {
     const box = el.querySelector('#num-mode');
     if (!box) return;
@@ -647,6 +678,10 @@ function tabNumbering(el, project, ctx) {
   }
 
   function render() {
+    st.cal.cols = st.rack.cols; st.cal.rows = st.rack.rows;
+    if (st.cal.ok && st.cal.pitchX > 0) {
+      st.cal.mmPerPx = (st.rack.pitchX / st.cal.pitchX + st.rack.pitchY / st.cal.pitchY) / 2;
+    }
     const m = numberMetrics(st.rack, rules, st.order);
     const dev = k => rackDeviceCells(st.rack, k).join(', ') || '—';
     el.innerHTML = `
@@ -690,6 +725,10 @@ function tabNumbering(el, project, ctx) {
       <p class="muted small">${project.underlay_url
         ? 'Rack drawing imported — after saving, M1…M' + required + ' are drawn onto it (use the fit rectangle in Configuration to align them).'
         : 'No rack drawing imported yet — import it in the Configuration tab and the numbering will be drawn straight onto it.'}</p>
+    </div>
+    <div class="card" style="margin-top:16px" id="fv-card">
+      <h3>Wiring on the real rack</h3>
+      ${fvInner()}
     </div>
     <div class="card" style="margin-top:16px">
       <h3>3 · Numbering</h3>
@@ -760,6 +799,44 @@ function tabNumbering(el, project, ctx) {
       st.plans = null;
       render();
     });
+    /* ---- front view handlers ---- */
+    el.querySelector('#fv-cal')?.addEventListener('click', () => { st.calStep = 1; st.calClick = null; render(); });
+    el.querySelector('#fv-wire')?.addEventListener('click', () => { st.showWiring = !st.showWiring; render(); });
+    el.querySelector('#fv-view')?.addEventListener('click', (e) => {
+      const svg = e.currentTarget.querySelector('svg');
+      if (!svg) return;
+      const rect = svg.getBoundingClientRect();
+      const px = (e.clientX - rect.left) * st.cal.imgW / Math.max(1, rect.width);
+      const py = (e.clientY - rect.top) * st.cal.imgH / Math.max(1, rect.height);
+      const pt = { x: px, y: py };
+      if (st.calStep === 1) { st.calClick = pt; st.calStep = 2; render(); return; }
+      if (st.calStep === 2) {
+        const c1 = st.calClick || pt;
+        const dc = Math.max(1, st.cal.cols - 1), dr = Math.max(1, st.cal.rows - 1);
+        st.cal.x0 = c1.x; st.cal.y0 = c1.y;
+        st.cal.pitchX = Math.max(2, (px - c1.x) / dc);
+        st.cal.pitchY = Math.max(2, (py - c1.y) / dr);
+        st.cal.mmPerPx = (st.rack.pitchX / st.cal.pitchX + st.rack.pitchY / st.cal.pitchY) / 2;
+        st.cal.ok = true; st.calStep = 0;
+        render();
+        toast('Grid calibrated on the rack picture — wiring is now drawn over it.');
+        return;
+      }
+      if (!st.cal.ok) return;
+      const c = Math.round((px - st.cal.x0) / st.cal.pitchX);
+      const r = Math.round((py - st.cal.y0) / st.cal.pitchY);
+      if (c < 0 || r < 0 || c >= st.cal.cols || r >= st.cal.rows) return;
+      const ctr = fvSlotCenter(st.cal, c, r);
+      if (Math.abs(px - ctr.x) > st.cal.pitchX * 0.55 || Math.abs(py - ctr.y) > st.cal.pitchY * 0.55) return;
+      const id = c + ',' + r;
+      if (st.mode === 'custom') {
+        if (!rackIsModule(st.rack, id)) { toast('That slot is not a battery module — paint it as a module first.', 'error'); return; }
+        st.order = numberingToggle(st.order, id);
+        render();
+        return;
+      }
+      if (st.brush !== 'module') { st.cal.devices[st.brush] = pt; render(); }
+    });
     el.querySelector('#num-save').onclick = async () => {
       const m2 = numberMetrics(st.rack, rules, st.order);
       const num = {
@@ -768,6 +845,7 @@ function tabNumbering(el, project, ctx) {
         planTitle: st.mode === 'auto' ? st.planTitle : '',
         rack: st.rack,
         order: st.order,
+        cal: st.cal,
         savedAt: new Date().toISOString(),
       };
       const ok = await ctx.saveProject({ config: { ...(project.config || {}), numbering: num } });
@@ -780,7 +858,15 @@ function tabNumbering(el, project, ctx) {
     renderMode();
   }
 
-  render();
+  /* The picture's natural size must be known before the first draw. */
+  (async () => {
+    if (fvReady() && Number.isFinite(st.cal.imgW) && st.cal.imgW === 1000 && st.cal.imgH === 700) {
+      const im = new Image();
+      await new Promise((res) => { im.onload = res; im.onerror = res; im.src = project.underlay.src; });
+      if (im.naturalWidth) { st.cal.imgW = im.naturalWidth; st.cal.imgH = im.naturalHeight; }
+    }
+    render();
+  })();
 }
 
 /* ---- Tab 3: Netlist ---- */
@@ -987,6 +1073,7 @@ async function tabDiagram(el, project, ctx) {
         <option value="2">200%</option>
       </select>
       <button class="btn btn-ghost btn-sm" id="btn-vsdx-save" style="display:none">Save file to project</button>
+      <button class="btn btn-ghost btn-sm" id="btn-vsdx-base" style="display:none" title="Use the embedded AutoCAD rack picture as the base for numbering and wiring">Use as wiring base</button>
     </div>
     <div id="vsdx-view" style="overflow:auto;max-height:80vh;background:#eef1f6;border-radius:8px;padding:6px"></div>
   </div>
@@ -1062,6 +1149,7 @@ async function tabDiagram(el, project, ctx) {
   async function render() {
     const t0 = performance.now();
     const r = await st.doc.renderPage(st.page, { layersOn: st.layersOn });
+    st.lastRender = r;
     const view = $('#vsdx-view');
     view.innerHTML = r.svg;
     const zoom = $('#vsdx-zoom').value;
@@ -1070,10 +1158,46 @@ async function tabDiagram(el, project, ctx) {
       if (zoom === 'fit') { svg.style.width = '100%'; svg.style.height = 'auto'; }
       else { svg.style.width = Math.round(r.page.w * 96 * parseFloat(zoom)) + 'px'; svg.style.height = 'auto'; }
     }
+    $('#btn-vsdx-base').style.display = (r.foreigns && r.foreigns.length) ? '' : 'none';
     $('#vsdx-status').textContent = `${st.doc.pages[st.page].name}: ${r.stats.shapes} shapes, ${r.stats.texts} labels`
       + (r.stats.foreign ? `, ${r.stats.foreign} embedded picture${r.stats.foreign > 1 ? 's' : ''}` : '')
       + ` · ${Math.round(performance.now() - t0)} ms`;
   }
+
+  /* Take the largest embedded picture (the AutoCAD rack) out of the Visio
+   * page and make it the project underlay, at the same position on the
+   * A3 sheet: the sheet is 16.535 × 11.69 in and carries 101.6 units per
+   * inch (0.25 mm per unit), y flipped. */
+  $('#btn-vsdx-base').onclick = async () => {
+    const r = st.lastRender;
+    if (!r || !r.foreigns || !r.foreigns.length) return;
+    const status = $('#vsdx-status');
+    try {
+      if (!session) throw new Error('Sign in required');
+      status.textContent = 'Preparing wiring base…';
+      const f = r.foreigns.reduce((a, b) => (a.w * a.h >= b.w * b.h ? a : b));
+      const blob = await (await fetch(f.href)).blob();
+      const path = cloud.storage.userPath(session.user.id, `underlay/${Date.now()}_rack-from-visio.png`);
+      const up = await cloud.storage.upload(path, blob, { contentType: 'image/png' });
+      if (up.error) throw up.error;
+      const U = 101.6;
+      const page = st.doc.pages[st.page];
+      const ok = await ctx.saveProject({
+        underlay_url: path, underlay_kind: 'image',
+        underlay_x: +(f.x * U).toFixed(1),
+        underlay_y: +((page.h - f.y - f.h) * U).toFixed(1),
+        underlay_w: +(f.w * U).toFixed(1),
+        underlay_h: +(f.h * U).toFixed(1),
+      });
+      if (!ok) throw new Error('Save failed');
+      await ctx.loadUnderlay();
+      status.textContent = 'Wiring base set ✓';
+      toast('Rack picture is now the wiring base — open the Numbering tab to calibrate the grid on it.');
+    } catch (e) {
+      status.textContent = '';
+      toast(e.message || 'Could not use the picture as wiring base', 'error');
+    }
+  };
 
   $('#vsdx-zoom').onchange = () => { if (st.doc) render(); };
   $('#btn-vsdx-save').onclick = async () => {
