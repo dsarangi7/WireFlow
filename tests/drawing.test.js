@@ -466,6 +466,20 @@ const guidedComplete = { underlay_url: 'rack.png', config: {
 eq('guided flow derives applied chains, visible wiring and export',
   JSON.stringify(deriveFlow(guidedComplete)), '[true,true,true,true,true]');
 
+const verdictBody = fnBody(appSrc, 'vsdxImportVerdict');
+ok('fnBody extracted vsdxImportVerdict()', !!verdictBody,
+  verdictBody ? verdictBody.length + ' chars' : 'not found');
+const importVerdict = new Function('result', verdictBody || 'return {};');
+eq('VSDX quality verdict rejects a package with no pages',
+  JSON.stringify(importVerdict({ pages: 0, foreigns: 0, picture: null })),
+  JSON.stringify({ ok: false, reason: 'No pages were found in the Visio drawing.' }));
+eq('VSDX quality verdict explains a missing embedded picture',
+  JSON.stringify(importVerdict({ pages: 2, foreigns: [], picture: null })),
+  JSON.stringify({ ok: false, reason: 'No embedded rack picture was found in the Visio drawing.' }));
+eq('VSDX quality verdict accepts the selected embedded picture',
+  JSON.stringify(importVerdict({ pages: [{}, {}], foreigns: [{ blob: true }], picture: { w: 10, h: 4 } })),
+  JSON.stringify({ ok: true, reason: 'The largest embedded picture is ready to use as the wiring base.' }));
+
 /* ============================================================
  * 3. OUTPUT CORRECTNESS — SVG / DXF / SCR
  * ============================================================ */

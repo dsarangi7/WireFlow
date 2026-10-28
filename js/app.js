@@ -39,6 +39,16 @@ function flowStepCompletion(project) {
   return [hasUnderlay, calibrated, chainsApplied, wiringShown, exported];
 }
 
+/** Pure quality verdict used by the guided VSDX import report. */
+function vsdxImportVerdict(result) {
+  const pages = Array.isArray(result && result.pages) ? result.pages.length : Number(result && result.pages) || 0;
+  const foreigns = Array.isArray(result && result.foreigns) ? result.foreigns.length : Number(result && result.foreigns) || 0;
+  const picture = result && result.picture;
+  if (pages < 1) return { ok: false, reason: 'No pages were found in the Visio drawing.' };
+  if (foreigns < 1 || !picture) return { ok: false, reason: 'No embedded rack picture was found in the Visio drawing.' };
+  return { ok: true, reason: 'The largest embedded picture is ready to use as the wiring base.' };
+}
+
 /* ---------------- utilities ---------------- */
 function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
 function toast(msg, type = 'info') {
@@ -66,25 +76,31 @@ async function unwrap(promise, label) {  const { data, error } = await promise;
  * trip, no DWG translation). Used by the Configuration import and available
  * to any tab that needs the real rack picture.
  * @param {File} file The .vsdx chosen by the engineer.
- * @return {{blob: Blob, fit: {x,y,w,h}, pages: number}} PNG blob + sheet fit.
+ * @return {{blob: Blob, fit: {x,y,w,h}, pages: number, foreigns: number,
+ *   layers: number, picture: Object}} PNG blob + sheet fit + quality facts.
  */
 async function underlayFromVsdxFile(file, onStatus) {
   const say = (m) => { if (onStatus) onStatus(m); };
   say('Reading Visio package…');
   const doc = await vsdxOpen(await file.arrayBuffer(), { emfPx: 2400 });
   let best = null;
+  let foreigns = 0;
+  const layerNames = new Set();
   for (let i = 0; i < doc.pages.length; i++) {
     say('Scanning page ' + (i + 1) + ' of ' + doc.pages.length + '…');
     const r = await doc.renderPage(i, {});
+    (doc.pages[i].layers || []).forEach(layer => layerNames.add(layer.name || String(layer.ix)));
+    foreigns += (r.foreigns || []).length;
     for (const f of (r.foreigns || [])) {
-      if (!f.blob && !f.href) continue;
-      if (!best || f.w * f.h > best.f.w * f.h) best = { f: f, page: doc.pages[i] };
+      /* The renderer carries the decoded picture blob on the foreign record.
+         Never fetch its data:/blob: href again. */
+      if (!f.blob) continue;
+      if (!best || f.w * f.h > best.f.w * best.f.h) best = { f: f, page: doc.pages[i] };
     }
   }
-  if (!best) {
-    throw new Error('No embedded rack picture was found in this Visio file. Open it in the Diagram tab to see its pages, or export the rack from AutoCAD as DXF/PNG.');
-  }
-  const blob = best.f.blob || vsdxHrefToBlob(best.f.href);
+  const verdict = vsdxImportVerdict({ pages: doc.pages.length, foreigns: foreigns, picture: best && best.f });
+  if (!verdict.ok) throw new Error(verdict.reason);
+  const blob = best.f.blob;
   if (!blob) throw new Error('The rack picture inside the Visio file could not be decoded.');
   /* Same page→sheet mapping as the Diagram tab: 101.6 sheet units per inch,
      0.25 mm per unit, y flipped (page inches are Y-up, the sheet is Y-down). */
@@ -95,7 +111,55 @@ async function underlayFromVsdxFile(file, onStatus) {
     w: +(best.f.w * U).toFixed(1),
     h: +(best.f.h * U).toFixed(1),
   };
-  return { blob: blob, fit: fit, pages: doc.pages.length };
+  return {
+    blob: blob,
+    fit: fit,
+    pages: doc.pages.length,
+    foreigns: foreigns,
+    layers: layerNames.size,
+    picture: { w: best.f.w, h: best.f.h, bytes: blob.size || 0 },
+  };
+}
+
+/* Shared import/upload/save path for the guided workspace and Configuration. */
+async function importRackDrawing(file, project, ctx, opts) {
+  opts = opts || {};
+  const status = typeof opts.onStatus === 'function' ? opts.onStatus : function () {};
+  if (!session) throw new Error('Sign in required');
+  if (/\.dwg$/i.test(file.name)) {
+    throw new Error('Binary DWG cannot be read in the browser. Save it as DXF, or choose the Visio VSDX version so WireFlow can extract its embedded rack picture.');
+  }
+  const isDxf = /\.dxf$/i.test(file.name);
+  let fit = opts.fit || { underlay_x: 120, underlay_y: 280, underlay_w: 1000, underlay_h: 640 };
+  let blob = file;
+  let kind = isDxf ? 'dxf' : 'image';
+  let contentType = file.type || 'application/octet-stream';
+  let quality = null;
+  status('Preparing rack drawing…');
+  if (/\.vsdx$/i.test(file.name)) {
+    const got = await underlayFromVsdxFile(file, status);
+    blob = new Blob([got.blob], { type: 'image/png' });
+    contentType = 'image/png';
+    kind = 'image';
+    fit = {
+      underlay_x: got.fit.x, underlay_y: got.fit.y,
+      underlay_w: got.fit.w, underlay_h: got.fit.h,
+    };
+    quality = {
+      pages: got.pages, foreigns: got.foreigns, layers: got.layers,
+      picture: got.picture, baseSet: false,
+    };
+    status('Uploading rack picture from the Visio file…');
+  }
+  const safeName = /\.vsdx$/i.test(file.name) ? file.name.replace(/\.vsdx$/i, '') + '.png' : file.name;
+  const path = cloud.storage.userPath(session.user.id, `underlay/${Date.now()}_${safeName}`);
+  const up = await cloud.storage.upload(path, blob, { contentType });
+  if (up.error) throw up.error;
+  const ok = await ctx.saveProject({ underlay_url: path, underlay_kind: kind, ...fit });
+  if (!ok) throw new Error('Could not save the underlay reference');
+  await ctx.loadUnderlay();
+  if (quality) quality.baseSet = true;
+  return { kind: kind, fit: fit, quality: quality };
 }
 
 /* ---------------- auth gate ---------------- */
@@ -450,14 +514,61 @@ async function renderProjectPage(id) {
           <button class="btn btn-primary btn-lg" id="workspace-import">Import rack drawing</button>
           <button class="btn btn-ghost" id="workspace-continue">Continue where I left off</button>
         </div>
+        <input type="file" id="workspace-file" accept=".dxf,.png,.jpg,.jpeg,.svg,.vsdx" hidden>
         <p class="muted small">VSDX, DXF, PNG, JPG and SVG are supported.</p>
+        <div id="workspace-import-result" aria-live="polite"></div>
+        <details class="import-advanced">
+          <summary>Advanced import options</summary>
+          <p class="muted small">Adjust fit, alignment or remove the current drawing in Configuration.</p>
+          <button class="text-link" id="workspace-config">Open Configuration →</button>
+        </details>
       </section>`;
     home.querySelectorAll('[data-flow]').forEach(button => {
       button.onclick = () => switchTab(stepIndex(FLOW_STEPS[+button.dataset.flow]));
     });
-    home.querySelector('#workspace-import').onclick = async () => {
-      await switchTab(stepIndex(FLOW_STEPS[0]));
-      body.querySelector('#u-file')?.click();
+    const picker = home.querySelector('#workspace-file');
+    const result = home.querySelector('#workspace-import-result');
+    home.querySelector('#workspace-import').onclick = () => picker.click();
+    home.querySelector('#workspace-config').onclick = () => switchTab(stepIndex(FLOW_STEPS[0]));
+    picker.onchange = async () => {
+      const file = picker.files[0];
+      if (!file) return;
+      const importButton = home.querySelector('#workspace-import');
+      importButton.disabled = true;
+      result.innerHTML = `<div class="import-progress"><span class="import-spinner"></span><span id="workspace-import-status">Reading ${esc(file.name)}…</span></div>`;
+      const status = result.querySelector('#workspace-import-status');
+      try {
+        const imported = await importRackDrawing(file, project, { saveProject, loadUnderlay }, {
+          onStatus: message => { status.textContent = message; },
+        });
+        let report = '';
+        if (imported.quality) {
+          const q = imported.quality;
+          const verdict = vsdxImportVerdict(q);
+          const size = q.picture ? `${Number(q.picture.w).toFixed(2)} × ${Number(q.picture.h).toFixed(2)} in` : '—';
+          report = `<div class="import-report ${verdict.ok ? 'ok' : 'error'}">
+            <div class="import-report-icon">${verdict.ok ? '✓' : '!'}</div>
+            <div><strong>Visio import quality</strong><p>${esc(verdict.reason)}</p>
+              <dl><div><dt>Pages found</dt><dd>${q.pages}</dd></div><div><dt>Embedded picture</dt><dd>${q.picture ? 'Yes · ' + size : 'No'}</dd></div><div><dt>Layers</dt><dd>${q.layers}</dd></div><div><dt>Wiring base</dt><dd>${q.baseSet ? 'Set to largest picture' : 'Not set'}</dd></div></dl>
+            </div>
+          </div>`;
+        }
+        result.innerHTML = report || `<div class="import-report ok"><div class="import-report-icon">✓</div><div><strong>Rack drawing imported</strong><p>The drawing is set as the wiring base.</p></div></div>`;
+        toast('Rack drawing imported — continue with calibration.');
+        await switchTab(stepIndex(FLOW_STEPS[1]));
+        if (report) body.insertAdjacentHTML('afterbegin', report);
+      } catch (error) {
+        console.error('Guided rack import failed', error);
+        result.innerHTML = `<div class="import-report error">
+          <div class="import-report-icon">!</div>
+          <div><strong>We could not import this drawing</strong><p>${esc(error && error.message ? error.message : 'The file could not be read. Check that it is a supported rack drawing and try again.')}</p>
+          <button class="btn btn-ghost btn-sm" id="workspace-repick">Pick another file</button></div>
+        </div>`;
+        result.querySelector('#workspace-repick').onclick = () => picker.click();
+      } finally {
+        importButton.disabled = false;
+        picker.value = '';
+      }
     };
     home.querySelector('#workspace-continue').onclick = () => switchTab(stepIndex(FLOW_STEPS[currentStep]));
   }
@@ -597,33 +708,14 @@ function tabConfig(el, project, ctx) {
   uFile.addEventListener('change', async () => {
     const file = uFile.files[0]; if (!file) return;
     try {
-      if (!session) throw new Error('Sign in required');
-      if (/\.dwg$/i.test(file.name)) {
-        throw new Error('Binary DWG cannot be read in the browser. Two ways to get your rack in: (1) in AutoCAD use Save As → DXF and import that DXF here, or (2) if you have the Visio version, pick the .vsdx here — WireFlow takes the embedded rack picture out of it automatically.');
-      }
-      const isDxf = /\.dxf$/i.test(file.name);
-      uStatus.textContent = 'Uploading rack drawing…';
-      let fit = fitFromInputs();
-      let blob = file;
-      let kind = isDxf ? 'dxf' : 'image';
-      let contentType = file.type || 'application/octet-stream';
-      if (/\.vsdx$/i.test(file.name)) {
-        const got = await underlayFromVsdxFile(file, (m) => { uStatus.textContent = m; });
-        blob = new Blob([got.blob], { type: 'image/png' });
-        contentType = 'image/png';
-        kind = 'image';
-        fit = got.fit;
-        uStatus.textContent = 'Uploading rack picture from the Visio file…';
-      }
-      const safeName = /\.vsdx$/i.test(file.name) ? file.name.replace(/\.vsdx$/i, '') + (kind === 'dxf' ? '.dxf' : '.png') : file.name;
-      const path = cloud.storage.userPath(session.user.id, `underlay/${Date.now()}_${safeName}`);
-      const up = await cloud.storage.upload(path, blob, { contentType });
-      if (up.error) throw up.error;
-      const ok = await ctx.saveProject({ underlay_url: path, underlay_kind: kind, ...fit });
-      if (!ok) throw new Error('Could not save the underlay reference');
+      await importRackDrawing(file, project, ctx, {
+        fit: fitFromInputs(),
+        onStatus: message => { uStatus.textContent = message; },
+      });
       el.querySelector('#u-remove').disabled = false;
       await afterUnderlayChange('Rack drawing imported.');
     } catch (e) {
+      console.error('Advanced rack import failed', e);
       uStatus.textContent = '';
       toast(e.message, 'error');
     } finally { uFile.value = ''; }

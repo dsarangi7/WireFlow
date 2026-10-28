@@ -29,3 +29,16 @@ the **Advanced** section.
 The flow does not modify the deterministic engine. The PDF action uses the
 browser print dialog on the existing SVG drawing; Visio, DXF, AutoCAD script and
 cable schedule downloads continue to use their established exporters.
+
+## Guided rack import
+
+The home-screen import button runs the same `importRackDrawing()` upload and
+save path used by Configuration. VSDX files continue through
+`underlayFromVsdxFile()`; that function selects the largest foreign picture and
+uses the blob carried by the render record. It does not fetch the foreign href.
+
+After a VSDX import, the UI reports page count, embedded-picture dimensions,
+layer count and whether the largest picture became the wiring base. Parse or
+picture-selection failures stay on the workspace as a user-facing error card,
+while technical details are logged to the browser console. Successful imports
+open Numbering automatically so calibration is the next visible task.
