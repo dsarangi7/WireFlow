@@ -131,6 +131,34 @@ async function underlayFromVsdxFile(file, onStatus) {
   };
 }
 
+/* Storage gateways can occasionally drop a multipart POST before returning an
+   HTTP response (surfacing only "Failed to fetch"). Retry through the SDK's
+   signed PUT flow before reporting a transport failure to the engineer. */
+async function uploadRackBlob(path, blob, contentType, onStatus) {
+  let firstError = null;
+  try {
+    const direct = await cloud.storage.upload(path, blob, { contentType });
+    if (!direct.error) return direct;
+    firstError = direct.error;
+  } catch (error) {
+    firstError = error;
+  }
+  console.warn('Direct rack upload failed; retrying with a signed upload URL.', firstError);
+  if (onStatus) onStatus('Secure upload retry…');
+  try {
+    const signed = await cloud.storage.createSignedUploadUrl(path, { upsert: true });
+    if (signed.error || !signed.data || !signed.data.token) throw signed.error || new Error('No signed upload token was returned.');
+    const retried = await cloud.storage.uploadToSignedUrl(path, signed.data.token, blob, { contentType, upsert: true });
+    if (retried.error) throw retried.error;
+    return retried;
+  } catch (retryError) {
+    console.error('Signed rack upload retry failed.', retryError);
+    const error = new Error('The rack picture was extracted, but the secure upload could not reach project storage. Check your connection and pick the file again.');
+    error.cause = retryError || firstError;
+    throw error;
+  }
+}
+
 /* Shared import/upload/save path for the guided workspace and Configuration. */
 async function importRackDrawing(file, project, ctx, opts) {
   opts = opts || {};
@@ -163,8 +191,7 @@ async function importRackDrawing(file, project, ctx, opts) {
   }
   const safeName = /\.vsdx$/i.test(file.name) ? file.name.replace(/\.vsdx$/i, '') + '.png' : file.name;
   const path = cloud.storage.userPath(session.user.id, `underlay/${Date.now()}_${safeName}`);
-  const up = await cloud.storage.upload(path, blob, { contentType });
-  if (up.error) throw up.error;
+  await uploadRackBlob(path, blob, contentType, status);
   const ok = await ctx.saveProject({ underlay_url: path, underlay_kind: kind, ...fit });
   if (!ok) throw new Error('Could not save the underlay reference');
   await ctx.loadUnderlay();

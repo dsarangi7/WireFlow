@@ -43,6 +43,13 @@ picture-selection failures stay on the workspace as a user-facing error card,
 while technical details are logged to the browser console. Successful imports
 open Numbering automatically so calibration is the next visible task.
 
+Rack-picture storage first uses the established SDK upload. If that multipart
+request is interrupted before an HTTP response, the same in-memory picture blob
+is retried through the SDK's signed upload URL; the app never fetches the foreign
+picture href. If both routes fail, the workspace explains that extraction
+succeeded but project storage could not be reached, instead of exposing a raw
+`Failed to fetch` message.
+
 ## Wire, validate and deliver
 
 Step 4 summarizes the saved module count, per-SSC chain cable totals and both

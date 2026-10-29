@@ -492,6 +492,15 @@ eq('VSDX quality verdict accepts the selected embedded picture',
   JSON.stringify(importVerdict({ pages: [{}, {}], foreigns: [{ blob: true }], picture: { w: 10, h: 4 } })),
   JSON.stringify({ ok: true, reason: 'The largest embedded picture is ready to use as the wiring base.' }));
 
+const importRackBody = fnBody(appSrc, 'importRackDrawing') || '';
+const uploadRackBody = fnBody(appSrc, 'uploadRackBlob') || '';
+ok('guided rack import uses the resilient storage helper',
+  /await uploadRackBlob\(path, blob, contentType, status\)/.test(importRackBody));
+ok('rack upload retries through a signed URL without refetching the picture href',
+  /createSignedUploadUrl/.test(uploadRackBody) && /uploadToSignedUrl/.test(uploadRackBody) && !/fetch\s*\(/.test(uploadRackBody));
+ok('rack upload transport failure is explained without a raw fetch error',
+  /rack picture was extracted, but the secure upload could not reach project storage/.test(uploadRackBody));
+
 /* ============================================================
  * 3. OUTPUT CORRECTNESS — SVG / DXF / SCR
  * ============================================================ */
