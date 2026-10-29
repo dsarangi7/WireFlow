@@ -1654,7 +1654,12 @@ function printDocumentHtml(project, pages, dateLabel) {
   return (pages || []).map((page, index) => `<section class="print-page">
     <header><strong>AYK WireFlow</strong><span>${esc(project.name || 'Wiring project')}</span><span>${esc(dateLabel)}</span></header>
     <h1>${esc(page.title)}</h1><div class="print-svg">${page.svg}</div>
-    <footer>Page ${index + 1} of ${pages.length}</footer>
+    <footer class="print-title-block">
+      <div class="print-title-brand"><img src="data:image/png;base64,${VSDX_LOGO_B64}" alt="AYK logo"><strong>AYK POWER LTD.</strong></div>
+      <div><small>Drawing</small><span>${esc(project.name || 'Wiring project')}</span></div>
+      <div><small>Drawing number · revision</small><span>${esc(project.drawing_no || 'Not specified')} · ${esc(project.revision || 'A')}</span></div>
+      <div><small>Date · sheet</small><span>${esc(dateLabel)} · ${index + 1} / ${pages.length}</span></div>
+    </footer>
   </section>`).join('');
 }
 

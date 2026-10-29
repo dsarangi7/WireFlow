@@ -489,6 +489,11 @@ const overlayPages = printProjectPages({ config: { numbering: { cal: {} } }, und
 eq('printed rack picture includes generated wiring', overlayPages.frontSvg, 'wire');
 ok('printed rack uses calibrated wiring and keeps the source image proportions',
   printWiringOptions.groups[0] === 'group' && printSvgOptions.noGrid === true && printSvgOptions.width === undefined);
+const printHtmlBody = fnBody(appSrc, 'printDocumentHtml');
+const printHtml = new Function('project', 'pages', 'dateLabel', 'esc', 'VSDX_LOGO_B64', printHtmlBody);
+const printedHtml = printHtml({ name: 'Rack', drawing_no: 'DWG-1', revision: 'B' }, [{ title: 'Draft', svg: '<svg/>' }], '29 Oct', x => String(x), 'logo-data');
+ok('print title block embeds the AYK logo and drawing details',
+  printedHtml.includes('data:image/png;base64,logo-data') && printedHtml.includes('AYK POWER LTD.') && printedHtml.includes('DWG-1 · B'));
 
 const simpleSrc = fs.readFileSync(path.join(ROOT, 'js', 'simple-wiring.js'), 'utf8');
 const portFactory = new Function('slotCell', 'fvSlotCenter', 'fvDist', 'SSC_PALETTE',

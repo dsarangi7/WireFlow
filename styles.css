@@ -369,11 +369,18 @@ table.data tr:hover td { background: #f8fafc; }
   body * { visibility: hidden !important; }
   .print-document, .print-document * { visibility: visible !important; }
   .print-document { display: block !important; position: absolute; inset: 0; width: 420mm; }
-  .print-page { width: 420mm; height: 297mm; padding: 9mm 11mm 8mm; display: grid; grid-template-rows: 8mm 10mm 1fr 6mm; gap: 2mm; overflow: hidden; background: #fff; break-after: page; page-break-after: always; }
+  .print-page { width: 420mm; height: 297mm; padding: 9mm 11mm 8mm; display: grid; grid-template-rows: 8mm 10mm 1fr auto; gap: 2mm; overflow: hidden; background: #fff; break-after: page; page-break-after: always; }
   .print-page:last-child { break-after: auto; page-break-after: auto; }
   .print-page header { display: flex; justify-content: space-between; align-items: center; border-bottom: .3mm solid #d8dde4; color: #354052; font-size: 10pt; }
   .print-page h1 { font-size: 15pt; color: #18212f; }
   .print-svg { min-height: 0; display: grid; place-items: center; }
   .print-svg > svg { width: 100%; height: 100%; max-height: 250mm; }
-  .print-page footer { text-align: right; color: #687386; font-size: 8pt; }
+  .print-title-block { justify-self: end; width: 125mm; border: .3mm solid #2d3748; display: grid; grid-template-columns: 1fr 1fr; color: #18212f; font-size: 8pt; }
+  .print-title-block > div { padding: 1.2mm 2mm; border-bottom: .2mm solid #aab2bc; min-width: 0; }
+  .print-title-block > div:nth-child(even) { border-left: .2mm solid #aab2bc; }
+  .print-title-block > div:nth-last-child(-n+2) { border-bottom: 0; }
+  .print-title-block small, .print-title-block span { display: block; }
+  .print-title-block small { font-size: 6pt; color: #526074; }
+  .print-title-brand { display: flex; align-items: center; gap: 2mm; }
+  .print-title-brand img { width: 7mm; height: 7mm; object-fit: contain; }
 }

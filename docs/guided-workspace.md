@@ -29,6 +29,9 @@ physical routes and any unmarked terminals still require engineering review. Imp
 drawings remain available to the expert tools, but the picture-marking workflow
 requires a raster or SVG image or an embedded Visio picture.
 
+The print/PDF page places the AYK logo and project identification in a compact
+title block at the lower right. This is not yet the full AYK house Visio template.
+
 The project workspace opens on a five-step path instead of dropping an engineer
 directly into the expert tabs:
 
