@@ -7,6 +7,8 @@ exported as native **Visio (.vsdx)**, **AutoCAD DXF/.scr**, **SVG** and **CSV**.
 Built as a SaaS app: landing page, per-user accounts (email OTP), and a deterministic
 rule engine implementing the Wiring Diagram Tool Engineering Rules (R01–R12, V01–V12).
 
+Live site: https://dsarangi7.github.io/WireFlow/
+
 ## Features
 
 - **Physical module numbering** — M1…MN is derived from the rack itself: the chain starts
