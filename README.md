@@ -23,7 +23,7 @@ and the limits of the grid and draft cable routing.
 
 - **Visio desktop prototype** — early 64-bit COM add-in source for marking
   selected terminal shapes, saving marks for the same drawing/page and drawing
-  editable draft wires with optional manually marked route waypoints and a 2D
+  editable draft wires with a connection preview, optional manually marked route waypoints and a 2D
   warning for proposed crossings. It is
   not installed or approved for release; see
   [prototype status](docs/visio-desktop-prototype.md).

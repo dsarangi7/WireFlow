@@ -38,6 +38,10 @@ without waypoints it remains straight. These routes are manual draft geometry:
 the tool does not infer rails, produce curves or verify bend radii. Changing a
 terminal using Undo clears the current chain's routes so stale waypoints cannot
 be silently reused. The engineer reviews and approves every resulting route.
+The prototype window highlights the next terminal in larger text and offers a
+read-only connection preview showing the bank, SSC, each network and terminal
+pair, and the ordered route coordinates in Visio's internal inches. This preview
+is not a schedule or harness approval and must be checked before drawing.
 
 The engineer may explicitly save partially or fully marked terminals and any
 completed manual routes to a local JSON file and reload them on the same saved

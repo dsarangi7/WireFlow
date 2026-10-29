@@ -46,6 +46,21 @@ namespace Ayk.WireFlow.VisioAddIn {
     public sealed class Crossing { public Segment First; public Segment Second; }
     public sealed class ExistingDrafts { public readonly List<Segment> Segments=new List<Segment>(); public readonly HashSet<string> Identities=new HashSet<string>(); public int Unreadable; }
     public static class DraftReview {
+        private static string PointLabel(Point p) { return p.X.ToString("0.####",CultureInfo.InvariantCulture)+","+p.Y.ToString("0.####",CultureInfo.InvariantCulture); }
+        public static string FormatPreview(DraftPlan plan) {
+            var segments=plan.Build(); var lines=new List<string>();
+            lines.Add("DRAFT — verify endpoints, routes and harnesses before release.");
+            lines.Add("Bank "+plan.Bank+" · SSC "+plan.Ssc+" · "+plan.Modules+" modules · coordinates in Visio internal inches");
+            lines.Add("Network\tFrom\tTo\tRoute points (x,y)");
+            foreach(var segment in segments) {
+                var points=new List<string>(); points.Add(PointLabel(segment.A));
+                if(segment.Waypoints!=null) foreach(var point in segment.Waypoints) points.Add(PointLabel(point));
+                points.Add(PointLabel(segment.B));
+                lines.Add(segment.Network+"\t"+segment.From+"\t"+segment.To+"\t"+String.Join(" → ",points.ToArray()));
+            }
+            lines.Add("Manual waypoint paths are not automatically approved or checked for bend radius or physical clearance.");
+            return String.Join(Environment.NewLine,lines.ToArray());
+        }
         private static string Literal(object formula) {
             string value=formula as string;
             if (value == null || value.Length < 2 || value[0] != '"' || value[value.Length-1] != '"') throw new InvalidOperationException("The draft annotation is not a literal.");
@@ -302,7 +317,7 @@ namespace Ayk.WireFlow.VisioAddIn {
         private readonly NumericUpDown count = new NumericUpDown { Minimum=2, Maximum=48, Value=12, Width=70 };
         private readonly NumericUpDown bank = new NumericUpDown { Minimum=1, Maximum=9999, Value=1, Width=70 };
         private readonly NumericUpDown ssc = new NumericUpDown { Minimum=1, Maximum=9999, Value=1, Width=70 };
-        private readonly Label status = new Label { AutoSize=false, Width=520, Height=92 };
+        private readonly Label status = new Label { AutoSize=false, Width=520, Height=116, Font=new System.Drawing.Font(System.Drawing.SystemFonts.MessageBoxFont.FontFamily,14,System.Drawing.FontStyle.Bold) };
         private readonly Button mark = new Button { Text="Record selected terminal marker", Width=245, Height=40 };
         private readonly Button undo = new Button { Text="Undo last terminal mark", Width=245, Height=36 };
         private readonly Button saveMarks = new Button { Text="Save terminal marks", Width=245, Height=36 };
@@ -313,6 +328,7 @@ namespace Ayk.WireFlow.VisioAddIn {
         private readonly Label routeStatus = new Label { Width=510, Height=42 };
         private readonly Button pick = new Button { Text="Click ports on drawing", Width=245, Height=40 };
         private readonly Button draw = new Button { Text="Draw draft on active page", Width=245, Height=40 };
+        private readonly Button review = new Button { Text="Review draft connections", Width=245, Height=40 };
         private readonly List<string> prompts = new List<string>();
         private int next;
         private object page;
@@ -328,15 +344,16 @@ namespace Ayk.WireFlow.VisioAddIn {
             ids.Controls.Add(new Label { Text="Modules", AutoSize=true }); ids.Controls.Add(count); layout.Controls.Add(ids);
             var start=new Button { Text="Start terminal marking", Width=245, Height=36 };
             layout.Controls.Add(start); layout.Controls.Add(status); layout.Controls.Add(pick); layout.Controls.Add(mark); layout.Controls.Add(undo); layout.Controls.Add(saveMarks); layout.Controls.Add(loadMarks);
-            layout.Controls.Add(new Label { Text="Optional route waypoints (draft only):", Width=500, Height=22 }); layout.Controls.Add(routeChoice); layout.Controls.Add(routeStatus); layout.Controls.Add(addWaypoint); layout.Controls.Add(removeWaypoint); layout.Controls.Add(draw); Controls.Add(layout);
+            layout.Controls.Add(new Label { Text="Optional route waypoints (draft only):", Width=500, Height=22 }); layout.Controls.Add(routeChoice); layout.Controls.Add(routeStatus); layout.Controls.Add(addWaypoint); layout.Controls.Add(removeWaypoint); layout.Controls.Add(review); layout.Controls.Add(draw); Controls.Add(layout);
             start.Click += delegate { StartPlan(); }; mark.Click += delegate { Record(); }; pick.Click += delegate { TogglePicking(); }; undo.Click += delegate { UndoMark(); }; draw.Click += delegate { Draw(); };
             saveMarks.Click += delegate { SaveMarks(); }; loadMarks.Click += delegate { LoadMarks(); };
             routeChoice.SelectedIndexChanged += delegate { ShowRoute(); }; addWaypoint.Click += delegate { AddWaypoint(); }; removeWaypoint.Click += delegate { RemoveWaypoint(); };
+            review.Click += delegate { ShowPreview(); };
             FormClosed += delegate { StopPicking(); };
 #if !EXPERIMENTAL_MOUSE_PICKING
             pick.Visible=false;
 #endif
-            pick.Enabled=false; mark.Enabled=false; undo.Enabled=false; saveMarks.Enabled=false; draw.Enabled=false; routeChoice.Enabled=false; addWaypoint.Enabled=false; removeWaypoint.Enabled=false;
+            pick.Enabled=false; mark.Enabled=false; undo.Enabled=false; saveMarks.Enabled=false; draw.Enabled=false; review.Enabled=false; routeChoice.Enabled=false; addWaypoint.Enabled=false; removeWaypoint.Enabled=false;
 #if EXPERIMENTAL_MOUSE_PICKING
             status.Text="Pilot: mark terminal positions in order, directly on the drawing or by selecting marker shapes.";
 #else
@@ -356,7 +373,7 @@ namespace Ayk.WireFlow.VisioAddIn {
 #else
                 pick.Enabled=false;
 #endif
-                mark.Enabled=true; undo.Enabled=false; saveMarks.Enabled=true; draw.Enabled=false; DisableRoutes(); ShowPrompt();
+                mark.Enabled=true; undo.Enabled=false; saveMarks.Enabled=true; draw.Enabled=false; review.Enabled=false; DisableRoutes(); ShowPrompt();
             } catch (Exception ex) { status.Text="Could not start: "+ex.Message; }
         }
         private void ShowPrompt() {
@@ -388,7 +405,7 @@ namespace Ayk.WireFlow.VisioAddIn {
             try {
                 plan.Set(prompts[next],x,y); next++; undo.Enabled=true;
                 if (next == prompts.Count) {
-                    picking=false; mark.Enabled=false; pick.Enabled=false; draw.Enabled=true; PopulateRoutes();
+                    picking=false; mark.Enabled=false; pick.Enabled=false; draw.Enabled=true; review.Enabled=true; PopulateRoutes();
                     status.Text="All terminal positions recorded. Draw a draft and review every endpoint and route.";
                     BeginInvoke(new Action(StopPicking));
                 } else ShowPrompt();
@@ -398,7 +415,7 @@ namespace Ayk.WireFlow.VisioAddIn {
         private void UndoMark() {
             if (next == 0) return;
             if (plan.Routes.Count>0 && MessageBox.Show(this,"Changing a terminal clears all manual routes for this chain. Save your marks first if needed. Continue?","Clear manual routes",MessageBoxButtons.YesNo,MessageBoxIcon.Question) != DialogResult.Yes) return;
-            StopPicking(); next--; plan.Remove(prompts[next]); plan.Routes.Clear(); DisableRoutes(); mark.Enabled=true; draw.Enabled=false;
+            StopPicking(); next--; plan.Remove(prompts[next]); plan.Routes.Clear(); DisableRoutes(); mark.Enabled=true; draw.Enabled=false; review.Enabled=false;
 #if EXPERIMENTAL_MOUSE_PICKING
             pick.Enabled=true;
 #endif
@@ -441,7 +458,7 @@ namespace Ayk.WireFlow.VisioAddIn {
                     foreach(var entry in restored.Terminals) plan.Terminals.Add(entry.Key,entry.Value);
                     foreach(var entry in restored.Routes) plan.Routes.Add(entry.Key,new List<Point>(entry.Value));
                     prompts.Clear(); prompts.AddRange(MarkPersistence.Steps(plan.Modules)); count.Value=plan.Modules; bank.Value=plan.Bank; ssc.Value=plan.Ssc; next=restoredCount;
-                    bool complete=next==prompts.Count; mark.Enabled=!complete; undo.Enabled=next>0; saveMarks.Enabled=true; draw.Enabled=complete;
+                    bool complete=next==prompts.Count; mark.Enabled=!complete; undo.Enabled=next>0; saveMarks.Enabled=true; draw.Enabled=complete; review.Enabled=complete;
 #if EXPERIMENTAL_MOUSE_PICKING
                     pick.Enabled=!complete;
 #else
@@ -461,7 +478,7 @@ namespace Ayk.WireFlow.VisioAddIn {
                 dynamic shape=selection[1];
                 double x=shape.CellsU["PinX"].ResultIU; double y=shape.CellsU["PinY"].ResultIU;
                 plan.Set(prompts[next],x,y); next++; undo.Enabled=true;
-                if (next == prompts.Count) { mark.Enabled=false; pick.Enabled=false; draw.Enabled=true; PopulateRoutes(); status.Text="All terminal positions recorded. Add route waypoints if needed, then draw a draft for review."; }
+                if (next == prompts.Count) { mark.Enabled=false; pick.Enabled=false; draw.Enabled=true; review.Enabled=true; PopulateRoutes(); status.Text="All terminal positions recorded. Add route waypoints if needed, then draw a draft for review."; }
                 else ShowPrompt();
             } catch (Exception ex) { status.Text="Could not record: "+ex.Message+"\nSelect one marker on the original page and try again."; }
         }
@@ -493,6 +510,15 @@ namespace Ayk.WireFlow.VisioAddIn {
                 if(option==null || !plan.Routes.TryGetValue(DraftPlan.RouteKey(option.From,option.To),out current) || current.Count==0) return;
                 var points=new List<Point>(current); points.RemoveAt(points.Count-1); plan.SetRoute(option.From,option.To,points); ShowRoute();
             } catch(Exception ex) { routeStatus.Text="Could not remove waypoint: "+ex.Message; }
+        }
+        private void ShowPreview() {
+            try {
+                CheckChainInputs(); if(page != app.ActivePage) throw new InvalidOperationException("Return to the page on which marking started.");
+                using(var window=new Form { Text="Review draft connections", Width=860, Height=520, StartPosition=FormStartPosition.CenterParent }) {
+                    var text=new TextBox { Multiline=true, ReadOnly=true, ScrollBars=ScrollBars.Both, WordWrap=false, Dock=DockStyle.Fill, Text=DraftReview.FormatPreview(plan) };
+                    window.Controls.Add(text); window.ShowDialog(this);
+                }
+            } catch(Exception ex) { status.Text="Could not review connections: "+ex.Message; }
         }
         private void Draw() {
             try {

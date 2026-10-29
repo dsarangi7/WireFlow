@@ -95,6 +95,8 @@ public static class TestCore {
         var routeFile=MarkPersistence.Serialize(plan,@"G:\\sample.vsdx",42,order.Count);
         var restoredRoute=MarkPersistence.Deserialize(routeFile,@"G:\\sample.vsdx",42,out restoredCount);
         Check(restoredRoute.Routes[DraftPlan.RouteKey("SSC.POS","M1.POS")].Count==2 && restoredRoute.Routes[DraftPlan.RouteKey("SSC.POS","M1.POS")][0].X==20,"manual waypoints round trip in their original order");
+        string preview=DraftReview.FormatPreview(restoredRoute);
+        Check(preview.Contains("Bank 2") && preview.Contains("SSC 3") && preview.Contains("SSC.POS\tM1.POS") && preview.Contains("20,21 → 22,23") && preview.Contains("DRAFT"),"preview lists chain identity, endpoints and manual route points as draft");
         bool wrongRoute=false; try { plan.SetRoute("M2.POS","SSC.POS",new [] {new Point(20,21)}); } catch(InvalidOperationException) { wrongRoute=true; }
         Check(wrongRoute,"routes cannot be attached to an unlisted connection");
         var page=new FakePage(); var app=new FakeApp{Page=page};

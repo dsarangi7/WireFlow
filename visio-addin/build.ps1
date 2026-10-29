@@ -7,6 +7,6 @@ New-Item -ItemType Directory -Path $buildDir -Force | Out-Null
 $out = Join-Path $buildDir 'Ayk.WireFlow.VisioAddIn.dll'
 $source = Join-Path $PSScriptRoot 'WireFlowAddIn.cs'
 $define = if ($ExperimentalMousePicking) { '/define:EXPERIMENTAL_MOUSE_PICKING' } else { '/define:STANDARD_BUILD' }
-& $compiler /nologo /target:library /platform:x64 $define "/out:$out" /reference:System.Windows.Forms.dll /reference:Microsoft.CSharp.dll /reference:System.Web.Extensions.dll $source
+& $compiler /nologo /target:library /platform:x64 $define "/out:$out" /reference:System.Windows.Forms.dll /reference:System.Drawing.dll /reference:Microsoft.CSharp.dll /reference:System.Web.Extensions.dll $source
 if ($LASTEXITCODE -ne 0) { throw "Compilation failed with exit code $LASTEXITCODE." }
 Write-Output "Built prototype: $out"
