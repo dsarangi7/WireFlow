@@ -6,15 +6,26 @@ Import a VSDX, PNG, JPG or SVG rack picture, then enter the number of regularly
 spaced grid columns and rows and their measured centre-to-centre spacing in mm.
 Click the top-left and bottom-right grid positions to align the grid, then mark
 each battery module, SSC, ACDP and MSM on the picture. Empty positions remain
-unmarked. Generate wiring to apply the existing per-SSC planner and validations;
-the preview and SVG show power and communication wiring over the picture.
+unmarked. Mark communication S and N and power negative and positive on one
+representative module; those four measured offsets are applied to identical
+modules. For each SSC, mark its communication S/N, power NEG/POS and bus B−/B+
+ports, then mark the corresponding junction-box negative and positive ports.
+Generate wiring to apply the existing per-SSC planner and validations.
+
+The preview, SVG and draft PDF use the marked port centres. In accordance with
+the existing engine, module negative connects to the next module positive and
+module S to the next module N; SSC POS and S connect to the first module,
+SSC NEG and N to the last module, and SSC B+/B− to matching junction-box
+terminals. Links for SSCs without all eight marked terminal positions are omitted.
+The preview joins marked endpoints by straight lines; it does not yet reproduce
+the routed paths, bends, cable channels, or an editable Visio master drawing.
 
 The grid assumes straight, evenly spaced rows and columns (maximum 12 by 24).
 The automatic assignment uses the nearest SSC subject to the existing configured
 string capacity; it cannot determine the intended electrical assignment from an
 image. The engineer must check component positions, assignments, harness lengths,
-and validation results. An SVG can be downloaded as a draft if checks fail; the
-PDF release action is blocked while engine or layout checks fail. Imported DXF
+and validation results. SVG and PDF outputs are labelled as draft because the
+physical routes and any unmarked terminals still require engineering review. Imported DXF
 drawings remain available to the expert tools, but the picture-marking workflow
 requires a raster or SVG image or an embedded Visio picture.
 

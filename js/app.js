@@ -1640,8 +1640,8 @@ function projectPrintPages(project, conns) {
   const cal = fvCalib(numbering.cal);
   const groups = layoutGroups(project);
   const canDraw = !!(cal.ok && project.underlay && project.underlay.kind === 'image' && project.underlay.src);
-  const frontSvg = canDraw
-    ? fvSvg(cal, { src: project.underlay.src }, layoutFrontView(groups, cal, { showWiring: true }), { noGrid: true, sscLabels: true })
+  const frontSvg = canDraw && modulePortsValid(numbering.modulePorts)
+    ? fvSvg(cal, { src: project.underlay.src }, pictureModuleWiring(groups, cal, numbering.modulePorts, numbering.devicePorts), { noGrid: true, sscLabels: true })
     : '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1680 1188"><rect width="1680" height="1188" fill="#fff"/><text x="840" y="594" text-anchor="middle" font-family="Arial" font-size="28" fill="#687386">Front-view wiring is unavailable until the rack picture is calibrated.</text></svg>';
   return buildPrintDocument({
     sheetSvg: renderDiagramSVG(project, conns),
@@ -1663,6 +1663,19 @@ function printDocumentHtml(project, pages, dateLabel) {
    the drawing remains the same artifact already shown in Diagram. */
 async function tabExport(el, project, ctx) {
   const conns = await ctx.getNetlist();
+  const numbering = (project.config && project.config.numbering) || {};
+  if (modulePortsValid(numbering.modulePorts)) {
+    const page = projectPrintPages(project, conns)[1];
+    page.title = 'DRAFT — verify all terminals and cable routes';
+    const dateLabel = new Date().toLocaleDateString('en-GB');
+    el.innerHTML = `<div class="export-screen"><h2>Print draft wiring</h2>
+      <p class="muted">Only marked SSC and junction-box terminals are shown. Lines are direct previews, not approved cable routes. Verify every connection and route before use.</p>
+      <button class="btn btn-primary" id="module-draft-print">Print or save draft PDF</button>
+      <div class="diagram-wrap export-preview">${page.svg}</div></div>
+      <div id="print-document" class="print-document" aria-hidden="true">${printDocumentHtml(project, [page], dateLabel)}</div>`;
+    el.querySelector('#module-draft-print').onclick = () => window.print();
+    return;
+  }
   const checks = (await ctx.getValidations()).concat(layoutValidate(project));
   const failed = checks.filter(x => x.status !== 'pass');
   const flow = (project.config && project.config.flow) || {};

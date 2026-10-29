@@ -481,14 +481,51 @@ eq('print-document builder returns ordered title/svg page records',
 const projectPrintBody = fnBody(appSrc, 'projectPrintPages');
 let printWiringOptions = null;
 let printSvgOptions = null;
-const printProjectPages = new Function('project', 'conns', 'fvCalib', 'layoutGroups', 'layoutFrontView', 'fvSvg', 'buildPrintDocument', 'renderDiagramSVG', 'schedulePrintSvg', projectPrintBody);
+const printProjectPages = new Function('project', 'conns', 'fvCalib', 'layoutGroups', 'modulePortsValid', 'pictureModuleWiring', 'fvSvg', 'buildPrintDocument', 'renderDiagramSVG', 'schedulePrintSvg', projectPrintBody);
 const overlayPages = printProjectPages({ config: { numbering: { cal: {} } }, underlay: { kind: 'image', src: 'data:image/png;base64,AA' } }, [],
-  () => ({ ok: true }), () => ['group'], (groups, cal, options) => { printWiringOptions = options; return ['wire']; },
+  () => ({ ok: true }), () => ['group'], () => true, (groups, cal, ports) => { printWiringOptions = { groups, cal, ports }; return ['wire']; },
   (cal, image, wires, options) => { printSvgOptions = options; return wires.join(','); },
   parts => parts, () => '<svg/>', () => '<svg/>');
 eq('printed rack picture includes generated wiring', overlayPages.frontSvg, 'wire');
-ok('printed rack enables wiring and keeps the source image proportions',
-  printWiringOptions.showWiring === true && printSvgOptions.noGrid === true && printSvgOptions.width === undefined);
+ok('printed rack uses calibrated wiring and keeps the source image proportions',
+  printWiringOptions.groups[0] === 'group' && printSvgOptions.noGrid === true && printSvgOptions.width === undefined);
+
+const simpleSrc = fs.readFileSync(path.join(ROOT, 'js', 'simple-wiring.js'), 'utf8');
+const portFactory = new Function('slotCell', 'fvSlotCenter', 'fvDist', 'SSC_PALETTE',
+  simpleSrc + '\nreturn { modulePortsValid, pictureModuleWiring };');
+const portsApi = portFactory(E.slotCell, (cal, c, r) => ({ x: cal.x0 + c * cal.pitchX, y: cal.y0 + r * cal.pitchY }),
+  (a, b) => Math.hypot(a.x - b.x, a.y - b.y), E.SSC_PALETTE);
+const ports = { commS: { x: -30, y: 15 }, commN: { x: -20, y: 16 }, pwrNeg: { x: 20, y: 17 }, pwrPos: { x: 30, y: 18 } };
+const measuredCal = { ok: true, x0: 100, y0: 200, pitchX: 120, pitchY: 60, mmPerPx: 1 };
+const measuredGroups = [{ label: 'SSC-1', order: ['0,0', '0,1'] }];
+const measured = portsApi.pictureModuleWiring(measuredGroups, measuredCal, ports);
+eq('measured module power wire uses negative then next positive port',
+  JSON.stringify(measured.find(s => s.kind === 'power').pts), JSON.stringify([{ x: 120, y: 217 }, { x: 130, y: 278 }]));
+eq('measured module communication wire uses S then next N port',
+  JSON.stringify(measured.find(s => s.kind === 'comm').pts), JSON.stringify([{ x: 70, y: 215 }, { x: 80, y: 276 }]));
+eq('module-only drawing never invents SSC terminal connections', measured.filter(s => s.kind === 'sscp' || s.kind === 'sscc').length, 0);
+eq('incomplete module-port calibration draws no connections', portsApi.pictureModuleWiring(measuredGroups, measuredCal, { commS: ports.commS }).length, 0);
+const devicePorts = { '1,1': {
+  commS: { x: 300, y: 101 }, commN: { x: 310, y: 101 },
+  pwrNeg: { x: 320, y: 101 }, pwrPos: { x: 330, y: 101 },
+  busNeg: { x: 340, y: 101 }, busPos: { x: 350, y: 101 },
+  jbNeg: { x: 400, y: 50 }, jbPos: { x: 410, y: 50 },
+} };
+const completeGroups = [{ label: 'SSC-1', slot: '1,1', order: ['0,0', '0,1'] }];
+const fullWires = portsApi.pictureModuleWiring(completeGroups, measuredCal, ports, devicePorts);
+const actualDeviceWires = fullWires.filter(s => s.kind === 'sscp' || s.kind === 'sscc').map(s => [s.kind, s.pts]);
+eq('measured SSC and junction-box ports connect using the six approved endpoint rules', JSON.stringify(actualDeviceWires), JSON.stringify([
+  ['sscp', [devicePorts['1,1'].pwrPos, { x: 130, y: 218 }]],
+  ['sscp', [devicePorts['1,1'].pwrNeg, { x: 120, y: 277 }]],
+  ['sscc', [devicePorts['1,1'].commS, { x: 80, y: 216 }]],
+  ['sscc', [devicePorts['1,1'].commN, { x: 70, y: 275 }]],
+  ['sscp', [devicePorts['1,1'].busPos, devicePorts['1,1'].jbPos]],
+  ['sscp', [devicePorts['1,1'].busNeg, devicePorts['1,1'].jbNeg]],
+]));
+const incompleteDevice = { '1,1': { ...devicePorts['1,1'] } };
+delete incompleteDevice['1,1'].jbPos;
+eq('SSC links are omitted if any SSC or junction-box terminal is not marked',
+  portsApi.pictureModuleWiring(completeGroups, measuredCal, ports, incompleteDevice).filter(s => s.kind === 'sscp' || s.kind === 'sscc').length, 0);
 
 const verdictBody = fnBody(appSrc, 'vsdxImportVerdict');
 ok('fnBody extracted vsdxImportVerdict()', !!verdictBody,
