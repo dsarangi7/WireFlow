@@ -273,7 +273,6 @@ function shell(content, active) {
       <a class="logo side-logo" href="#/"><svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M3 7h6l2-4 2 12 2-4h6" stroke="#f97316" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/><rect x="2" y="2" width="20" height="20" rx="5" stroke="#1e3a5f" stroke-width="1.6"/></svg> AYK WireFlow</a>
       <nav class="side-nav">
         <a href="#/app" class="${active === 'dash' ? 'on' : ''}">◫ Projects</a>
-        <a href="#/integrations" class="${active === 'int' ? 'on' : ''}">⚡ Autodesk APS</a>
       </nav>
       <div class="side-foot">
         <div class="side-user">AYK Energy · Internal</div>
@@ -391,7 +390,7 @@ async function renderProjectPage(id) {
 
   const body = document.getElementById('tab-body');
   const home = document.getElementById('workspace-home');
-  const views = [tabConfig, tabNumbering, tabNetlist, tabExceptions, tabValidation, tabSchedule, tabDiagram, tabDrawings, tabWireValidate, tabExport];
+  const views = [tabConfig, tabSimpleWiring, tabNetlist, tabExceptions, tabValidation, tabSchedule, tabDiagram, tabDrawings, tabWireValidate, tabExport];
 
   async function saveProject(patch) {
     try {
@@ -407,7 +406,6 @@ async function renderProjectPage(id) {
   async function switchTab(i) {
     home.hidden = true;
     body.hidden = false;
-    document.getElementById('advanced').open = true;
     document.querySelectorAll('.tab').forEach(t => t.classList.toggle('on', +t.dataset.i === i));
     body.innerHTML = `<div class="loading">…</div>`;
     await views[i](body, project, { saveProject, saveUnderlayBlob, getNetlist, getValidations, loadUnderlay, switchTab });
@@ -429,19 +427,12 @@ async function renderProjectPage(id) {
     ];
     home.innerHTML = `
       <section class="workspace-hero" aria-labelledby="workspace-title">
-        <div class="workspace-kicker">Guided workspace</div>
+        <div class="workspace-kicker">AYK wiring workspace</div>
         <h2 id="workspace-title">${esc(project.name)}</h2>
-        <p class="workspace-sub">Move from the rack drawing to a validated, production-ready wiring package.</p>
-        <div class="flow-stepper" aria-label="Project progress">
-          ${FLOW_STEPS.map((step, i) => `<button class="flow-step ${complete[i] ? 'complete' : ''} ${i === currentStep ? 'current' : ''}" data-flow="${i}">
-            <span class="flow-dot">${complete[i] ? '✓' : i + 1}</span>
-            <span>${esc(step.label)}</span>
-          </button>`).join('')}
-        </div>
-        <div class="flow-guidance"><span aria-hidden="true">→</span><span>${guidance[currentStep]}</span></div>
+        <p class="workspace-sub">Import the rack drawing, mark its components and generate the wiring.</p>
         <div class="workspace-actions">
           <button class="btn btn-primary btn-lg" id="workspace-import">Import rack drawing</button>
-          <button class="btn btn-ghost" id="workspace-continue">Continue where I left off</button>
+          <button class="btn btn-ghost" id="workspace-continue" ${!project.underlay_url ? 'disabled' : ''}>Open wiring workspace</button>
         </div>
         <input type="file" id="workspace-file" accept=".dxf,.png,.jpg,.jpeg,.svg,.vsdx" hidden>
         <p class="muted small">VSDX, DXF, PNG, JPG and SVG are supported.</p>
@@ -499,7 +490,7 @@ async function renderProjectPage(id) {
         picker.value = '';
       }
     };
-    home.querySelector('#workspace-continue').onclick = () => switchTab(stepIndex(FLOW_STEPS[currentStep]));
+    home.querySelector('#workspace-continue').onclick = () => switchTab(stepIndex(FLOW_STEPS[1]));
   }
   async function getNetlist(force) {
     if (!netlist || force) netlist = generateNetlist(project);
@@ -1650,7 +1641,7 @@ function projectPrintPages(project, conns) {
   const groups = layoutGroups(project);
   const canDraw = !!(cal.ok && project.underlay && project.underlay.kind === 'image' && project.underlay.src);
   const frontSvg = canDraw
-    ? fvSvg(cal, { src: project.underlay.src }, layoutFrontView(groups, cal, {}), { width: 1680, sscLabels: true })
+    ? fvSvg(cal, { src: project.underlay.src }, layoutFrontView(groups, cal, { showWiring: true }), { noGrid: true, sscLabels: true })
     : '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1680 1188"><rect width="1680" height="1188" fill="#fff"/><text x="840" y="594" text-anchor="middle" font-family="Arial" font-size="28" fill="#687386">Front-view wiring is unavailable until the rack picture is calibrated.</text></svg>';
   return buildPrintDocument({
     sheetSvg: renderDiagramSVG(project, conns),
@@ -1672,7 +1663,7 @@ function printDocumentHtml(project, pages, dateLabel) {
    the drawing remains the same artifact already shown in Diagram. */
 async function tabExport(el, project, ctx) {
   const conns = await ctx.getNetlist();
-  const checks = await ctx.getValidations();
+  const checks = (await ctx.getValidations()).concat(layoutValidate(project));
   const failed = checks.filter(x => x.status !== 'pass');
   const flow = (project.config && project.config.flow) || {};
   const delivered = !!flow.deliveredAt;

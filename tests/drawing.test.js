@@ -478,6 +478,18 @@ eq('print-document builder returns ordered title/svg page records',
   JSON.stringify(printPages.map(page => ({ title: typeof page.title, svg: page.svg }))),
   JSON.stringify([{ title: 'string', svg: '<svg id="sheet"/>' }, { title: 'string', svg: '<svg id="front"/>' }, { title: 'string', svg: '<svg id="schedule"/>' }]));
 
+const projectPrintBody = fnBody(appSrc, 'projectPrintPages');
+let printWiringOptions = null;
+let printSvgOptions = null;
+const printProjectPages = new Function('project', 'conns', 'fvCalib', 'layoutGroups', 'layoutFrontView', 'fvSvg', 'buildPrintDocument', 'renderDiagramSVG', 'schedulePrintSvg', projectPrintBody);
+const overlayPages = printProjectPages({ config: { numbering: { cal: {} } }, underlay: { kind: 'image', src: 'data:image/png;base64,AA' } }, [],
+  () => ({ ok: true }), () => ['group'], (groups, cal, options) => { printWiringOptions = options; return ['wire']; },
+  (cal, image, wires, options) => { printSvgOptions = options; return wires.join(','); },
+  parts => parts, () => '<svg/>', () => '<svg/>');
+eq('printed rack picture includes generated wiring', overlayPages.frontSvg, 'wire');
+ok('printed rack enables wiring and keeps the source image proportions',
+  printWiringOptions.showWiring === true && printSvgOptions.noGrid === true && printSvgOptions.width === undefined);
+
 const verdictBody = fnBody(appSrc, 'vsdxImportVerdict');
 ok('fnBody extracted vsdxImportVerdict()', !!verdictBody,
   verdictBody ? verdictBody.length + ' chars' : 'not found');

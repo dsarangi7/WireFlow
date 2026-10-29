@@ -1,5 +1,23 @@
 # Guided workspace
 
+## Picture-first wiring
+
+Import a VSDX, PNG, JPG or SVG rack picture, then enter the number of regularly
+spaced grid columns and rows and their measured centre-to-centre spacing in mm.
+Click the top-left and bottom-right grid positions to align the grid, then mark
+each battery module, SSC, ACDP and MSM on the picture. Empty positions remain
+unmarked. Generate wiring to apply the existing per-SSC planner and validations;
+the preview and SVG show power and communication wiring over the picture.
+
+The grid assumes straight, evenly spaced rows and columns (maximum 12 by 24).
+The automatic assignment uses the nearest SSC subject to the existing configured
+string capacity; it cannot determine the intended electrical assignment from an
+image. The engineer must check component positions, assignments, harness lengths,
+and validation results. An SVG can be downloaded as a draft if checks fail; the
+PDF release action is blocked while engine or layout checks fail. Imported DXF
+drawings remain available to the expert tools, but the picture-marking workflow
+requires a raster or SVG image or an embedded Visio picture.
+
 The project workspace opens on a five-step path instead of dropping an engineer
 directly into the expert tabs:
 

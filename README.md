@@ -10,6 +10,13 @@ deterministic rule engine implementing the Wiring Diagram Tool Engineering Rules
 
 Live site: https://dsarangi7.github.io/WireFlow/
 
+The picture-first workspace lets engineers align a regular rack grid, mark
+battery modules and SSC/ACDP/MSM positions on the imported picture, and
+generate a wiring preview using the existing rules. It reports rule failures
+and exports an SVG drawing or a print/PDF package. See
+[the guided workspace documentation](docs/guided-workspace.md) for the workflow
+and the limits of the grid and automatic SSC assignment.
+
 ## Features
 
 - **Physical module numbering** — M1…MN is derived from the rack itself: the chain starts
@@ -71,7 +78,7 @@ docs/variable-ssc-layout.md  Variable rack layout: per-SSC chains, assignment, g
 docs/guided-workspace.md  Guided post-login workspace, progress derivation and Advanced access
 js/aps.js           Autodesk APS client (token, OSS upload, translate, viewer)
 js/app.js           Router, landing page, auth (email OTP), dashboard, workspace UI
-tests/drawing.test.js  331-assertion regression suite (node tests/drawing.test.js)
+tests/drawing.test.js  333-assertion regression suite (node tests/drawing.test.js)
 ```
 
 ## Running locally
