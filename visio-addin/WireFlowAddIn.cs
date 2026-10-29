@@ -41,6 +41,27 @@ namespace Ayk.WireFlow.VisioAddIn {
 
     public sealed class Point { public double X; public double Y; public Point(double x, double y) { if (Double.IsNaN(x) || Double.IsInfinity(x) || Double.IsNaN(y) || Double.IsInfinity(y)) throw new ArgumentException("Invalid terminal coordinates."); X=x; Y=y; } }
     public sealed class Segment { public string Network; public string From; public string To; public Point A; public Point B; }
+    // Visio's AddAdvise accepts an IDispatch sink. Mouse coordinates arrive in
+    // Visio internal drawing units; confirmation against real zoom/pan is pending.
+    [ComVisible(true), Guid("F00478F4-2CB1-426E-BB77-0A873DDC81CD"), InterfaceType(ComInterfaceType.InterfaceIsIDispatch)]
+    public interface IPageMouseSink {
+        [DispId(1)] object VisEventProc(short code, object source, int eventId, int sequence, object subject, object moreInfo);
+    }
+    [ComVisible(true), ClassInterface(ClassInterfaceType.None), ComDefaultInterface(typeof(IPageMouseSink))]
+    public sealed class PageMouseSink : IPageMouseSink {
+        private Func<object,double,double,bool> accept;
+        private Action<string> error;
+        [ComVisible(false)] public void SetHandlers(Func<object,double,double,bool> onPoint, Action<string> onError) { accept=onPoint; error=onError; }
+        public object VisEventProc(short code, object source, int eventId, int sequence, object subject, object moreInfo) {
+            if (code != 709 || accept == null || subject == null) return false;
+            try {
+                dynamic mouse=subject;
+                if ((int)mouse.Button != 1) return false;
+                object eventPage=mouse.Window.Page;
+                return accept(eventPage, (double)mouse.x, (double)mouse.y);
+            } catch(Exception ex) { if (error != null) error(ex.Message); return false; }
+        }
+    }
     public sealed class DraftPlan {
         public readonly Dictionary<string, Point> Terminals = new Dictionary<string, Point>();
         public int Modules;
@@ -91,38 +112,94 @@ namespace Ayk.WireFlow.VisioAddIn {
         private readonly NumericUpDown count = new NumericUpDown { Minimum=2, Maximum=48, Value=12, Width=70 };
         private readonly Label status = new Label { AutoSize=false, Width=520, Height=92 };
         private readonly Button mark = new Button { Text="Record selected terminal marker", Width=245, Height=40 };
+        private readonly Button pick = new Button { Text="Click ports on drawing", Width=245, Height=40 };
         private readonly Button draw = new Button { Text="Draw draft on active page", Width=245, Height=40 };
         private readonly List<string> prompts = new List<string>();
         private int next;
         private object page;
+        private dynamic mouseEvent;
+        private PageMouseSink mouseSink;
+        private bool picking;
         public WorkspaceForm(object application) {
             app=application; Text="AYK WireFlow — prototype"; Width=580; Height=340; TopMost=true;
             var layout=new FlowLayoutPanel { Dock=DockStyle.Fill, FlowDirection=FlowDirection.TopDown, Padding=new Padding(12), WrapContents=false, AutoScroll=true };
             layout.Controls.Add(new Label { Text="Modules in this SSC chain:", Width=500, Height=22 }); layout.Controls.Add(count);
             var start=new Button { Text="Start terminal marking", Width=245, Height=36 };
-            layout.Controls.Add(start); layout.Controls.Add(status); layout.Controls.Add(mark); layout.Controls.Add(draw); Controls.Add(layout);
-            start.Click += delegate { StartPlan(); }; mark.Click += delegate { Record(); }; draw.Click += delegate { Draw(); };
-            mark.Enabled=false; draw.Enabled=false; status.Text="Pilot: create and select a small Visio marker shape at each terminal. Then record markers in the requested order.";
+            layout.Controls.Add(start); layout.Controls.Add(status); layout.Controls.Add(pick); layout.Controls.Add(mark); layout.Controls.Add(draw); Controls.Add(layout);
+            start.Click += delegate { StartPlan(); }; mark.Click += delegate { Record(); }; pick.Click += delegate { TogglePicking(); }; draw.Click += delegate { Draw(); };
+            FormClosed += delegate { StopPicking(); };
+#if !EXPERIMENTAL_MOUSE_PICKING
+            pick.Visible=false;
+#endif
+            pick.Enabled=false; mark.Enabled=false; draw.Enabled=false;
+#if EXPERIMENTAL_MOUSE_PICKING
+            status.Text="Pilot: mark terminal positions in order, directly on the drawing or by selecting marker shapes.";
+#else
+            status.Text="Pilot: create and select a small Visio marker shape at each terminal, then record it.";
+#endif
         }
         private void StartPlan() {
             try {
-                page=app.ActivePage; if (page == null) throw new InvalidOperationException("Open a Visio drawing first.");
+                StopPicking(); page=app.ActivePage; if (page == null) throw new InvalidOperationException("Open a Visio drawing first.");
                 plan.Terminals.Clear(); plan.Modules=(int)count.Value; prompts.Clear(); next=0;
                 foreach (var port in new [] {"SSC.S","SSC.N","SSC.NEG","SSC.POS","SSC.B-","SSC.B+","JB.NEG","JB.POS"}) prompts.Add(port);
                 for (int i=1; i<=plan.Modules; i++) foreach (var port in new [] {"S","N","NEG","POS"}) prompts.Add("M"+i+"."+port);
+                // The event sink needs real interactive Visio validation before
+                // it can be enabled in a build intended for other users.
+#if EXPERIMENTAL_MOUSE_PICKING
+                pick.Enabled=true;
+#else
+                pick.Enabled=false;
+#endif
                 mark.Enabled=true; draw.Enabled=false; ShowPrompt();
             } catch (Exception ex) { status.Text="Could not start: "+ex.Message; }
         }
-        private void ShowPrompt() { status.Text="Step "+(next+1)+" of "+prompts.Count+": Select the marker at "+prompts[next]+" in Visio, then click Record.\nUse a separate small marker shape for every port."; }
+        private void ShowPrompt() {
+            string guidance;
+#if EXPERIMENTAL_MOUSE_PICKING
+            guidance=picking ? "Click port centres in order. Stop clicking to navigate normally." : "Click ports directly, or select a marker and record it.";
+#else
+            guidance="Select a marker shape at this port, then click Record.";
+#endif
+            status.Text="Step "+(next+1)+" of "+prompts.Count+": "+(picking ? "Click " : "Mark ")+prompts[next]+" on the drawing.\n"+guidance;
+        }
+        private void StopPicking() {
+            picking=false; pick.Text="Click ports on drawing";
+            if (mouseEvent != null) { try { mouseEvent.Delete(); } catch { } mouseEvent=null; }
+            mouseSink=null;
+        }
+        private void TogglePicking() {
+            if (picking) { StopPicking(); ShowPrompt(); return; }
+            try {
+                if (page != app.ActivePage) throw new InvalidOperationException("Return to the page on which marking started.");
+                mouseSink=new PageMouseSink();
+                mouseSink.SetHandlers(AcceptClick, delegate(string message) { if (!IsDisposed) status.Text="Could not record click: "+message; });
+                mouseEvent=app.EventList.AddAdvise((short)709, mouseSink, "", "");
+                picking=true; pick.Text="Stop clicking"; ShowPrompt();
+            } catch (Exception ex) { StopPicking(); status.Text="Direct clicking is unavailable: "+ex.Message+". Select marker shapes instead."; }
+        }
+        private bool AcceptClick(object eventPage, double x, double y) {
+            if (!picking || page != eventPage || next >= prompts.Count) return false;
+            try {
+                plan.Set(prompts[next],x,y); next++;
+                if (next == prompts.Count) {
+                    picking=false; mark.Enabled=false; pick.Enabled=false; draw.Enabled=true;
+                    status.Text="All terminal positions recorded. Draw a draft and review every endpoint and route.";
+                    BeginInvoke(new Action(StopPicking));
+                } else ShowPrompt();
+                return true; // Suppress the default Visio action for a recorded click.
+            } catch (Exception ex) { status.Text="Could not record: "+ex.Message; return true; }
+        }
         private void Record() {
             try {
+                if (picking) throw new InvalidOperationException("Stop direct clicking before selecting a marker.");
                 if (page != app.ActivePage) throw new InvalidOperationException("Return to the page on which marking started.");
                 dynamic selection=app.ActiveWindow.Selection;
                 if ((int)selection.Count != 1) throw new InvalidOperationException("Select exactly one terminal marker shape in Visio.");
                 dynamic shape=selection[1];
                 double x=shape.CellsU["PinX"].ResultIU; double y=shape.CellsU["PinY"].ResultIU;
                 plan.Set(prompts[next],x,y); next++;
-                if (next == prompts.Count) { mark.Enabled=false; draw.Enabled=true; status.Text="All terminal positions recorded. Draw a draft and review every endpoint and route."; }
+                if (next == prompts.Count) { mark.Enabled=false; pick.Enabled=false; draw.Enabled=true; status.Text="All terminal positions recorded. Draw a draft and review every endpoint and route."; }
                 else ShowPrompt();
             } catch (Exception ex) { status.Text="Could not record: "+ex.Message+"\nSelect one marker on the original page and try again."; }
         }

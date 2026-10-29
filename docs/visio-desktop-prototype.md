@@ -17,6 +17,16 @@ the active page. Marker shapes are not deleted. Generated lines are ordinary
 editable Visio shapes in one undo scope. This pilot intentionally needs separate
 marker shapes because an embedded rack picture is not a set of terminal shapes.
 
+An experimental direct-click event sink has been added to the source, but it is
+disabled in the standard build. An out-of-process Visio test hung when trying to
+subscribe to mouse events. The callback behavior is tested with simulated events,
+but actual Visio callback delivery, coordinate alignment at different zoom/pan
+settings, cleanup, and in-process add-in loading must be validated before enabling
+it. The marker-selection workflow remains the standard prototype input method.
+Developers may build the gated experiment with `build.ps1 -ExperimentalMousePicking`;
+it is not approved for engineer use. The optional `test-native.ps1 -Blank
+-MouseEvents` check can hang and must only be run in a controlled test session.
+
 These lines are **draft previews only**, not released engineering routes: they
 are straight endpoint-to-endpoint lines. The pilot does not establish route
 channels, bend radii, crossing avoidance, component counts across banks, route
@@ -35,6 +45,10 @@ build folder, adds test lines to that copy through an invisible Visio instance,
 and checks coordinates and shape count before saving. Pass `-Blank` to test a
 new document or `-Reopen` to additionally open the saved copy again. It does not
 modify the original. Running this test may require local COM permission.
+
+The supplied drawing also did not open in the invisible COM test, even after
+disabling document macros and automatic refresh. The original remains unchanged;
+the hang needs investigation in an interactive Visio test environment.
 
 Before distribution, IT needs to choose an installation method, code-signing
 and trusted publisher policy, user-versus-machine registration and access

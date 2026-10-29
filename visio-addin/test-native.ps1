@@ -1,4 +1,4 @@
-param([string]$Sample = 'C:\Users\admin\Downloads\DWG2512-01 S10164 Wiring Diagram.vsdx', [switch]$Blank, [switch]$Reopen)
+param([string]$Sample = 'C:\Users\admin\Downloads\DWG2512-01 S10164 Wiring Diagram.vsdx', [switch]$Blank, [switch]$Reopen, [switch]$MouseEvents)
 $ErrorActionPreference = 'Stop'
 $dll = Join-Path $PSScriptRoot 'build\Ayk.WireFlow.VisioAddIn.dll'
 Add-Type -Path $dll
@@ -17,8 +17,18 @@ try {
     $app = New-Object -ComObject Visio.InvisibleApp
     $app.AlertResponse = 7
     if ($Blank) { Write-Output 'Creating a blank test drawing.'; $doc = $app.Documents.Add('') }
-    else { Write-Output 'Opening a copy of the supplied drawing.'; $doc = $app.Documents.OpenEx($copy, 64) }
+    # Hide the window, suppress MRU/auto-refresh, and disable document macros.
+    # The source drawing can carry OLE objects and external references.
+    else { Write-Output 'Opening a copy of the supplied drawing.'; $doc = $app.Documents.OpenEx($copy, 1480) }
     $page = $doc.Pages.Item(1)
+    if ($MouseEvents) {
+        Write-Output 'Registering the mouse event sink.'
+        $sink = New-Object Ayk.WireFlow.VisioAddIn.PageMouseSink
+        $mouseEvent = $app.EventList.AddAdvise(709, $sink, '', '')
+        if ($null -eq $mouseEvent) { throw 'Visio did not register the mouse event sink.' }
+        [void]$mouseEvent.Delete()
+        Write-Output 'PASS: Visio accepted and removed the COM mouse event subscription.'
+    }
     $before = $page.Shapes.Count
     $incomplete = New-Object Ayk.WireFlow.VisioAddIn.DraftPlan
     $incomplete.Modules = 2
@@ -33,7 +43,7 @@ try {
     Write-Output 'PASS: endpoint mapping, incomplete-plan guard, and editable native Visio lines saved to the test copy.'
     if ($Reopen) {
         [void]$doc.Close(); $doc = $null
-        $doc = $app.Documents.OpenEx($copy, 64)
+        $doc = $app.Documents.OpenEx($copy, 1480)
         if ($doc.Pages.Item(1).Shapes.Count -ne ($before + 8)) { throw 'Saved wires did not survive reopening.' }
         Write-Output 'PASS: test copy reopened with all wires.'
     }

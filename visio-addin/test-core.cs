@@ -8,6 +8,8 @@ public sealed class FakeCells {
     public FakeCell this[string name] { get { if (!cells.ContainsKey(name)) cells[name]=new FakeCell(); return cells[name]; } }
 }
 public sealed class FakeShape { public FakeCells CellsU = new FakeCells(); public string Text { get; set; } }
+public sealed class FakeMouseWindow { public object Page { get; set; } }
+public sealed class FakeMouseEvent { public int Button { get; set; } public double x { get; set; } public double y { get; set; } public FakeMouseWindow Window { get; set; } }
 public sealed class FakePage {
     public readonly List<FakeShape> Shapes = new List<FakeShape>();
     public int FailAt = -1;
@@ -27,6 +29,13 @@ public static class TestCore {
         var addin=new WireFlowAddIn();
         Check(addin.GetCustomUI("Microsoft.Visio.Document").Contains("onAction=\"OpenWorkspace\""),"ribbon advertises the workspace callback");
         Check(typeof(WireFlowAddIn).GetInterface("IDTExtensibility2") != null && typeof(WireFlowAddIn).GetInterface("IRibbonExtensibility") != null,"COM add-in exposes lifecycle and ribbon interfaces");
+        var sink=new PageMouseSink(); var expectedPage=new object(); int captured=0; double clickedX=0, clickedY=0;
+        sink.SetHandlers((p,x,y)=> { if (!Object.ReferenceEquals(p,expectedPage)) return false; captured++; clickedX=x; clickedY=y; return true; }, message => { throw new Exception(message); });
+        var mouse=new FakeMouseEvent{Button=1,x=3.5,y=4.25,Window=new FakeMouseWindow{Page=expectedPage}};
+        Check((bool)sink.VisEventProc(709,null,0,0,mouse,null) && captured==1 && clickedX==3.5 && clickedY==4.25,"left click delivers exact internal drawing coordinates and suppresses default");
+        mouse.Button=2; Check(!(bool)sink.VisEventProc(709,null,0,0,mouse,null) && captured==1,"right click does not capture or suppress default");
+        mouse.Button=1; mouse.Window.Page=new object(); Check(!(bool)sink.VisEventProc(709,null,0,0,mouse,null) && captured==1,"click on another page remains untouched");
+        Check(!(bool)sink.VisEventProc(710,null,0,0,mouse,null),"mouse move is not treated as a port click");
         var plan=new DraftPlan(); plan.Modules=2;
         string[] names={"SSC.S","SSC.N","SSC.NEG","SSC.POS","SSC.B-","SSC.B+","JB.NEG","JB.POS","M1.S","M1.N","M1.NEG","M1.POS","M2.S","M2.N","M2.NEG","M2.POS"};
         for(int i=0;i<names.Length;i++) plan.Set(names[i],i+1,i+1);
