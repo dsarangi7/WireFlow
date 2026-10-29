@@ -1,0 +1,137 @@
+// Prototype desktop COM add-in. Engineers explicitly mark every terminal.
+// Wires are draft straight lines; engineering must approve routes and harnesses.
+using System;
+using System.Collections.Generic;
+using System.Globalization;
+using System.Reflection;
+using System.Runtime.InteropServices;
+using System.Windows.Forms;
+
+namespace Ayk.WireFlow.VisioAddIn {
+    [ComVisible(true), Guid("B65AD801-ABAF-11D0-BB8B-00A0C90F2744"), InterfaceType(ComInterfaceType.InterfaceIsIDispatch)]
+    public interface IDTExtensibility2 {
+        [DispId(1)] void OnConnection([MarshalAs(UnmanagedType.IDispatch)] object application, int connectMode, [MarshalAs(UnmanagedType.IDispatch)] object addInInst, ref Array custom);
+        [DispId(2)] void OnDisconnection(int removeMode, ref Array custom);
+        [DispId(3)] void OnAddInsUpdate(ref Array custom);
+        [DispId(4)] void OnStartupComplete(ref Array custom);
+        [DispId(5)] void OnBeginShutdown(ref Array custom);
+    }
+    [ComVisible(true), Guid("000C0396-0000-0000-C000-000000000046"), InterfaceType(ComInterfaceType.InterfaceIsIDispatch)]
+    public interface IRibbonExtensibility { [DispId(1)] string GetCustomUI(string ribbonId); }
+    [ComVisible(true), Guid("A93A0C27-8C7C-4A96-B777-67DA7B92D10D"), InterfaceType(ComInterfaceType.InterfaceIsIDispatch)]
+    public interface IWireFlowCallbacks { [DispId(1)] void OpenWorkspace([MarshalAs(UnmanagedType.IDispatch)] object control); }
+
+    [ComVisible(true), Guid("E1CE7134-5A5D-4B05-BC55-93BF487456CB"), ProgId("AYK.WireFlow.VisioAddIn"), ClassInterface(ClassInterfaceType.None), ComDefaultInterface(typeof(IWireFlowCallbacks))]
+    public sealed class WireFlowAddIn : IDTExtensibility2, IRibbonExtensibility, IWireFlowCallbacks {
+        private object host;
+        private WorkspaceForm form;
+        public void OnConnection(object application, int connectMode, object addInInst, ref Array custom) { host = application; }
+        public void OnDisconnection(int removeMode, ref Array custom) { if (form != null) form.Close(); form = null; host = null; }
+        public void OnAddInsUpdate(ref Array custom) { }
+        public void OnStartupComplete(ref Array custom) { }
+        public void OnBeginShutdown(ref Array custom) { if (form != null) form.Close(); }
+        public string GetCustomUI(string ribbonId) {
+            return "<customUI xmlns=\"http://schemas.microsoft.com/office/2006/01/customui\"><ribbon><tabs><tab id=\"aykWireFlow\" label=\"AYK WireFlow\"><group id=\"aykDraft\" label=\"Draft wiring\"><button id=\"aykOpen\" label=\"Open WireFlow\" size=\"large\" onAction=\"OpenWorkspace\"/></group></tab></tabs></ribbon></customUI>";
+        }
+        public void OpenWorkspace(object control) {
+            try { if (host == null) throw new InvalidOperationException("Connect to Visio first."); if (form == null || form.IsDisposed) form = new WorkspaceForm(host); form.Show(); form.Activate(); }
+            catch (Exception ex) { MessageBox.Show(ex.Message, "AYK WireFlow", MessageBoxButtons.OK, MessageBoxIcon.Error); }
+        }
+    }
+
+    public sealed class Point { public double X; public double Y; public Point(double x, double y) { if (Double.IsNaN(x) || Double.IsInfinity(x) || Double.IsNaN(y) || Double.IsInfinity(y)) throw new ArgumentException("Invalid terminal coordinates."); X=x; Y=y; } }
+    public sealed class Segment { public string Network; public string From; public string To; public Point A; public Point B; }
+    public sealed class DraftPlan {
+        public readonly Dictionary<string, Point> Terminals = new Dictionary<string, Point>();
+        public int Modules;
+        public void Set(string name, double x, double y) {
+            var point = new Point(x,y);
+            foreach (var entry in Terminals) if (entry.Key != name && entry.Value.X == x && entry.Value.Y == y) throw new InvalidOperationException("This marker is already assigned to " + entry.Key + ". Select a different terminal marker.");
+            Terminals[name] = point;
+        }
+        private Point Require(string key) { Point p; if (!Terminals.TryGetValue(key, out p)) throw new InvalidOperationException("Missing terminal: " + key); return p; }
+        private Segment Connect(string network, string a, string b) { return new Segment { Network=network, From=a, To=b, A=Require(a), B=Require(b) }; }
+        public List<Segment> Build() {
+            if (Modules < 2 || Modules > 48) throw new InvalidOperationException("Enter 2 to 48 modules in the chain.");
+            var result = new List<Segment>();
+            result.Add(Connect("POWER", "SSC.POS", "M1.POS"));
+            result.Add(Connect("COMM", "SSC.S", "M1.N"));
+            for (int i=1; i<Modules; i++) {
+                result.Add(Connect("POWER", "M"+i+".NEG", "M"+(i+1)+".POS"));
+                result.Add(Connect("COMM", "M"+i+".S", "M"+(i+1)+".N"));
+            }
+            result.Add(Connect("POWER", "SSC.NEG", "M"+Modules+".NEG"));
+            result.Add(Connect("COMM", "SSC.N", "M"+Modules+".S"));
+            result.Add(Connect("POWER", "SSC.B-", "JB.NEG"));
+            result.Add(Connect("POWER", "SSC.B+", "JB.POS"));
+            return result;
+        }
+    }
+    public static class DraftRenderer {
+        public static int Draw(object application, object page, DraftPlan plan) {
+            // Validate all endpoints before touching the page. Undo scope rolls back a partial failure.
+            var segments = plan.Build();
+            dynamic app = application; dynamic pg = page;
+            int scope = app.BeginUndoScope("AYK WireFlow draft wiring");
+            try {
+                foreach (var segment in segments) {
+                    dynamic shape = pg.DrawLine(segment.A.X, segment.A.Y, segment.B.X, segment.B.Y);
+                    shape.CellsU["LineColor"].FormulaU = segment.Network == "POWER" ? "RGB(255,0,0)" : "RGB(0,176,80)";
+                    shape.CellsU["LineWeight"].FormulaU = "0.012 in";
+                    shape.Text = "";
+                }
+                app.EndUndoScope(scope, true); return segments.Count;
+            } catch { app.EndUndoScope(scope, false); throw; }
+        }
+    }
+
+    internal sealed class WorkspaceForm : Form {
+        private readonly dynamic app;
+        private readonly DraftPlan plan = new DraftPlan();
+        private readonly NumericUpDown count = new NumericUpDown { Minimum=2, Maximum=48, Value=12, Width=70 };
+        private readonly Label status = new Label { AutoSize=false, Width=520, Height=92 };
+        private readonly Button mark = new Button { Text="Record selected terminal marker", Width=245, Height=40 };
+        private readonly Button draw = new Button { Text="Draw draft on active page", Width=245, Height=40 };
+        private readonly List<string> prompts = new List<string>();
+        private int next;
+        private object page;
+        public WorkspaceForm(object application) {
+            app=application; Text="AYK WireFlow — prototype"; Width=580; Height=340; TopMost=true;
+            var layout=new FlowLayoutPanel { Dock=DockStyle.Fill, FlowDirection=FlowDirection.TopDown, Padding=new Padding(12), WrapContents=false, AutoScroll=true };
+            layout.Controls.Add(new Label { Text="Modules in this SSC chain:", Width=500, Height=22 }); layout.Controls.Add(count);
+            var start=new Button { Text="Start terminal marking", Width=245, Height=36 };
+            layout.Controls.Add(start); layout.Controls.Add(status); layout.Controls.Add(mark); layout.Controls.Add(draw); Controls.Add(layout);
+            start.Click += delegate { StartPlan(); }; mark.Click += delegate { Record(); }; draw.Click += delegate { Draw(); };
+            mark.Enabled=false; draw.Enabled=false; status.Text="Pilot: create and select a small Visio marker shape at each terminal. Then record markers in the requested order.";
+        }
+        private void StartPlan() {
+            try {
+                page=app.ActivePage; if (page == null) throw new InvalidOperationException("Open a Visio drawing first.");
+                plan.Terminals.Clear(); plan.Modules=(int)count.Value; prompts.Clear(); next=0;
+                foreach (var port in new [] {"SSC.S","SSC.N","SSC.NEG","SSC.POS","SSC.B-","SSC.B+","JB.NEG","JB.POS"}) prompts.Add(port);
+                for (int i=1; i<=plan.Modules; i++) foreach (var port in new [] {"S","N","NEG","POS"}) prompts.Add("M"+i+"."+port);
+                mark.Enabled=true; draw.Enabled=false; ShowPrompt();
+            } catch (Exception ex) { status.Text="Could not start: "+ex.Message; }
+        }
+        private void ShowPrompt() { status.Text="Step "+(next+1)+" of "+prompts.Count+": Select the marker at "+prompts[next]+" in Visio, then click Record.\nUse a separate small marker shape for every port."; }
+        private void Record() {
+            try {
+                if (page != app.ActivePage) throw new InvalidOperationException("Return to the page on which marking started.");
+                dynamic selection=app.ActiveWindow.Selection;
+                if ((int)selection.Count != 1) throw new InvalidOperationException("Select exactly one terminal marker shape in Visio.");
+                dynamic shape=selection[1];
+                double x=shape.CellsU["PinX"].ResultIU; double y=shape.CellsU["PinY"].ResultIU;
+                plan.Set(prompts[next],x,y); next++;
+                if (next == prompts.Count) { mark.Enabled=false; draw.Enabled=true; status.Text="All terminal positions recorded. Draw a draft and review every endpoint and route."; }
+                else ShowPrompt();
+            } catch (Exception ex) { status.Text="Could not record: "+ex.Message+"\nSelect one marker on the original page and try again."; }
+        }
+        private void Draw() {
+            try {
+                if (page != app.ActivePage) throw new InvalidOperationException("Return to the page on which marking started.");
+                int n=DraftRenderer.Draw(app,page,plan); draw.Enabled=false;
+                status.Text=n+" draft wire shapes added. Review routes, endpoints, harnesses and approvals. Use Visio Undo to remove this draft.";
+            } catch (Exception ex) { status.Text="No complete draft was added: "+ex.Message; }
+        }
+    }
+}
