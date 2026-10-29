@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using Ayk.WireFlow.VisioAddIn;
 
-public sealed class FakeCell { public string FormulaU { get; set; } }
+public sealed class FakeCell { public string FormulaU { get; set; } public double ResultIU { get; set; } }
 public sealed class FakeCells {
     private readonly Dictionary<string,FakeCell> cells = new Dictionary<string,FakeCell>();
     public FakeCell this[string name] { get { if (!cells.ContainsKey(name)) cells[name]=new FakeCell(); return cells[name]; } }
@@ -22,6 +22,12 @@ public sealed class FakePage {
         var shape = new FakeShape(); Shapes.Add(shape); return shape;
     }
 }
+public sealed class FakeReadShapes {
+    public readonly List<FakeShape> Items = new List<FakeShape>();
+    public int Count { get { return Items.Count; } }
+    public FakeShape this[int oneBased] { get { return Items[oneBased-1]; } }
+}
+public sealed class FakeReadPage { public readonly FakeReadShapes Shapes=new FakeReadShapes(); }
 public sealed class FakeApp {
     public FakePage Page; public int Starts, Ends; public bool Committed; private int before;
     public int BeginUndoScope(string name) { Starts++; before=Page.Shapes.Count; return 1; }
@@ -48,6 +54,7 @@ public static class TestCore {
         Check(!DraftReview.Intersects(Line(0,0,1,0),Line(1,0,2,0)),"collinear lines meeting at one endpoint are not reported");
         Check(!DraftReview.Intersects(Line(0,0,1,0),Line(0,1,1,1)) && !DraftReview.Intersects(Line(0,0,1,0),Line(2,0,3,0)),"parallel and separated lines are not reported");
         Check(DraftReview.FindCrossings(new [] {Line(0,0,2,2),Line(0,2,2,0),Line(3,3,4,4)}).Count==1,"crossing review counts each wire pair once");
+        Check(DraftReview.FindBetween(new [] {Line(0,0,2,2)},new [] {Line(0,2,2,0),Line(3,3,4,4)}).Count==1,"crossings against other SSC draft wires are checked");
         var plan=new DraftPlan(); plan.Modules=2;
         string[] names={"SSC.S","SSC.N","SSC.NEG","SSC.POS","SSC.B-","SSC.B+","JB.NEG","JB.POS","M1.S","M1.N","M1.NEG","M1.POS","M2.S","M2.N","M2.NEG","M2.POS"};
         for(int i=0;i<names.Length;i++) plan.Set(names[i],i+1,i+1);
@@ -84,6 +91,12 @@ public static class TestCore {
         Check(DraftRenderer.Draw(app,page,plan)==8 && page.Shapes.Count==8 && app.Committed && app.Ends==1,"valid plan draws once within one undo scope");
         Check(page.Shapes[0].CellsU["LineColor"].FormulaU=="RGB(255,0,0)" && page.Shapes[1].CellsU["LineColor"].FormulaU=="RGB(0,176,80)","draft power and communication colours");
         Check(page.Shapes[0].CellsU["User.WireFlowFrom.Value"].FormulaU=="\"SSC.POS\"" && page.Shapes[0].CellsU["User.WireFlowTo.Value"].FormulaU=="\"M1.POS\"" && page.Shapes[0].CellsU["User.WireFlowStatus.Value"].FormulaU=="\"DRAFT\"" && page.Shapes[0].CellsU["User.WireFlowBank.Value"].FormulaU=="\"2\"" && page.Shapes[0].CellsU["User.WireFlowSSC.Value"].FormulaU=="\"3\"", "every generated shape carries explicit bank, SSC and draft endpoint metadata");
+        var reading=new FakeReadPage(); reading.Shapes.Items.Add(new FakeShape());
+        var tagged=page.Shapes[0]; tagged.CellsU["BeginX"].ResultIU=0; tagged.CellsU["BeginY"].ResultIU=0; tagged.CellsU["EndX"].ResultIU=2; tagged.CellsU["EndY"].ResultIU=2; reading.Shapes.Items.Add(tagged);
+        var broken=new FakeShape(); broken.CellsU["User.WireFlowStatus.Value"].FormulaU="\"DRAFT\""; reading.Shapes.Items.Add(broken);
+        var existing=DraftReview.ReadExisting(reading);
+        Check(existing.Segments.Count==1 && existing.Unreadable==1 && existing.Segments[0].From=="B2/SSC3:SSC.POS", "only tagged drafts are read and unreadable drafts are reported");
+        Check(DraftReview.FindBetween(new [] {Line(0,2,2,0)},existing.Segments).Count==1,"prior draft geometry participates in crossing review");
         page=new FakePage{FailAt=3}; app=new FakeApp{Page=page}; bool failed=false;
         try { DraftRenderer.Draw(app,page,plan); } catch(InvalidOperationException) { failed=true; }
         Check(failed && page.Shapes.Count==0 && !app.Committed && app.Ends==1,"drawing error rolls back partial changes");

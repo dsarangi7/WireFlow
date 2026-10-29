@@ -40,6 +40,8 @@ try {
     $first = $page.Shapes.Item($before + 1)
     if ([math]::Abs($first.CellsU('BeginX').ResultIU - $segments[0].A.X) -gt 0.00001 -or [math]::Abs($first.CellsU('EndY').ResultIU - $segments[0].B.Y) -gt 0.00001) { throw 'Wire endpoints moved.' }
     if ($first.CellsU('User.WireFlowFrom.Value').FormulaU -ne '"SSC.POS"' -or $first.CellsU('User.WireFlowTo.Value').FormulaU -ne '"M1.POS"' -or $first.CellsU('User.WireFlowStatus.Value').FormulaU -ne '"DRAFT"' -or $first.CellsU('User.WireFlowBank.Value').FormulaU -ne '"1"' -or $first.CellsU('User.WireFlowSSC.Value').FormulaU -ne '"1"') { throw 'Wire identity or endpoint metadata missing or incorrect.' }
+    $prior = [Ayk.WireFlow.VisioAddIn.DraftReview]::ReadExisting($page)
+    if ($prior.Segments.Count -ne 8 -or $prior.Unreadable -ne 0 -or $prior.Segments[0].From -ne 'B1/SSC1:SSC.POS') { throw 'Prior draft wires could not be inspected.' }
     if ($Blank) { [void]$doc.SaveAs($copy) } else { [void]$doc.Save() }
     Write-Output 'PASS: endpoint mapping, incomplete-plan guard, and editable native Visio lines saved to the test copy.'
     if ($Reopen) {

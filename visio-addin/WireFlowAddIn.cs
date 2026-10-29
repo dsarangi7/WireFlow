@@ -44,7 +44,38 @@ namespace Ayk.WireFlow.VisioAddIn {
     public sealed class Point { public double X; public double Y; public Point(double x, double y) { if (Double.IsNaN(x) || Double.IsInfinity(x) || Double.IsNaN(y) || Double.IsInfinity(y)) throw new ArgumentException("Invalid terminal coordinates."); X=x; Y=y; } }
     public sealed class Segment { public string Network; public string From; public string To; public Point A; public Point B; }
     public sealed class Crossing { public Segment First; public Segment Second; }
+    public sealed class ExistingDrafts { public readonly List<Segment> Segments=new List<Segment>(); public int Unreadable; }
     public static class DraftReview {
+        private static string Literal(object formula) {
+            string value=formula as string;
+            if (value == null || value.Length < 2 || value[0] != '"' || value[value.Length-1] != '"') throw new InvalidOperationException("The draft annotation is not a literal.");
+            return value.Substring(1,value.Length-2).Replace("\"\"","\"");
+        }
+        public static ExistingDrafts ReadExisting(object page) {
+            dynamic pg=page; var found=new ExistingDrafts();
+            int count=(int)pg.Shapes.Count;
+            for (int i=1;i<=count;i++) {
+                dynamic shape=pg.Shapes[i];
+                // Other shapes are normal on the rack picture. Only inspect a
+                // shape if it has our explicitly tagged draft-status cell.
+                string status;
+                try { status=Literal((object)shape.CellsU["User.WireFlowStatus.Value"].FormulaU); }
+                catch { continue; }
+                if (status != "DRAFT") continue;
+                try {
+                    string bank=Literal((object)shape.CellsU["User.WireFlowBank.Value"].FormulaU);
+                    string ssc=Literal((object)shape.CellsU["User.WireFlowSSC.Value"].FormulaU);
+                    string from=Literal((object)shape.CellsU["User.WireFlowFrom.Value"].FormulaU);
+                    string to=Literal((object)shape.CellsU["User.WireFlowTo.Value"].FormulaU);
+                    string network=Literal((object)shape.CellsU["User.WireFlowNetwork.Value"].FormulaU);
+                    if (network != "POWER" && network != "COMM") throw new InvalidOperationException("Unknown draft network.");
+                    found.Segments.Add(new Segment { Network=network, From="B"+bank+"/SSC"+ssc+":"+from, To=to,
+                        A=new Point((double)shape.CellsU["BeginX"].ResultIU,(double)shape.CellsU["BeginY"].ResultIU),
+                        B=new Point((double)shape.CellsU["EndX"].ResultIU,(double)shape.CellsU["EndY"].ResultIU) });
+                } catch { found.Unreadable++; }
+            }
+            return found;
+        }
         private static double Cross(double ax,double ay,double bx,double by) { return ax*by-ay*bx; }
         private static bool Same(Point a, Point b, double e) { return Math.Abs(a.X-b.X)<=e && Math.Abs(a.Y-b.Y)<=e; }
         public static bool Intersects(Segment a, Segment b) {
@@ -72,6 +103,11 @@ namespace Ayk.WireFlow.VisioAddIn {
             var found=new List<Crossing>();
             for(int i=0;i<segments.Count;i++) for(int j=i+1;j<segments.Count;j++)
                 if (Intersects(segments[i],segments[j])) found.Add(new Crossing { First=segments[i],Second=segments[j] });
+            return found;
+        }
+        public static List<Crossing> FindBetween(IList<Segment> proposed,IList<Segment> existing) {
+            var found=new List<Crossing>();
+            foreach(var a in proposed) foreach(var b in existing) if(Intersects(a,b)) found.Add(new Crossing { First=a,Second=b });
             return found;
         }
     }
@@ -361,13 +397,16 @@ namespace Ayk.WireFlow.VisioAddIn {
             try {
                 if (page != app.ActivePage) throw new InvalidOperationException("Return to the page on which marking started.");
                 CheckChainInputs();
-                var crossings=DraftReview.FindCrossings(plan.Build());
-                if (crossings.Count > 0) {
+                var proposed=plan.Build();
+                var existing=DraftReview.ReadExisting(page);
+                var crossings=DraftReview.FindCrossings(proposed);
+                crossings.AddRange(DraftReview.FindBetween(proposed,existing.Segments));
+                if (crossings.Count > 0 || existing.Unreadable > 0) {
                     var lines=new List<string>();
                     for(int i=0;i<Math.Min(3,crossings.Count);i++) {
                         var c=crossings[i]; lines.Add(c.First.From+" → "+c.First.To+" / "+c.Second.From+" → "+c.Second.To);
                     }
-                    string warning=crossings.Count+" possible crossing or overlap(s) in the straight-line preview:\n"+String.Join("\n",lines.ToArray())+"\n\nThis is a visual warning, not a clearance or routing validation. Generate the draft for review anyway?";
+                    string warning=crossings.Count+" possible crossing or overlap(s) among proposed lines and tagged draft wires:\n"+String.Join("\n",lines.ToArray())+(existing.Unreadable > 0 ? "\n"+existing.Unreadable+" tagged draft shape(s) could not be inspected." : "")+"\n\nThis compares straight endpoints only. It does not inspect untagged wires, bends or clearance. Generate the draft for review anyway?";
                     if (MessageBox.Show(this,warning,"Review draft crossings",MessageBoxButtons.YesNo,MessageBoxIcon.Warning) != DialogResult.Yes) { status.Text="Draft not drawn. Review the terminal marks and planned routes."; return; }
                 }
                 int n=DraftRenderer.Draw(app,page,plan); draw.Enabled=false; undo.Enabled=false;
