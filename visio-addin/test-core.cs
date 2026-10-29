@@ -96,6 +96,7 @@ public static class TestCore {
         var broken=new FakeShape(); broken.CellsU["User.WireFlowStatus.Value"].FormulaU="\"DRAFT\""; reading.Shapes.Items.Add(broken);
         var existing=DraftReview.ReadExisting(reading);
         Check(existing.Segments.Count==1 && existing.Unreadable==1 && existing.Segments[0].From=="B2/SSC3:SSC.POS", "only tagged drafts are read and unreadable drafts are reported");
+        Check(DraftReview.HasChain(existing,2,3) && !DraftReview.HasChain(existing,2,4) && !DraftReview.HasChain(existing,1,3),"existing chain guard distinguishes bank and SSC identities");
         Check(DraftReview.FindBetween(new [] {Line(0,2,2,0)},existing.Segments).Count==1,"prior draft geometry participates in crossing review");
         page=new FakePage{FailAt=3}; app=new FakeApp{Page=page}; bool failed=false;
         try { DraftRenderer.Draw(app,page,plan); } catch(InvalidOperationException) { failed=true; }

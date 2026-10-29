@@ -8,8 +8,11 @@ installation on employee computers. No registry entries or user settings are
 modified by the build and test scripts.
 
 The pilot accepts one SSC chain of 2–48 modules at a time. The engineer enters
-its bank and SSC numbers before marking; those identities are not automatically
-checked for duplicates or completeness across the drawing. In the prototype window the
+its bank and SSC numbers before marking. Before drawing, a top-level tagged draft
+with the same bank and SSC identity blocks duplicate generation; remove or undo
+the earlier draft before making a replacement. Untagged or grouped shapes cannot
+be identified by this guard, and completeness across the drawing is not checked.
+In the prototype window the
 engineer selects a separate top-level Visio marker shape at each SSC, junction-box
 and module terminal; its PinX/PinY page coordinates are recorded in the open
 session. The engineer must mark SSC S/N, string NEG/POS, bus B−/B+, junction-box

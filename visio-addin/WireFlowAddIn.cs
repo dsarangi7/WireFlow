@@ -42,7 +42,7 @@ namespace Ayk.WireFlow.VisioAddIn {
     }
 
     public sealed class Point { public double X; public double Y; public Point(double x, double y) { if (Double.IsNaN(x) || Double.IsInfinity(x) || Double.IsNaN(y) || Double.IsInfinity(y)) throw new ArgumentException("Invalid terminal coordinates."); X=x; Y=y; } }
-    public sealed class Segment { public string Network; public string From; public string To; public Point A; public Point B; }
+    public sealed class Segment { public string Network; public string From; public string To; public Point A; public Point B; public int Bank; public int Ssc; }
     public sealed class Crossing { public Segment First; public Segment Second; }
     public sealed class ExistingDrafts { public readonly List<Segment> Segments=new List<Segment>(); public int Unreadable; }
     public static class DraftReview {
@@ -68,13 +68,18 @@ namespace Ayk.WireFlow.VisioAddIn {
                     string from=Literal((object)shape.CellsU["User.WireFlowFrom.Value"].FormulaU);
                     string to=Literal((object)shape.CellsU["User.WireFlowTo.Value"].FormulaU);
                     string network=Literal((object)shape.CellsU["User.WireFlowNetwork.Value"].FormulaU);
+                    int bankId,sscId;
+                    if (!Int32.TryParse(bank,NumberStyles.None,CultureInfo.InvariantCulture,out bankId) || bankId < 1 || bankId > 9999 || !Int32.TryParse(ssc,NumberStyles.None,CultureInfo.InvariantCulture,out sscId) || sscId < 1 || sscId > 9999) throw new InvalidOperationException("Invalid draft identity.");
                     if (network != "POWER" && network != "COMM") throw new InvalidOperationException("Unknown draft network.");
-                    found.Segments.Add(new Segment { Network=network, From="B"+bank+"/SSC"+ssc+":"+from, To=to,
+                    found.Segments.Add(new Segment { Network=network, Bank=bankId, Ssc=sscId, From="B"+bank+"/SSC"+ssc+":"+from, To=to,
                         A=new Point((double)shape.CellsU["BeginX"].ResultIU,(double)shape.CellsU["BeginY"].ResultIU),
                         B=new Point((double)shape.CellsU["EndX"].ResultIU,(double)shape.CellsU["EndY"].ResultIU) });
                 } catch { found.Unreadable++; }
             }
             return found;
+        }
+        public static bool HasChain(ExistingDrafts drafts, int bank, int ssc) {
+            return drafts.Segments.Exists(segment => segment.Bank==bank && segment.Ssc==ssc);
         }
         private static double Cross(double ax,double ay,double bx,double by) { return ax*by-ay*bx; }
         private static bool Same(Point a, Point b, double e) { return Math.Abs(a.X-b.X)<=e && Math.Abs(a.Y-b.Y)<=e; }
@@ -144,7 +149,7 @@ namespace Ayk.WireFlow.VisioAddIn {
         }
         public bool Remove(string name) { return Terminals.Remove(name); }
         private Point Require(string key) { Point p; if (!Terminals.TryGetValue(key, out p)) throw new InvalidOperationException("Missing terminal: " + key); return p; }
-        private Segment Connect(string network, string a, string b) { return new Segment { Network=network, From=a, To=b, A=Require(a), B=Require(b) }; }
+        private Segment Connect(string network, string a, string b) { return new Segment { Network=network, Bank=Bank, Ssc=Ssc, From=a, To=b, A=Require(a), B=Require(b) }; }
         public List<Segment> Build() {
             if (Modules < 2 || Modules > 48) throw new InvalidOperationException("Enter 2 to 48 modules in the chain.");
             if (Bank < 1 || Bank > 9999 || Ssc < 1 || Ssc > 9999) throw new InvalidOperationException("Enter a valid bank and SSC number.");
@@ -399,6 +404,7 @@ namespace Ayk.WireFlow.VisioAddIn {
                 CheckChainInputs();
                 var proposed=plan.Build();
                 var existing=DraftReview.ReadExisting(page);
+                if (DraftReview.HasChain(existing,plan.Bank,plan.Ssc)) throw new InvalidOperationException("This page already has a tagged draft for Bank "+plan.Bank+", SSC "+plan.Ssc+". Review and remove the earlier draft before drawing a replacement.");
                 var crossings=DraftReview.FindCrossings(proposed);
                 crossings.AddRange(DraftReview.FindBetween(proposed,existing.Segments));
                 if (crossings.Count > 0 || existing.Unreadable > 0) {
