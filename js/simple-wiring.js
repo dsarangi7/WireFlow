@@ -4,6 +4,30 @@ function modulePortsValid(ports) {
     ports[name] && Number.isFinite(ports[name].x) && Number.isFinite(ports[name].y));
 }
 
+function portMarkingPrompt(portStep, deviceStep) {
+  const moduleSteps = [
+    'Click the centre of a marked battery module.',
+    'Click the communication S port on that module.',
+    'Click the communication N port on that module.',
+    'Click the power NEGATIVE (−) port on that module.',
+    'Click the power POSITIVE (+) port on that module.',
+  ];
+  const deviceSteps = [
+    'Click the centre of the SSC you are marking.',
+    'Click the SSC communication S port.',
+    'Click the SSC communication N port.',
+    'Click the SSC power NEGATIVE (−) port.',
+    'Click the SSC power POSITIVE (+) port.',
+    'Click the SSC bus B− port.',
+    'Click the SSC bus B+ port.',
+    'Click the junction-box NEGATIVE (−) terminal.',
+    'Click the junction-box POSITIVE (+) terminal.',
+  ];
+  if (deviceStep >= 1 && deviceStep <= deviceSteps.length) return { title: 'SSC AND JUNCTION BOX', current: deviceStep, total: deviceSteps.length, instruction: deviceSteps[deviceStep - 1] };
+  if (portStep >= 1 && portStep <= moduleSteps.length) return { title: 'BATTERY MODULE', current: portStep, total: moduleSteps.length, instruction: moduleSteps[portStep - 1] };
+  return null;
+}
+
 /* Render only connections whose physical terminal locations were marked.
    Use the same S→N, −→+ and bus-polarity ordering as the wiring engine. */
 function pictureModuleWiring(groups, cal, ports, devicePorts) {
@@ -91,7 +115,7 @@ async function tabSimpleWiring(el, project, ctx) {
     cal: existingRack ? fvCalib(saved.cal) : null,
     click: null, calibrating: 0, brush: 'module',
     ports: modulePortsValid(saved.modulePorts) ? saved.modulePorts : null,
-    portStep: 0, portRef: null, pendingPorts: {}, zoom: 1,
+    portStep: 0, portRef: null, pendingPorts: {}, previousPorts: null, zoom: 1,
     devicePorts: JSON.parse(JSON.stringify(saved.devicePorts || {})), deviceStep: 0, deviceSlot: '', pendingDevice: {},
     generated: !!(existingRack && saved.cal && fvCalib(saved.cal).ok && project.config.layout && modulePortsValid(saved.modulePorts)), message: '',
   };
@@ -123,6 +147,7 @@ async function tabSimpleWiring(el, project, ctx) {
     }
     const checks = st.generated ? runValidations(project, generateNetlist(project)).concat(layoutValidate(project)) : [];
     const failed = checks.filter(check => check.status !== 'pass');
+    const prompt = portMarkingPrompt(st.portStep, st.deviceStep);
     el.innerHTML = `
       <div class="page-head slim"><div><h2>Build wiring</h2><p class="muted">Mark the components on your rack drawing, then generate the wiring.</p></div></div>
       <div class="card" style="margin-bottom:16px">
@@ -142,7 +167,7 @@ async function tabSimpleWiring(el, project, ctx) {
         <div class="btn-row"><button class="btn btn-ghost btn-sm" id="simple-ports" ${!cal || !cal.ok || !rackModuleCells(rack).length ? 'disabled' : ''}>${st.ports ? 'Mark module ports again' : 'Mark four module ports'}</button>
           <button class="btn btn-ghost btn-sm" id="simple-device-ports" ${!cal || !cal.ok || !rackDeviceCells(rack, 'ssc').length ? 'disabled' : ''}>Mark SSC and junction-box ports</button>
           <label>Picture zoom <select id="simple-zoom"><option value="1" ${st.zoom === 1 ? 'selected' : ''}>100%</option><option value="2" ${st.zoom === 2 ? 'selected' : ''}>200%</option><option value="4" ${st.zoom === 4 ? 'selected' : ''}>400%</option></select></label></div>
-        <p class="muted small">${st.deviceStep ? ['','Click the centre of the SSC you are marking.','Click SSC communication S.','Click SSC communication N.','Click SSC power NEG (−).','Click SSC power POS (+).','Click SSC bus B−.','Click SSC bus B+.','Click its junction-box negative (−) terminal.','Click its junction-box positive (+) terminal.'][st.deviceStep] : st.portStep ? ['','Click the centre of a marked battery module.','Click that module’s communication S port (left).','Click that module’s communication N port (right).','Click that module’s power negative (−) port.','Click that module’s power positive (+) port.'][st.portStep] : st.ports ? 'Module ports are set. Mark the SSC and junction-box ports for each SSC.' : 'Mark four ports on one representative module before generating wiring.'}</p>
+        ${prompt ? `<div class="port-instruction" role="status" aria-live="polite"><div class="port-instruction-progress">${prompt.title} · STEP ${prompt.current} OF ${prompt.total}</div><strong>${prompt.instruction}</strong><span>${st.message ? esc(st.message) : prompt.current === 1 ? 'Select the marked component on the drawing below.' : 'Click the port centre on the drawing below.'}</span><button class="btn btn-ghost btn-sm" id="simple-cancel-ports">Cancel marking</button></div>` : `<p class="muted small">${st.ports ? 'Module ports are set. Mark the SSC and junction-box ports for each SSC.' : 'Mark four ports on one representative module before generating wiring.'}</p>`}
         <div id="simple-picture-scroll" style="border:1px solid var(--border);border-radius:8px;overflow:auto;max-height:70vh"><div id="simple-picture" style="width:${st.zoom * 100}%;cursor:crosshair">${svg}</div></div>
       </div>
       <div class="card" style="margin-top:16px"><h3>3 · Generate wiring</h3>
@@ -164,10 +189,11 @@ async function tabSimpleWiring(el, project, ctx) {
       st.cal = fvCalib({ imgW: image.naturalWidth, imgH: image.naturalHeight, cols, rows });
       st.calibrating = 1; st.click = null; st.generated = false; st.ports = null; st.portStep = 0; st.devicePorts = {}; st.deviceStep = 0; st.message = ''; render();
     };
-    el.querySelectorAll('[data-simple-brush]').forEach(button => { button.onclick = () => { st.brush = button.dataset.simpleBrush; st.portStep = 0; st.deviceStep = 0; render(); }; });
+    el.querySelectorAll('[data-simple-brush]').forEach(button => { button.onclick = () => { if (st.portStep) st.ports = st.previousPorts; st.brush = button.dataset.simpleBrush; st.portStep = 0; st.deviceStep = 0; render(); }; });
     el.querySelector('#simple-zoom').onchange = event => { st.zoom = Number(event.target.value); render(); };
-    el.querySelector('#simple-ports').onclick = () => { st.portStep = 1; st.deviceStep = 0; st.pendingPorts = {}; st.ports = null; st.generated = false; st.message = ''; render(); };
-    el.querySelector('#simple-device-ports').onclick = () => { st.deviceStep = 1; st.portStep = 0; st.pendingDevice = {}; st.generated = false; st.message = ''; render(); };
+    el.querySelector('#simple-ports').onclick = () => { if (!st.portStep) st.previousPorts = st.ports; st.portStep = 1; st.deviceStep = 0; st.pendingPorts = {}; st.ports = null; st.generated = false; st.message = ''; render(); };
+    el.querySelector('#simple-device-ports').onclick = () => { if (st.portStep) st.ports = st.previousPorts; st.deviceStep = 1; st.portStep = 0; st.pendingDevice = {}; st.generated = false; st.message = ''; render(); };
+    el.querySelector('#simple-cancel-ports')?.addEventListener('click', () => { if (st.portStep) st.ports = st.previousPorts; st.portStep = 0; st.deviceStep = 0; st.message = 'Port marking cancelled.'; render(); });
     el.querySelector('#simple-picture').onclick = event => {
       const svgEl = event.currentTarget.querySelector('svg'), rect = svgEl.getBoundingClientRect();
       const p = { x: (event.clientX - rect.left) * image.naturalWidth / rect.width, y: (event.clientY - rect.top) * image.naturalHeight / rect.height };
@@ -188,6 +214,7 @@ async function tabSimpleWiring(el, project, ctx) {
       if (st.deviceStep >= 2) {
         const name = ['commS', 'commN', 'pwrNeg', 'pwrPos', 'busNeg', 'busPos', 'jbNeg', 'jbPos'][st.deviceStep - 2];
         st.pendingDevice[name] = { x: p.x, y: p.y };
+        st.message = '';
         if (st.deviceStep === 9) { st.devicePorts[st.deviceSlot] = st.pendingDevice; st.deviceStep = 0; st.message = 'SSC and junction-box ports recorded. Repeat for each SSC.'; }
         else st.deviceStep++;
         render(); return;
@@ -200,6 +227,7 @@ async function tabSimpleWiring(el, project, ctx) {
         if (Math.abs(p.x - st.portRef.x) > st.cal.pitchX * .6 || Math.abs(p.y - st.portRef.y) > st.cal.pitchY * .6) { st.message = 'Click a port on the selected reference module.'; render(); return; }
         const name = ['commS', 'commN', 'pwrNeg', 'pwrPos'][st.portStep - 2];
         st.pendingPorts[name] = { x: p.x - st.portRef.x, y: p.y - st.portRef.y };
+        st.message = '';
         if (st.portStep === 5) { st.ports = st.pendingPorts; st.portStep = 0; st.message = 'Four port centres recorded.'; }
         else st.portStep++;
         render(); return;
@@ -227,7 +255,14 @@ async function tabSimpleWiring(el, project, ctx) {
     el.querySelector('#simple-visio')?.addEventListener('click', async () => {
       try {
         const wiring = pictureModuleWiring(layoutGroups(project), st.cal, st.ports, st.devicePorts);
-        const model = pictureVisioModel(project, st.cal, wiring);
+        let exportProject = project;
+        if (/^data:image\/svg\+xml/i.test(project.underlay.src)) {
+          const canvas = document.createElement('canvas');
+          canvas.width = image.naturalWidth; canvas.height = image.naturalHeight;
+          canvas.getContext('2d').drawImage(image, 0, 0);
+          exportProject = { ...project, underlay: { ...project.underlay, src: canvas.toDataURL('image/png') } };
+        }
+        const model = pictureVisioModel(exportProject, st.cal, wiring);
         const conns = await ctx.getNetlist();
         download((project.name || 'wiring') + '-draft.vsdx', vsdxExport(conns, project, model), 'application/vnd.ms-visio.drawing.main+xml');
       } catch (error) { toast('Visio export failed: ' + error.message, 'error'); }

@@ -11,6 +11,8 @@ representative module; those four measured offsets are applied to identical
 modules. For each SSC, mark its communication S/N, power NEG/POS and bus B−/B+
 ports, then mark the corresponding junction-box negative and positive ports.
 Generate wiring to apply the existing per-SSC planner and validations.
+The active port instruction stays prominent above the picture and advances one
+step at a time. Cancel marking restores the previous module-port calibration.
 
 The preview, SVG and draft PDF use the marked port centres. In accordance with
 the existing engine, module negative connects to the next module positive and

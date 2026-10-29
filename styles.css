@@ -357,6 +357,11 @@ table.data tr:hover td { background: #f8fafc; }
   .chain-summary-row { grid-template-columns: 16px 1fr; }
 }
 
+.port-instruction { position: sticky; top: 8px; z-index: 5; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; padding: 16px 24px; margin: 16px 0; border: 2px solid var(--accent); border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow); color: var(--text); }
+.port-instruction-progress { flex-basis: 100%; color: var(--accent); font-size: 12px; font-weight: 800; letter-spacing: .06em; }
+.port-instruction strong { flex-basis: 100%; font-size: clamp(20px, 2.4vw, 28px); line-height: 1.25; }
+.port-instruction span { flex: 1; color: var(--muted); }
+
 @media (prefers-reduced-motion: reduce) {
   .flow-step, .import-spinner, .toast { animation: none !important; transition: none !important; }
   .flow-step:hover { transform: none; }

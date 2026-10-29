@@ -80,7 +80,7 @@ docs/variable-ssc-layout.md  Variable rack layout: per-SSC chains, assignment, g
 docs/guided-workspace.md  Guided post-login workspace, progress derivation and Advanced access
 js/aps.js           Autodesk APS client (token, OSS upload, translate, viewer)
 js/app.js           Router, landing page, auth (email OTP), dashboard, workspace UI
-tests/drawing.test.js  344-assertion regression suite (node tests/drawing.test.js)
+tests/drawing.test.js  350-assertion regression suite (node tests/drawing.test.js)
 ```
 
 ## Running locally

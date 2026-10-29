@@ -497,9 +497,17 @@ ok('print title block embeds the AYK logo and drawing details',
 
 const simpleSrc = fs.readFileSync(path.join(ROOT, 'js', 'simple-wiring.js'), 'utf8');
 const portFactory = new Function('slotCell', 'fvSlotCenter', 'fvDist', 'SSC_PALETTE',
-  simpleSrc + '\nreturn { modulePortsValid, pictureModuleWiring, pictureVisioModel };');
+  simpleSrc + '\nreturn { modulePortsValid, pictureModuleWiring, pictureVisioModel, portMarkingPrompt };');
 const portsApi = portFactory(E.slotCell, (cal, c, r) => ({ x: cal.x0 + c * cal.pitchX, y: cal.y0 + r * cal.pitchY }),
   (a, b) => Math.hypot(a.x - b.x, a.y - b.y), E.SSC_PALETTE);
+const modulePrompts = [1, 2, 3, 4, 5].map(step => portsApi.portMarkingPrompt(step, 0));
+ok('module port prompts advance through five explicit steps',
+  modulePrompts.every((prompt, index) => prompt.current === index + 1 && prompt.total === 5) &&
+  modulePrompts[1].instruction.includes('communication S') && modulePrompts[4].instruction.includes('POSITIVE'));
+const devicePrompts = [1, 2, 3, 4, 5, 6, 7, 8, 9].map(step => portsApi.portMarkingPrompt(0, step));
+ok('SSC and junction-box prompts advance through nine explicit steps',
+  devicePrompts.every((prompt, index) => prompt.current === index + 1 && prompt.total === 9) &&
+  devicePrompts[7].instruction.includes('NEGATIVE') && devicePrompts[8].instruction.includes('POSITIVE'));
 const ports = { commS: { x: -30, y: 15 }, commN: { x: -20, y: 16 }, pwrNeg: { x: 20, y: 17 }, pwrPos: { x: 30, y: 18 } };
 const measuredCal = { ok: true, imgW: 1000, imgH: 700, x0: 100, y0: 200, pitchX: 120, pitchY: 60, mmPerPx: 1 };
 const measuredGroups = [{ label: 'SSC-1', order: ['0,0', '0,1'] }];
@@ -926,6 +934,8 @@ function vsdxParts(bytes) {
   const pages = parts.get('visio/pages/pages.xml') || '';
   const ct = parts.get('[Content_Types].xml') || '';
   const p1rels = parts.get('visio/pages/_rels/page1.xml.rels') || '';
+  const rootrels = parts.get('_rels/.rels') || '';
+  const docrels = parts.get('visio/_rels/document.xml.rels') || '';
   const media = parts.get('visio/media/image1.png') || '';
 
   vsdxEq('package contains page2 + media', parts.has('visio/pages/page2.xml') && parts.has('visio/media/image1.png'), true);
@@ -939,6 +949,10 @@ function vsdxParts(bytes) {
   vsdxEq('logo bitmap shape present on page 1', page1.includes('ForeignType="Bitmap"') && page1.includes('<Rel r:id="rId1"/>'), true);
   vsdxEq('page1 rels point at the logo media', p1rels.includes('../media/image1.png'), true);
   vsdxEq('content types declare png + page2', ct.includes('Extension="png"') && ct.includes('/visio/pages/page2.xml'), true);
+  vsdxEq('root relationship identifies the Visio document', rootrels.includes('http://schemas.microsoft.com/visio/2010/relationships/document'), true);
+  vsdxEq('package includes the required windows part and relationship', parts.has('visio/windows.xml') && docrels.includes('relationships/windows') && ct.includes('application/vnd.ms-visio.windows+xml'), true);
+  vsdxEq('geometry uses canonical Visio Row types', page1.includes('<Row T="MoveTo"') && page1.includes('<Row T="LineTo"') && !page1.includes('<MoveTo '), true);
+  vsdxEq('embedded PNG images declare their compression format', page1.includes('ForeignType="Bitmap" CompressionType="PNG"'), true);
   vsdxEq('pages.xml declares both pages', (pages.match(/<Page /g) || []).length, 2);
   vsdxEq('note page carries NOTES + EXCEPTIONS + legend', page2.includes('NOTES') && page2.includes('EXCEPTIONS') && page2.includes('WIRING LEGEND'), true);
   vsdxEq('note page lists the cable gauges', page2.includes(E.DEFAULT_RULES.powerGauge.split('²')[0]) && page2.includes(E.DEFAULT_RULES.commGauge), true);

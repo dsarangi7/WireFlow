@@ -110,13 +110,13 @@ function vsdxWireShape(id, p) {
     + vsdxCell('LineColor', color)
     + (p.dash ? vsdxCell('LinePattern', '2') : '')
     + `<Section N="Geometry" IX="0">${vsdxCell('NoFill', '1')}${vsdxCell('NoLine', '0')}${vsdxCell('NoShow', '0')}${vsdxCell('NoSnap', '0')}${vsdxCell('NoQuickDrag', '0')}`
-    + `<MoveTo IX="1">${vsdxCell('X', '0')}${vsdxCell('Y', '0')}</MoveTo>`
-    + `<LineTo IX="2">${vsdxCell('X', wIn.toFixed(6), 'Width*1')}${vsdxCell('Y', '0')}</LineTo>`
+    + `<Row T="MoveTo" IX="1">${vsdxCell('X', '0')}${vsdxCell('Y', '0')}</Row>`
+    + `<Row T="LineTo" IX="2">${vsdxCell('X', wIn.toFixed(6), 'Width*1')}${vsdxCell('Y', '0')}</Row>`
     + `</Section></Shape>`;
 }
 
 /** Generic embedded-bitmap Foreign shape from a sheet-unit rect (Y down). */
-function vsdxImageShape(id, rectU, layerName, relId) {
+function vsdxImageShape(id, rectU, layerName, relId, imageFormat) {
   const pinX = (rectU.x + rectU.w / 2) * VSDX_UNIT_IN;
   const pinY = (VSDX_SHEET_H - rectU.y - rectU.h / 2) * VSDX_UNIT_IN;
   const wIn = rectU.w * VSDX_UNIT_IN, hIn = rectU.h * VSDX_UNIT_IN;
@@ -132,13 +132,13 @@ function vsdxImageShape(id, rectU, layerName, relId) {
     + vsdxCell('ImgHeight', hIn.toFixed(6), 'Height*1')
     + vsdxCell('LayerMember', String(vsdxLayerIndex(layerName || 'TITLE')))
     + `<Section N="Geometry" IX="0">${vsdxCell('NoFill', '0')}${vsdxCell('NoLine', '0')}${vsdxCell('NoShow', '0')}${vsdxCell('NoSnap', '0')}${vsdxCell('NoQuickDrag', '0')}`
-    + `<MoveTo IX="1">${vsdxCell('X', '0')}${vsdxCell('Y', '0')}</MoveTo>`
-    + `<LineTo IX="2">${vsdxCell('X', wIn.toFixed(6))}${vsdxCell('Y', '0')}</LineTo>`
-    + `<LineTo IX="3">${vsdxCell('X', wIn.toFixed(6))}${vsdxCell('Y', hIn.toFixed(6))}</LineTo>`
-    + `<LineTo IX="4">${vsdxCell('X', '0')}${vsdxCell('Y', hIn.toFixed(6))}</LineTo>`
-    + `<LineTo IX="5">${vsdxCell('X', '0')}${vsdxCell('Y', '0')}</LineTo>`
+    + `<Row T="MoveTo" IX="1">${vsdxCell('X', '0')}${vsdxCell('Y', '0')}</Row>`
+    + `<Row T="LineTo" IX="2">${vsdxCell('X', wIn.toFixed(6))}${vsdxCell('Y', '0')}</Row>`
+    + `<Row T="LineTo" IX="3">${vsdxCell('X', wIn.toFixed(6))}${vsdxCell('Y', hIn.toFixed(6))}</Row>`
+    + `<Row T="LineTo" IX="4">${vsdxCell('X', '0')}${vsdxCell('Y', hIn.toFixed(6))}</Row>`
+    + `<Row T="LineTo" IX="5">${vsdxCell('X', '0')}${vsdxCell('Y', '0')}</Row>`
     + `</Section>`
-    + `<ForeignData ForeignType="Bitmap"><Rel r:id="${rid}"/></ForeignData></Shape>`;
+    + `<ForeignData ForeignType="Bitmap" CompressionType="${imageFormat === 'jpg' ? 'JPEG' : 'PNG'}"><Rel r:id="${rid}"/></ForeignData></Shape>`;
 }
 
 /** AYK logo as a Foreign bitmap shape anchored in the title block (rId1). */
@@ -166,11 +166,11 @@ function vsdxShape(id, p) {
       + vsdxCell('FillForegnd', filled ? p.fill : '#ffffff')
       + vsdxCell('FillPattern', filled ? '1' : '0')
       + `<Section N="Geometry" IX="0">${vsdxCell('NoFill', '0')}${vsdxCell('NoLine', '0')}${vsdxCell('NoShow', '0')}${vsdxCell('NoSnap', '0')}${vsdxCell('NoQuickDrag', '0')}`
-      + `<MoveTo IX="1">${vsdxCell('X', '0')}${vsdxCell('Y', '0')}</MoveTo>`
-      + `<LineTo IX="2">${vsdxCell('X', vsdxIn(p.w))}${vsdxCell('Y', '0')}</LineTo>`
-      + `<LineTo IX="3">${vsdxCell('X', vsdxIn(p.w))}${vsdxCell('Y', vsdxIn(p.h))}</LineTo>`
-      + `<LineTo IX="4">${vsdxCell('X', '0')}${vsdxCell('Y', vsdxIn(p.h))}</LineTo>`
-      + `<LineTo IX="5">${vsdxCell('X', '0')}${vsdxCell('Y', '0')}</LineTo>`
+      + `<Row T="MoveTo" IX="1">${vsdxCell('X', '0')}${vsdxCell('Y', '0')}</Row>`
+      + `<Row T="LineTo" IX="2">${vsdxCell('X', vsdxIn(p.w))}${vsdxCell('Y', '0')}</Row>`
+      + `<Row T="LineTo" IX="3">${vsdxCell('X', vsdxIn(p.w))}${vsdxCell('Y', vsdxIn(p.h))}</Row>`
+      + `<Row T="LineTo" IX="4">${vsdxCell('X', '0')}${vsdxCell('Y', vsdxIn(p.h))}</Row>`
+      + `<Row T="LineTo" IX="5">${vsdxCell('X', '0')}${vsdxCell('Y', '0')}</Row>`
       + `</Section></Shape>`;
   }
 
@@ -187,9 +187,9 @@ function vsdxShape(id, p) {
       + vsdxCell('FillForegnd', (p.fill && p.fill !== 'none') ? p.fill : '#ffffff')
       + vsdxCell('FillPattern', (p.fill && p.fill !== 'none') ? '1' : '0')
       + `<Section N="Geometry" IX="0">${vsdxCell('NoFill', '0')}${vsdxCell('NoLine', '0')}${vsdxCell('NoShow', '0')}${vsdxCell('NoSnap', '0')}${vsdxCell('NoQuickDrag', '0')}`
-      + `<Ellipse IX="1">${vsdxCell('X', vsdxIn(r))}${vsdxCell('Y', vsdxIn(r))}`
+      + `<Row T="Ellipse" IX="1">${vsdxCell('X', vsdxIn(r))}${vsdxCell('Y', vsdxIn(r))}`
       + `${vsdxCell('A', vsdxIn(d))}${vsdxCell('B', vsdxIn(r))}`
-      + `${vsdxCell('C', vsdxIn(r))}${vsdxCell('D', vsdxIn(d))}</Ellipse>`
+      + `${vsdxCell('C', vsdxIn(r))}${vsdxCell('D', vsdxIn(d))}</Row>`
       + `</Section></Shape>`;
   }
 
@@ -210,8 +210,8 @@ function vsdxShape(id, p) {
     + vsdxCell('LinePattern', '0') + vsdxCell('FillPattern', '0')
     + `<Section N="Character"><Row IX="0">${vsdxCell('Size', sizeIn)}${vsdxCell('Style', String(styleBits))}</Row></Section>`
     + `<Section N="Geometry" IX="0">${vsdxCell('NoFill', '1')}${vsdxCell('NoLine', '1')}${vsdxCell('NoShow', '0')}${vsdxCell('NoSnap', '1')}${vsdxCell('NoQuickDrag', '1')}`
-    + `<MoveTo IX="1">${vsdxCell('X', '0')}${vsdxCell('Y', '0')}</MoveTo>`
-    + `<LineTo IX="2">${vsdxCell('X', vsdxIn(tw))}${vsdxCell('Y', vsdxIn(th))}</LineTo>`
+    + `<Row T="MoveTo" IX="1">${vsdxCell('X', '0')}${vsdxCell('Y', '0')}</Row>`
+    + `<Row T="LineTo" IX="2">${vsdxCell('X', vsdxIn(tw))}${vsdxCell('Y', vsdxIn(th))}</Row>`
     + `</Section>`
     + `<Text>${vsdxEsc(p.text)}</Text></Shape>`;
 }
@@ -308,7 +308,7 @@ function vsdxExport(conns, project, options) {
   const underlayId = prims.length + 3;
   const page1Shapes =
     (underlayB64 && u.w > 0 && u.h > 0
-      ? vsdxImageShape(underlayId, { x: u.x, y: u.y, w: u.w, h: u.h }, 'RACK', 'rId2')
+      ? vsdxImageShape(underlayId, { x: u.x, y: u.y, w: u.w, h: u.h }, 'RACK', 'rId2', underlayExt)
       : '')
     + prims.map((p, i) => vsdxShape(i + 2, p)).join('')
     + vsdxLogoShape(prims.length + 2);
@@ -364,21 +364,29 @@ function vsdxExport(conns, project, options) {
     + `<Override PartName="/visio/pages/pages.xml" ContentType="application/vnd.ms-visio.pages+xml"/>`
     + `<Override PartName="/visio/pages/page1.xml" ContentType="application/vnd.ms-visio.page+xml"/>`
     + `<Override PartName="/visio/pages/page2.xml" ContentType="application/vnd.ms-visio.page+xml"/>`
+    + `<Override PartName="/visio/windows.xml" ContentType="application/vnd.ms-visio.windows+xml"/>`
     + `<Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>`
     + `<Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>`
     + `</Types>`;
 
   const rootRels = `<?xml version="1.0" encoding="utf-8" standalone="yes"?>`
     + `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">`
-    + `<Relationship Id="rId1" Type="http://schemas.microsoft.com/visio/2010/relationships/extended-properties-visio" Target="docProps/app.xml"/>`
+    + `<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties" Target="docProps/app.xml"/>`
     + `<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/>`
-    + `<Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="visio/document.xml"/>`
+    + `<Relationship Id="rId3" Type="http://schemas.microsoft.com/visio/2010/relationships/document" Target="visio/document.xml"/>`
     + `</Relationships>`;
 
   const docRels = `<?xml version="1.0" encoding="utf-8" standalone="yes"?>`
     + `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">`
     + `<Relationship Id="rId1" Type="http://schemas.microsoft.com/visio/2010/relationships/pages" Target="pages/pages.xml"/>`
+    + `<Relationship Id="rId2" Type="http://schemas.microsoft.com/visio/2010/relationships/windows" Target="windows.xml"/>`
     + `</Relationships>`;
+
+  const windowsXml = `<?xml version="1.0" encoding="utf-8" standalone="yes"?>`
+    + `<Windows xmlns="http://schemas.microsoft.com/office/visio/2012/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xml:space="preserve">`
+    + `<Window ID="0" WindowType="Drawing" ContainerType="Page" Page="0" ViewScale="-1" ViewCenterX="8.26771653543307" ViewCenterY="5.84645669291339">`
+    + `<ShowRulers>1</ShowRulers><ShowGrid>0</ShowGrid><ShowPageBreaks>0</ShowPageBreaks><ShowGuides>1</ShowGuides><ShowConnectionPoints>1</ShowConnectionPoints>`
+    + `</Window></Windows>`;
 
   const pagesRels = `<?xml version="1.0" encoding="utf-8" standalone="yes"?>`
     + `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">`
@@ -415,6 +423,7 @@ function vsdxExport(conns, project, options) {
   zip.add('docProps/app.xml', appXml);
   zip.add('visio/document.xml', documentXml);
   zip.add('visio/_rels/document.xml.rels', docRels);
+  zip.add('visio/windows.xml', windowsXml);
   zip.add('visio/pages/pages.xml', pagesXml);
   zip.add('visio/pages/_rels/pages.xml.rels', pagesRels);
   zip.add('visio/pages/page1.xml', pageXml);
