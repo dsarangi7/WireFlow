@@ -70,6 +70,7 @@ namespace Ayk.WireFlow.VisioAddIn {
             foreach (var entry in Terminals) if (entry.Key != name && entry.Value.X == x && entry.Value.Y == y) throw new InvalidOperationException("This marker is already assigned to " + entry.Key + ". Select a different terminal marker.");
             Terminals[name] = point;
         }
+        public bool Remove(string name) { return Terminals.Remove(name); }
         private Point Require(string key) { Point p; if (!Terminals.TryGetValue(key, out p)) throw new InvalidOperationException("Missing terminal: " + key); return p; }
         private Segment Connect(string network, string a, string b) { return new Segment { Network=network, From=a, To=b, A=Require(a), B=Require(b) }; }
         public List<Segment> Build() {
@@ -112,6 +113,7 @@ namespace Ayk.WireFlow.VisioAddIn {
         private readonly NumericUpDown count = new NumericUpDown { Minimum=2, Maximum=48, Value=12, Width=70 };
         private readonly Label status = new Label { AutoSize=false, Width=520, Height=92 };
         private readonly Button mark = new Button { Text="Record selected terminal marker", Width=245, Height=40 };
+        private readonly Button undo = new Button { Text="Undo last terminal mark", Width=245, Height=36 };
         private readonly Button pick = new Button { Text="Click ports on drawing", Width=245, Height=40 };
         private readonly Button draw = new Button { Text="Draw draft on active page", Width=245, Height=40 };
         private readonly List<string> prompts = new List<string>();
@@ -125,13 +127,13 @@ namespace Ayk.WireFlow.VisioAddIn {
             var layout=new FlowLayoutPanel { Dock=DockStyle.Fill, FlowDirection=FlowDirection.TopDown, Padding=new Padding(12), WrapContents=false, AutoScroll=true };
             layout.Controls.Add(new Label { Text="Modules in this SSC chain:", Width=500, Height=22 }); layout.Controls.Add(count);
             var start=new Button { Text="Start terminal marking", Width=245, Height=36 };
-            layout.Controls.Add(start); layout.Controls.Add(status); layout.Controls.Add(pick); layout.Controls.Add(mark); layout.Controls.Add(draw); Controls.Add(layout);
-            start.Click += delegate { StartPlan(); }; mark.Click += delegate { Record(); }; pick.Click += delegate { TogglePicking(); }; draw.Click += delegate { Draw(); };
+            layout.Controls.Add(start); layout.Controls.Add(status); layout.Controls.Add(pick); layout.Controls.Add(mark); layout.Controls.Add(undo); layout.Controls.Add(draw); Controls.Add(layout);
+            start.Click += delegate { StartPlan(); }; mark.Click += delegate { Record(); }; pick.Click += delegate { TogglePicking(); }; undo.Click += delegate { UndoMark(); }; draw.Click += delegate { Draw(); };
             FormClosed += delegate { StopPicking(); };
 #if !EXPERIMENTAL_MOUSE_PICKING
             pick.Visible=false;
 #endif
-            pick.Enabled=false; mark.Enabled=false; draw.Enabled=false;
+            pick.Enabled=false; mark.Enabled=false; undo.Enabled=false; draw.Enabled=false;
 #if EXPERIMENTAL_MOUSE_PICKING
             status.Text="Pilot: mark terminal positions in order, directly on the drawing or by selecting marker shapes.";
 #else
@@ -151,7 +153,7 @@ namespace Ayk.WireFlow.VisioAddIn {
 #else
                 pick.Enabled=false;
 #endif
-                mark.Enabled=true; draw.Enabled=false; ShowPrompt();
+                mark.Enabled=true; undo.Enabled=false; draw.Enabled=false; ShowPrompt();
             } catch (Exception ex) { status.Text="Could not start: "+ex.Message; }
         }
         private void ShowPrompt() {
@@ -181,7 +183,7 @@ namespace Ayk.WireFlow.VisioAddIn {
         private bool AcceptClick(object eventPage, double x, double y) {
             if (!picking || page != eventPage || next >= prompts.Count) return false;
             try {
-                plan.Set(prompts[next],x,y); next++;
+                plan.Set(prompts[next],x,y); next++; undo.Enabled=true;
                 if (next == prompts.Count) {
                     picking=false; mark.Enabled=false; pick.Enabled=false; draw.Enabled=true;
                     status.Text="All terminal positions recorded. Draw a draft and review every endpoint and route.";
@@ -189,6 +191,14 @@ namespace Ayk.WireFlow.VisioAddIn {
                 } else ShowPrompt();
                 return true; // Suppress the default Visio action for a recorded click.
             } catch (Exception ex) { status.Text="Could not record: "+ex.Message; return true; }
+        }
+        private void UndoMark() {
+            if (next == 0) return;
+            StopPicking(); next--; plan.Remove(prompts[next]); mark.Enabled=true; draw.Enabled=false;
+#if EXPERIMENTAL_MOUSE_PICKING
+            pick.Enabled=true;
+#endif
+            undo.Enabled=next>0; ShowPrompt();
         }
         private void Record() {
             try {
@@ -198,7 +208,7 @@ namespace Ayk.WireFlow.VisioAddIn {
                 if ((int)selection.Count != 1) throw new InvalidOperationException("Select exactly one terminal marker shape in Visio.");
                 dynamic shape=selection[1];
                 double x=shape.CellsU["PinX"].ResultIU; double y=shape.CellsU["PinY"].ResultIU;
-                plan.Set(prompts[next],x,y); next++;
+                plan.Set(prompts[next],x,y); next++; undo.Enabled=true;
                 if (next == prompts.Count) { mark.Enabled=false; pick.Enabled=false; draw.Enabled=true; status.Text="All terminal positions recorded. Draw a draft and review every endpoint and route."; }
                 else ShowPrompt();
             } catch (Exception ex) { status.Text="Could not record: "+ex.Message+"\nSelect one marker on the original page and try again."; }
@@ -206,7 +216,7 @@ namespace Ayk.WireFlow.VisioAddIn {
         private void Draw() {
             try {
                 if (page != app.ActivePage) throw new InvalidOperationException("Return to the page on which marking started.");
-                int n=DraftRenderer.Draw(app,page,plan); draw.Enabled=false;
+                int n=DraftRenderer.Draw(app,page,plan); draw.Enabled=false; undo.Enabled=false;
                 status.Text=n+" draft wire shapes added. Review routes, endpoints, harnesses and approvals. Use Visio Undo to remove this draft.";
             } catch (Exception ex) { status.Text="No complete draft was added: "+ex.Message; }
         }

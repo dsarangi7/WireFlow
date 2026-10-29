@@ -2,20 +2,20 @@
 
 > Learned by diffing a real blank template (`111.vsdx`) against its finished output
 > (`DWG2512-01 S10164 Wiring Diagram.vsdx`) for the same project, both authored in
-> Visio by the application/field team. This file is the contract between AYK WireFlow's
-> generator and the way finished drawings actually look.
+> Visio by the application/field team. Observations below are examples from this
+> drawing; they are not a substitute for approved routing and harness rules.
 
 ## 1. The workflow in one line
 
 The engineer does **not** draw racks. He starts from a template that already contains
-the rack as a picture, and only draws **colored straight wires** over it, plus labels
+the rack as a picture, and draws **colored connections** over it, plus labels
 for devices that are not already in the picture.
 
 ```
 blank template (.vsdx)  ──>  draw wires over the picture  ──>  save as DWGxxxx-yy <project>.vsdx
      (rack photo/DWG,               (red/green/blue/orange,            (logo & frame already
-      logo, frame, title             one straight segment                in the template)
-      block, layers, notes           per hop)
+      logo, frame, title             straight and curved                in the template)
+      block, layers, notes           shapes)
       page)
 ```
 
@@ -42,7 +42,7 @@ by the picture.
 
 ## 3. Wire conventions (the finishing "handwriting")
 
-Wires are **plain 1D line shapes** — no dynamic connectors, no glue, no bends:
+Some connections are plain 1D line shapes, such as this example:
 
 ```xml
 <Shape ID="3304" Type="Shape">
@@ -70,8 +70,10 @@ Colour table (counts from the reference finished sheet):
 
 Style facts measured from the reference:
 
-- One **straight segment per hop** — a daisy chain is many short lines, not one
-  polyline. Median length ≈ 0.55 in, max ≈ 1.4 in.
+- Many module-to-module hops are short straight lines. The finished drawing also
+  contains curved and multi-segment geometry. Inspection of page 1 found 23 red
+  or green shapes containing `ArcTo` or `EllipticalArcTo` rows. Colour alone does
+  not establish that every counted shape is a cable or approve its physical route.
 - Mostly **diagonal** (point-to-point over the picture), some vertical/horizontal.
 - Default line weight (inherits quick style 3); a few heavier 0.75 pt accents.
 - Character: Calibri, black; wire shapes carry `TextBkgnd=2`.
@@ -89,8 +91,9 @@ Style facts measured from the reference:
 | R11 | SSC `BUS±` → JB — red |
 | (manual) | AC / grid runs — blue/orange, labelled `ACDP1`, `ACDP2`, `MSM` |
 
-In-rack gaps / column transitions (R09/R10) simply become longer segments; cross-rack
-runs are declared as exceptions and routed on the Note page detail.
+In-rack gaps and column transitions (R09/R10) require the appropriate approved
+harness and route; cross-rack runs are declared as exceptions. The reference
+provides examples, not a complete approved rule for every rail and crossing.
 
 ## 5. What AYK WireFlow now automates (vs. the manual workflow)
 

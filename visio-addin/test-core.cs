@@ -47,6 +47,10 @@ public static class TestCore {
         Check(wires[6].From=="SSC.B-" && wires[6].To=="JB.NEG" && wires[7].From=="SSC.B+" && wires[7].To=="JB.POS", "junction box polarity");
         bool duplicate=false; try { plan.Set("M2.POS",1,1); } catch (InvalidOperationException) { duplicate=true; }
         Check(duplicate,"a terminal marker cannot be reused for another port");
+        Check(plan.Remove("M2.POS") && !plan.Remove("M2.POS"),"last terminal can be removed once for correction");
+        bool afterUndo=false; try { plan.Build(); } catch (InvalidOperationException) { afterUndo=true; }
+        Check(afterUndo,"an undone terminal blocks drawing until re-marked");
+        plan.Set("M2.POS",16,16);
         var page=new FakePage(); var app=new FakeApp{Page=page};
         var incomplete=new DraftPlan{Modules=2}; bool rejected=false;
         try { DraftRenderer.Draw(app,page,incomplete); } catch(InvalidOperationException) { rejected=true; }

@@ -16,6 +16,9 @@ R11 endpoint connections and adds red power and green communication lines to
 the active page. Marker shapes are not deleted. Generated lines are ordinary
 editable Visio shapes in one undo scope. This pilot intentionally needs separate
 marker shapes because an embedded rack picture is not a set of terminal shapes.
+During marking, **Undo last terminal mark** returns to the previous terminal and
+blocks drawing until that terminal has been recorded again. After drawing, use
+Visio's Undo for the entire generated draft before creating a replacement.
 
 An experimental direct-click event sink has been added to the source, but it is
 disabled in the standard build. An out-of-process Visio test hung when trying to
