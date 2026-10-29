@@ -223,7 +223,7 @@ function vsdxShape(id, p) {
  * swatches, cable specs and the exception list from the netlist.
  * Returns { prims, nextId } — IDs continue after page 1.
  */
-function vsdxNotePrims(conns, project, startId) {
+function vsdxNotePrims(conns, project, startId, draftPicture) {
   const prims = [];
   let id = startId;
   let y = 110;
@@ -238,6 +238,10 @@ function vsdxNotePrims(conns, project, startId) {
   const meta = (project && project.name) ? project : {};
   text(`Project: ${meta.name || '—'}    Vessel: ${meta.vessel || '—'}    Drawing No: ${meta.drawing_no || 'DWG-0000'}    Rev: ${meta.revision || 'A'}`, 15, true);
   y += 40;
+  if (draftPicture) {
+    text('DRAFT - only marked terminal links are drawn; verify routes and assignments.', 14, true);
+    y += 34;
+  }
 
   text('WIRING LEGEND', 16, true); y += 34;
   text('Power circuit (+ / − strings, SSC, JB)', 14); swatch('POWER'); y += 30;
@@ -279,8 +283,8 @@ function vsdxNotePrims(conns, project, startId) {
 }
 
 /** Build the full .vsdx package bytes. Returns Uint8Array. */
-function vsdxExport(conns, project) {
-  const layout = buildSheetLayout(project, conns);
+function vsdxExport(conns, project, options) {
+  const layout = options && options.draftPicture ? options : buildSheetLayout(project, conns);
   const prims = layout.primitives || [];
 
   /* canonical Visio layer section: Section N="Layer" with Name/... cells */
@@ -292,7 +296,7 @@ function vsdxExport(conns, project) {
     + `</Section>`;
 
   /* page 1: underlay image (bottom z-order) + layout primitives + logo */
-  const u = project && project.underlay;
+  const u = options && options.draftPicture ? options.underlay : project && project.underlay;
   let underlayB64 = null, underlayExt = 'png';
   if (u && u.kind === 'image' && typeof u.src === 'string' && u.src.startsWith('data:image/')) {
     const m = u.src.match(/^data:image\/([a-z0-9.+-]+);base64,(.*)$/s);
@@ -310,7 +314,7 @@ function vsdxExport(conns, project) {
     + vsdxLogoShape(prims.length + 2);
 
   /* page 2: notes */
-  const note = vsdxNotePrims(conns, project, underlayId + 1);
+  const note = vsdxNotePrims(conns, project, underlayId + 1, !!(options && options.draftPicture));
   const noteShapes = note.prims.map(p => vsdxShape(p.id, p)).join('');
 
   const pageName = 'Rack Wiring - ' + ((project && project.name) || 'Sheet 1');
@@ -418,9 +422,7 @@ function vsdxExport(conns, project) {
   zip.add('visio/pages/page2.xml', page2Xml);
   zip.add('visio/media/image1.png', vsdxB64ToBytes(VSDX_LOGO_B64));
   if (underlayB64) {
-    const bytes = (underlayExt === 'svg')
-      ? new TextEncoder().encode(atob(underlayB64))
-      : vsdxB64ToBytes(underlayB64);
+    const bytes = vsdxB64ToBytes(underlayB64);
     zip.add(`visio/media/image2.${underlayExt}`, bytes);
   }
   return zip.build();

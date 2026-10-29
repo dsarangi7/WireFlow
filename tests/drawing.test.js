@@ -497,11 +497,11 @@ ok('print title block embeds the AYK logo and drawing details',
 
 const simpleSrc = fs.readFileSync(path.join(ROOT, 'js', 'simple-wiring.js'), 'utf8');
 const portFactory = new Function('slotCell', 'fvSlotCenter', 'fvDist', 'SSC_PALETTE',
-  simpleSrc + '\nreturn { modulePortsValid, pictureModuleWiring };');
+  simpleSrc + '\nreturn { modulePortsValid, pictureModuleWiring, pictureVisioModel };');
 const portsApi = portFactory(E.slotCell, (cal, c, r) => ({ x: cal.x0 + c * cal.pitchX, y: cal.y0 + r * cal.pitchY }),
   (a, b) => Math.hypot(a.x - b.x, a.y - b.y), E.SSC_PALETTE);
 const ports = { commS: { x: -30, y: 15 }, commN: { x: -20, y: 16 }, pwrNeg: { x: 20, y: 17 }, pwrPos: { x: 30, y: 18 } };
-const measuredCal = { ok: true, x0: 100, y0: 200, pitchX: 120, pitchY: 60, mmPerPx: 1 };
+const measuredCal = { ok: true, imgW: 1000, imgH: 700, x0: 100, y0: 200, pitchX: 120, pitchY: 60, mmPerPx: 1 };
 const measuredGroups = [{ label: 'SSC-1', order: ['0,0', '0,1'] }];
 const measured = portsApi.pictureModuleWiring(measuredGroups, measuredCal, ports);
 eq('measured module power wire uses negative then next positive port',
@@ -942,6 +942,26 @@ function vsdxParts(bytes) {
   vsdxEq('pages.xml declares both pages', (pages.match(/<Page /g) || []).length, 2);
   vsdxEq('note page carries NOTES + EXCEPTIONS + legend', page2.includes('NOTES') && page2.includes('EXCEPTIONS') && page2.includes('WIRING LEGEND'), true);
   vsdxEq('note page lists the cable gauges', page2.includes(E.DEFAULT_RULES.powerGauge.split('²')[0]) && page2.includes(E.DEFAULT_RULES.commGauge), true);
+}
+
+{
+  const input = { name: 'Measured Rack', drawing_no: 'DWG-1', revision: 'A', underlay: { kind: 'image', src: 'data:image/png;base64,iVBORw0KGgo=' }, config: { rules: E.DEFAULT_RULES } };
+  const model = portsApi.pictureVisioModel(input, measuredCal, fullWires);
+  const lines = model.primitives.filter(p => p.type === 'line');
+  const scale = model.underlay.w / measuredCal.imgW;
+  const firstWire = fullWires.find(s => s.kind === 'power');
+  ok('Visio overlay uses one uniform transform for picture and measured ports',
+    Math.abs(model.underlay.h / measuredCal.imgH - scale) < 1e-10 &&
+    Math.abs(lines[0].x1 - (model.underlay.x + firstWire.pts[0].x * scale)) < 1e-10 &&
+    Math.abs(lines[0].y2 - (model.underlay.y + firstWire.pts[1].y * scale)) < 1e-10);
+  eq('Visio draft emits one editable line for each marked connection', lines.length, fullWires.filter(s => s.kind !== 'label').length);
+  const parts = vsdxParts(E.vsdxExport([], input, model));
+  const draftPage = parts.get('visio/pages/page1.xml') || '';
+  ok('Visio draft contains editable wire endpoints and embedded rack and logo',
+    (draftPage.match(/N="BeginX"/g) || []).length === lines.length &&
+    parts.has('visio/media/image1.png') && parts.has('visio/media/image2.png'));
+  ok('Visio draft is clearly marked for engineering review',
+    draftPage.includes('DRAFT - verify terminals') && (parts.get('visio/pages/page2.xml') || '').includes('only marked terminal links'));
 }
 
 /* ============================================================

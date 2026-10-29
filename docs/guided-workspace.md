@@ -18,7 +18,14 @@ module S to the next module N; SSC POS and S connect to the first module,
 SSC NEG and N to the last module, and SSC B+/B− to matching junction-box
 terminals. Links for SSCs without all eight marked terminal positions are omitted.
 The preview joins marked endpoints by straight lines; it does not yet reproduce
-the routed paths, bends, cable channels, or an editable Visio master drawing.
+the routed paths, bends, cable channels, or the original editable Visio master.
+
+Engineers can change grid, component and port markings in WireFlow and generate
+again. **Download editable draft (Visio)** embeds the rack as a picture and writes
+each generated wire as an individual native Visio line, with the AYK logo in the
+title block. The background picture is not an editable CAD drawing. Edits made
+in Visio are not synchronized back to WireFlow. The Visio file and the preview
+are draft outputs; review terminal positions, assignments and routes.
 
 The grid assumes straight, evenly spaced rows and columns (maximum 12 by 24).
 The automatic assignment uses the nearest SSC subject to the existing configured

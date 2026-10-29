@@ -43,6 +43,39 @@ function pictureModuleWiring(groups, cal, ports, devicePorts) {
   return segments;
 }
 
+/* Create a draft A3 picture sheet for the existing Visio package writer.
+   The picture and wires share the same aspect-preserving transform. */
+function pictureVisioModel(project, cal, segments) {
+  if (!cal || !cal.ok || !(cal.imgW > 0) || !(cal.imgH > 0) || !project.underlay || !/^data:image\/(png|jpeg|jpg|svg\+xml);base64,/i.test(project.underlay.src || '')) {
+    throw new Error('An imported PNG, JPG or SVG rack picture and calibrated grid are required.');
+  }
+  const scale = Math.min(1510 / cal.imgW, 740 / cal.imgH);
+  const rect = { x: 85 + (1510 - cal.imgW * scale) / 2, y: 145 + (740 - cal.imgH * scale) / 2, w: cal.imgW * scale, h: cal.imgH * scale };
+  const primitives = [
+    { type: 'rect', layer: 'FRAME', x: 40, y: 40, w: 1600, h: 1108, width: 1.5, fill: 'none' },
+    { type: 'text', layer: 'TEXT', x: 80, y: 88, size: 25, bold: true, text: 'Wiring Diagram - ' + (project.name || 'Rack') },
+    { type: 'text', layer: 'TEXT', x: 80, y: 118, size: 16, bold: true, text: 'DRAFT - verify terminals, assignments and routes' },
+    { type: 'rect', layer: 'TITLE', x: 1078, y: 990, w: 560, h: 156, width: 1.2, fill: 'none' },
+    { type: 'text', layer: 'TEXT', x: 1092, y: 1013, size: 13, bold: true, text: 'AYK POWER LTD.' },
+    { type: 'text', layer: 'TEXT', x: 1092, y: 1046, size: 12, text: 'DRAWING: ' + (project.name || 'Rack') },
+    { type: 'text', layer: 'TEXT', x: 1092, y: 1076, size: 12, text: 'NUMBER: ' + (project.drawing_no || 'Not specified') + '   REV: ' + (project.revision || 'A') },
+    { type: 'text', layer: 'TEXT', x: 1092, y: 1110, size: 12, text: 'DRAFT - ENGINEERING REVIEW REQUIRED' },
+  ];
+  for (const segment of segments || []) {
+    if (segment.kind === 'label') {
+      const p = segment.pts[0];
+      primitives.push({ type: 'text', layer: 'NUMBER', x: rect.x + p.x * scale, y: rect.y + p.y * scale, size: 12, anchor: 'middle', bold: true, text: (segment.groupLabel || '') + '-M' + segment.m });
+      continue;
+    }
+    const layer = segment.kind === 'power' || segment.kind === 'sscp' ? 'POWER' : 'COMM';
+    for (let i = 1; i < segment.pts.length; i++) {
+      const a = segment.pts[i - 1], b = segment.pts[i];
+      primitives.push({ type: 'line', layer, x1: rect.x + a.x * scale, y1: rect.y + a.y * scale, x2: rect.x + b.x * scale, y2: rect.y + b.y * scale, width: 1.2 });
+    }
+  }
+  return { primitives, underlay: { kind: 'image', src: project.underlay.src, ...rect }, draftPicture: true };
+}
+
 /* Picture-first rack input for the existing deterministic wiring engine. */
 async function tabSimpleWiring(el, project, ctx) {
   if (!project.underlay || project.underlay.kind !== 'image' || !project.underlay.src) {
@@ -114,7 +147,8 @@ async function tabSimpleWiring(el, project, ctx) {
       </div>
       <div class="card" style="margin-top:16px"><h3>3 · Generate wiring</h3>
         <p class="muted small">${rack ? Object.keys(st.devicePorts).filter(slot => rackIsModule(rack, slot) === false && rackDeviceCells(rack, 'ssc').includes(slot)).length : 0} of ${rack ? rackDeviceCells(rack, 'ssc').length : 0} SSCs have their ports marked. Unmarked SSC and junction-box links are omitted. Check assignments and routes; lines are direct previews, not approved cable routes.</p>
-        <div class="btn-row"><button class="btn btn-primary" id="simple-generate" ${!cal || !cal.ok || !modulePortsValid(st.ports) || st.deviceStep || st.portStep ? 'disabled' : ''}>Generate wiring</button>${st.generated ? `<button class="btn btn-ghost" id="simple-svg">Download draft wiring drawing (SVG)</button><button class="btn btn-ghost" id="simple-export">Print draft PDF</button>` : ''}</div>
+        <div class="btn-row"><button class="btn btn-primary" id="simple-generate" ${!cal || !cal.ok || !modulePortsValid(st.ports) || st.deviceStep || st.portStep ? 'disabled' : ''}>Generate wiring</button>${st.generated ? `<button class="btn btn-ghost" id="simple-visio">Download editable draft (Visio)</button><button class="btn btn-ghost" id="simple-svg">Download draft wiring drawing (SVG)</button><button class="btn btn-ghost" id="simple-export">Print draft PDF</button>` : ''}</div>
+        ${st.generated ? '<p class="muted small">You can change markings here and generate again. Visio edits are separate and do not update this saved project.</p>' : ''}
         <p id="simple-message" role="status">${esc(st.message)}</p>
         ${st.generated ? `<p class="${failed.length ? 'warn' : 'muted'}">${failed.length ? failed.length + ' checks need attention before release.' : 'All ' + checks.length + ' checks pass.'}</p>${failed.length ? '<ul>' + failed.map(check => '<li>' + esc(check.id + ': ' + check.detail) + '</li>').join('') + '</ul>' : ''}` : ''}
       </div>`;
@@ -190,6 +224,14 @@ async function tabSimpleWiring(el, project, ctx) {
       st.generated = true; st.message = 'Draft generated. Unmarked terminal links are omitted; review all assignments and routes.'; render();
     };
     el.querySelector('#simple-export')?.addEventListener('click', () => ctx.switchTab(9));
+    el.querySelector('#simple-visio')?.addEventListener('click', async () => {
+      try {
+        const wiring = pictureModuleWiring(layoutGroups(project), st.cal, st.ports, st.devicePorts);
+        const model = pictureVisioModel(project, st.cal, wiring);
+        const conns = await ctx.getNetlist();
+        download((project.name || 'wiring') + '-draft.vsdx', vsdxExport(conns, project, model), 'application/vnd.ms-visio.drawing.main+xml');
+      } catch (error) { toast('Visio export failed: ' + error.message, 'error'); }
+    });
     el.querySelector('#simple-svg')?.addEventListener('click', () => {
       const wiring = pictureModuleWiring(layoutGroups(project), st.cal, st.ports, st.devicePorts);
       const svgOut = fvSvg(st.cal, { src: project.underlay.src }, wiring, { noGrid: true, sscLabels: true });
