@@ -1,18 +1,70 @@
 /* ============================================================
  * WireFlow — application shell
- * Hash router: #/ landing · #/login · #/app dashboard ·
+ * Hash router: #/ and #/app dashboard ·
  * #/project/<id> workspace · #/integrations APS settings
  * ============================================================ */
 
-const cloud = WorkBuddyCloud.createWorkBuddyCloud({
-  endpoint: PUBLIC_CONFIG.endpoint,
-  oauthRelayBaseUrl: PUBLIC_CONFIG.oauthRelayBaseUrl,
-  publishableKey: PUBLIC_CONFIG.publishableKey,
-});
-
 const app = document.getElementById('app');
-let session = null;
-let currentUser = null;
+
+/* Internal AYK edition: projects and large rack-picture blobs live in the
+   browser's IndexedDB. No account, OTP or remote storage is required. */
+const LOCAL_DB_NAME = 'ayk-wireflow';
+const LOCAL_DB_VERSION = 1;
+let localDbPromise = null;
+
+function localDb() {
+  if (localDbPromise) return localDbPromise;
+  localDbPromise = new Promise((resolve, reject) => {
+    const req = indexedDB.open(LOCAL_DB_NAME, LOCAL_DB_VERSION);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains('projects')) db.createObjectStore('projects', { keyPath: 'id', autoIncrement: true });
+      if (!db.objectStoreNames.contains('underlays')) db.createObjectStore('underlays', { keyPath: 'projectId' });
+      if (!db.objectStoreNames.contains('files')) {
+        const files = db.createObjectStore('files', { keyPath: 'id', autoIncrement: true });
+        files.createIndex('projectId', 'project_id');
+      }
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error || new Error('Could not open local project storage.'));
+  });
+  return localDbPromise;
+}
+
+async function localStore(name, mode, work) {
+  const db = await localDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(name, mode);
+    const store = tx.objectStore(name);
+    let result;
+    try { result = work(store); } catch (error) { reject(error); return; }
+    tx.oncomplete = () => resolve(result && result.result !== undefined ? result.result : result);
+    tx.onerror = () => reject(tx.error || new Error('Local storage transaction failed.'));
+    tx.onabort = () => reject(tx.error || new Error('Local storage transaction was cancelled.'));
+  });
+}
+
+async function localProjects() {
+  const rows = await localStore('projects', 'readonly', store => store.getAll());
+  return (rows || []).sort((a, b) => String(b.updated_at || b.created_at).localeCompare(String(a.updated_at || a.created_at)));
+}
+async function localProject(id) { return localStore('projects', 'readonly', store => store.get(Number(id))); }
+async function localPutProject(project) { return localStore('projects', 'readwrite', store => store.put(project)); }
+async function localAddProject(project) { return localStore('projects', 'readwrite', store => store.add(project)); }
+async function localPutUnderlay(projectId, blob, kind) {
+  return localStore('underlays', 'readwrite', store => store.put({ projectId: Number(projectId), blob, kind }));
+}
+async function localGetUnderlay(projectId) { return localStore('underlays', 'readonly', store => store.get(Number(projectId))); }
+async function localAddFile(record) { return localStore('files', 'readwrite', store => store.add(record)); }
+async function localProjectFiles(projectId) {
+  const db = await localDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('files', 'readonly');
+    const req = tx.objectStore('files').index('projectId').getAll(Number(projectId));
+    req.onsuccess = () => resolve((req.result || []).sort((a, b) => String(b.created_at).localeCompare(String(a.created_at))));
+    req.onerror = () => reject(req.error);
+  });
+}
 
 /* The guided workspace is intentionally data-only: every step points at an
    existing expert view and completion is derived from saved project state. */
@@ -163,7 +215,6 @@ async function uploadRackBlob(path, blob, contentType, onStatus) {
 async function importRackDrawing(file, project, ctx, opts) {
   opts = opts || {};
   const status = typeof opts.onStatus === 'function' ? opts.onStatus : function () {};
-  if (!session) throw new Error('Sign in required');
   if (/\.dwg$/i.test(file.name)) {
     throw new Error('Binary DWG cannot be read in the browser. Save it as DXF, or choose the Visio VSDX version so WireFlow can extract its embedded rack picture.');
   }
@@ -189,9 +240,9 @@ async function importRackDrawing(file, project, ctx, opts) {
     };
     status('Uploading rack picture from the Visio file…');
   }
-  const safeName = /\.vsdx$/i.test(file.name) ? file.name.replace(/\.vsdx$/i, '') + '.png' : file.name;
-  const path = cloud.storage.userPath(session.user.id, `underlay/${Date.now()}_${safeName}`);
-  await uploadRackBlob(path, blob, contentType, status);
+  status('Saving rack picture on this device…');
+  await ctx.saveUnderlayBlob(blob, kind);
+  const path = `local-underlay:${project.id}`;
   const ok = await ctx.saveProject({ underlay_url: path, underlay_kind: kind, ...fit });
   if (!ok) throw new Error('Could not save the underlay reference');
   await ctx.loadUnderlay();
@@ -199,191 +250,23 @@ async function importRackDrawing(file, project, ctx, opts) {
   return { kind: kind, fit: fit, quality: quality };
 }
 
-/* ---------------- auth gate ---------------- */
-async function initAuth() {
-  const { data } = await cloud.auth.getSession();
-  session = data || null;
-  if (session) {
-    try { const u = await cloud.auth.getUser(); currentUser = u.data?.user || session.user; }
-    catch { currentUser = session.user; }
-  }
-}
-
-function requireAuth() {
-  if (!session) { location.hash = '#/login'; return false; }
-  return true;
-}
-
 /* ---------------- router ---------------- */
 window.addEventListener('hashchange', route);
 
 async function route() {
   const h = location.hash || '#/';
-  if (!session) { const { data } = await cloud.auth.getSession(); session = data || null; if (session) { try { const u = await cloud.auth.getUser(); currentUser = u.data?.user || session.user; } catch {} } }
-
-  if (h.startsWith('#/project/')) { if (requireAuth()) renderProjectPage(+h.split('/')[2]); return; }
+  if (h.startsWith('#/project/')) { renderProjectPage(+h.split('/')[2]); return; }
   switch (h) {
-    case '#/': renderLanding(); return;
-    case '#/login': renderLogin(); return;
-    case '#/app': requireAuth() ? renderDashboard() : null; return;
-    case '#/integrations': requireAuth() ? renderIntegrations() : null; return;
-    default: renderLanding();
+    case '#/':
+    case '#/app': renderDashboard(); return;
+    case '#/login': location.replace('#/app'); return;
+    case '#/integrations': renderIntegrations(); return;
+    default: renderDashboard();
   }
-}
-
-/* ================= LANDING PAGE ================= */
-function renderLanding() {
-  app.innerHTML = `
-  <header class="landing-nav">
-    <div class="nav-inner">
-      <div class="logo"><svg width="26" height="26" viewBox="0 0 24 24" fill="none"><path d="M3 7h6l2-4 2 12 2-4h6" stroke="#f97316" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/><rect x="2" y="2" width="20" height="20" rx="5" stroke="#1e3a5f" stroke-width="1.6"/></svg> AYK WireFlow</div>
-      <nav><a href="#features">Features</a><a href="#workflow">Workflow</a><a href="#rules">Rule engine</a><a href="#pricing">Pricing</a></nav>
-      <div class="nav-cta">
-        ${session ? `<a class="btn btn-ghost" href="#/app">Open app</a>` : `<a class="btn btn-ghost" href="#/login">Sign in</a><a class="btn btn-primary" href="#/login">Start free</a>`}
-      </div>
-    </div>
-  </header>
-
-  <section class="hero">
-    <div class="hero-text">
-      <div class="hero-badge">Deterministic wiring automation · Marine battery racks</div>
-      <h1>Ship-ready wiring diagrams.<br><span class="accent">Generated, not drawn.</span></h1>
-      <p>AYK WireFlow turns your rack configuration into complete power &amp; communication wiring diagrams, cable schedules and BOMs — governed by your own approved engineering rules, and pushed straight into AutoCAD through the Autodesk Platform Services.</p>
-      <div class="hero-actions">
-        <a class="btn btn-primary btn-lg" href="#/login">Create your account</a>
-        <a class="btn btn-ghost btn-lg" href="#workflow">See how it works</a>
-      </div>
-      <div class="hero-meta">Rule IDs R01–R12 · Validations V01–V12 · DWG in, DWG out</div>
-    </div>
-    <div class="hero-visual" id="hero-visual"></div>
-  </section>
-
-  <section class="strip">
-    <div class="strip-item"><b>100%</b><span>deterministic generation</span></div>
-    <div class="strip-item"><b>R01–R12</b><span>approved engineering rules encoded</span></div>
-    <div class="strip-item"><b>V01–V12</b><span>mandatory validation gate</span></div>
-    <div class="strip-item"><b>APS</b><span>native Autodesk cloud pipeline</span></div>
-  </section>
-
-  <section id="features" class="features">
-    <h2>Everything between rack configuration and released drawing</h2>
-    <div class="feature-grid">
-      <div class="feature-card"><div class="f-ico">⚙</div><h3>Rule-driven netlists</h3><p>Normal string power and communication sequences (SSC+ → M1+ … M24− → SSC−, daisy-chain S/N) generated from the approved connection templates — no manual netlist entry.</p></div>
-      <div class="feature-card"><div class="f-ico">📐</div><h3>Cable length model</h3><p>Cross-rack cables computed from three route segments plus installation allowance, with the power deduction and rounding rules applied exactly as engineering defined them.</p></div>
-      <div class="feature-card"><div class="f-ico">🔢</div><h3>Physical module numbering</h3><p>M1…MN is chosen against the real rack: the chain starts and ends next to the SSC and skips the ACDP / MSM slots. Automatic mode scores serpentine, raster and optimised paths against the harness catalogue; custom mode lets the engineer click the order straight onto the imported rack drawing.</p></div>
-      <div class="feature-card"><div class="f-ico">✅</div><h3>Validation gate</h3><p>Twelve mandatory checks — polarity, communication chain, harness compatibility, quantity reconciliation, exception approvals — block release on any unresolved item.</p></div>
-      <div class="feature-card"><div class="f-ico">🗂</div><h3>Cable schedule &amp; BOM</h3><p>Every drawn cable appears exactly once in the schedule with harness part number, manufactured length and quantity. One-click CSV export.</p></div>
-      <div class="feature-card"><div class="f-ico">🧩</div><h3>Autodesk integration</h3><p>Upload DWG references, translate and inspect them in the embedded Autodesk Viewer, and export DXF / AutoCAD scripts that feed Design Automation.</p></div>
-      <div class="feature-card"><div class="f-ico">👥</div><h3>Team accounts</h3><p>Per-user workspaces with server-side data isolation. Projects, rule sets and drawing references stay private to each account.</p></div>
-    </div>
-  </section>
-
-  <section id="workflow" class="workflow">
-    <h2>From configuration to drawing in eleven governed steps</h2>
-    <div class="steps">
-      ${['Load approved master data','Place devices from rack template','Generate power & comm netlists','Resolve every endpoint to a terminal','Choose route pattern, compute routed distance','Apply allowances, select harness P/N','Draw power & comm on separate layers','Generate labels, schedule, BOM, notes','Run electrical & routing validations','Block release on unresolved rules','Export DWG / DXF through Autodesk'].map((t,i)=>`
-      <div class="step"><div class="step-n">${i+1}</div><div>${t}</div></div>`).join('')}
-    </div>
-  </section>
-
-  <section id="rules" class="rules-sec">
-    <h2>Your engineering rules, encoded — not remembered</h2>
-    <p class="sec-sub">The rule table ships pre-loaded with the approved baseline. Every value stays editable under engineer control.</p>
-    <div class="rules-table-wrap"><table class="rules-table">
-      <tr><th>Rule</th><th>Encoding</th></tr>
-      <tr><td>R02 · R03</td><td>Adjacent power Mx− → Mx+1+ · communication Mx S → Mx+1 N</td></tr>
-      <tr><td>R04 · R05 · R06</td><td>SSC endpoints: String+ → M1+, String− → M24−, S → M1 N, N → M24 S</td></tr>
-      <tr><td>R07 · R08</td><td>Standard jumpers 100 mm AB power · 450 mm communication</td></tr>
-      <tr><td>R09 · R10</td><td>Longer local jumpers 445 mm power · 650 mm communication</td></tr>
-      <tr><td>R11</td><td>Two bus power cables per SSC to the junction box</td></tr>
-      <tr><td>R12</td><td>130 mm power deduction — configurable per cable family</td></tr>
-      <tr><td>Length model</td><td>source route + over-top span + destination route + allowance</td></tr>
-    </table></div>
-  </section>
-
-  <section id="pricing" class="pricing">
-    <h2>Simple pricing for engineering teams</h2>
-    <div class="price-grid">
-      <div class="price-card"><h3>Engineer</h3><div class="price">Free</div><ul><li>1 workspace</li><li>Unlimited projects</li><li>Full rule engine & validations</li><li>CSV / DXF / SCR export</li></ul><a class="btn btn-ghost" href="#/login">Start free</a></div>
-      <div class="price-card featured"><div class="pop">Popular</div><h3>Team</h3><div class="price">$49<i>/user/mo</i></div><ul><li>Everything in Engineer</li><li>Autodesk APS pipeline</li><li>DWG upload & viewer</li><li>Priority validation support</li></ul><a class="btn btn-primary" href="#/login">Start free trial</a></div>
-      <div class="price-card"><h3>Fleet</h3><div class="price">Custom</div><ul><li>SSO & audit trail</li><li>Private APS account linking</li><li>Golden-project acceptance testing</li><li>On-prem export pipeline</li></ul><a class="btn btn-ghost" href="#/login">Contact us</a></div>
-    </div>
-  </section>
-
-  <footer class="footer">
-    <div>© 2026 AYK WireFlow · Wiring diagram automation for marine battery systems</div>
-    <div class="footer-links"><a href="#features">Features</a><a href="#pricing">Pricing</a><a href="#/login">Sign in</a></div>
-  </footer>`;
-
-  // hero visual: mini rack diagram
-  const demo = { config: { rules: { ...DEFAULT_RULES, modulesPerString: 12, strings: 1 } } };
-  document.getElementById('hero-visual').innerHTML = renderDiagramSVG(demo, []);
-}
-
-/* ================= LOGIN (Email OTP) ================= */
-let pendingOtp = null; // { email, verificationId, isExistingUser }
-
-function renderLogin(mode = 'landing') {
-  app.innerHTML = `
-  <div class="auth-wrap">
-    <div class="auth-card">
-      <div class="logo big"><svg width="30" height="30" viewBox="0 0 24 24" fill="none"><path d="M3 7h6l2-4 2 12 2-4h6" stroke="#f97316" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/><rect x="2" y="2" width="20" height="20" rx="5" stroke="#1e3a5f" stroke-width="1.6"/></svg> AYK WireFlow</div>
-      <h2>Sign in or create an account</h2>
-      <p class="auth-sub">We'll email you a one-time verification code. No password needed.</p>
-      <div class="field"><label>Work email</label><input id="auth-email" type="email" placeholder="you@company.com" autocomplete="email"></div>
-      <div class="field" id="otp-field" style="display:none"><label>Verification code</label><input id="auth-otp" inputmode="numeric" placeholder="6-digit code" maxlength="8"></div>
-      <div class="auth-err" id="auth-err"></div>
-      <button class="btn btn-primary btn-block" id="btn-send">Email me a code</button>
-      <button class="btn btn-ghost btn-block" id="btn-verify" style="display:none">Verify & sign in</button>
-      <a class="auth-back" href="#/">← Back to site</a>
-    </div>
-  </div>`;
-
-  const emailEl = document.getElementById('auth-email');
-  const otpEl = document.getElementById('auth-otp');
-  const errEl = document.getElementById('auth-err');
-  const btnSend = document.getElementById('btn-send');
-  const btnVerify = document.getElementById('btn-verify');
-
-  btnSend.onclick = async () => {
-    const email = emailEl.value.trim();
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { errEl.textContent = 'Enter a valid email address.'; return; }
-    errEl.textContent = ''; btnSend.disabled = true; btnSend.textContent = 'Sending…';
-    const sent = await cloud.auth.sendOtp({ email });
-    btnSend.disabled = false; btnSend.textContent = 'Email me a code';
-    if (sent.error) { errEl.textContent = sent.error.message || 'Could not send the code.'; return; }
-    pendingOtp = { email, verificationId: sent.data.verificationId, isExistingUser: sent.data.isExistingUser };
-    document.getElementById('otp-field').style.display = '';
-    btnVerify.style.display = '';
-    btnSend.textContent = 'Resend code';
-    otpEl.focus();
-    toast('Verification code sent — check your inbox.');
-  };
-
-  btnVerify.onclick = async () => {
-    if (!pendingOtp || pendingOtp.email !== emailEl.value.trim()) { errEl.textContent = 'Get a code for this email first.'; return; }
-    const token = otpEl.value.trim();
-    if (!token) { errEl.textContent = 'Enter the verification code.'; return; }
-    errEl.textContent = ''; btnVerify.disabled = true; btnVerify.textContent = 'Verifying…';
-    const done = await cloud.auth.verifyOtp({
-      email: pendingOtp.email, verificationId: pendingOtp.verificationId,
-      isExistingUser: pendingOtp.isExistingUser, token,
-    });
-    btnVerify.disabled = false; btnVerify.textContent = 'Verify & sign in';
-    if (done.error) { errEl.textContent = done.error.message || 'Verification failed.'; return; }
-    pendingOtp = null;
-    session = done.data.session || session;
-    const u = await cloud.auth.getUser(); currentUser = u.data?.user || session?.user;
-    toast('Signed in.');
-    location.hash = '#/app';
-  };
-  otpEl.addEventListener('keydown', e => { if (e.key === 'Enter') btnVerify.click(); });
-  emailEl.addEventListener('keydown', e => { if (e.key === 'Enter') btnSend.click(); });
 }
 
 /* ================= APP SHELL ================= */
 function shell(content, active) {
-  const name = currentUser?.name || currentUser?.email || 'Account';
   app.innerHTML = `
   <div class="shell">
     <aside class="side">
@@ -393,24 +276,20 @@ function shell(content, active) {
         <a href="#/integrations" class="${active === 'int' ? 'on' : ''}">⚡ Autodesk APS</a>
       </nav>
       <div class="side-foot">
-        <div class="side-user" title="${esc(name)}">${esc(name)}</div>
-        <button class="btn btn-ghost btn-sm" id="btn-signout">Sign out</button>
+        <div class="side-user">AYK Energy · Internal</div>
+        <div class="muted small">Projects stay on this device.</div>
       </div>
     </aside>
     <main class="main">${content}</main>
   </div>`;
-  document.getElementById('btn-signout').onclick = async () => {
-    await cloud.auth.signOut();
-    session = null; currentUser = null;
-    location.hash = '#/';
-  };
 }
 
 /* ================= DASHBOARD ================= */
 async function renderDashboard() {
   shell(`<div class="loading">Loading projects…</div>`, 'dash');
-  const { data: projects, error } = await cloud.database.from('projects').select('*').order('created_at', { ascending: false });
-  if (error) { shell(`<div class="empty">Could not load projects: ${esc(error.message)}</div>`, 'dash'); return; }
+  let projects;
+  try { projects = await localProjects(); }
+  catch (error) { shell(`<div class="empty">Could not open local projects: ${esc(error.message)}</div>`, 'dash'); return; }
 
   shell(`
     <div class="page-head">
@@ -470,23 +349,24 @@ function showNewProjectModal() {
       product_family: modal.querySelector('#np-fam').value,
       modules_per_string: +modal.querySelector('#np-mods').value || 24,
       config: { rules, exceptions: [], spans: rules.overTopSpans || [] },
-      owner_name: currentUser?.name || null,
+      status: 'draft', revision: 'A',
+      created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
     };
-    const created = await unwrap(cloud.database.from('projects').insert(project).select(), 'Create project');
+    project.id = await localAddProject(project);
     modal.remove();
     toast('Project created.');
-    location.hash = `#/project/${created[0].id}`;
+    location.hash = `#/project/${project.id}`;
   };
 }
 
 /* ================= PROJECT WORKSPACE ================= */
 async function renderProjectPage(id) {
   shell(`<div class="loading">Loading project…</div>`, 'dash');
-  const { data: rows, error } = await cloud.database.from('projects').select('*').eq('id', id);
-  if (error || !rows || !rows.length) {
-    shell(`<div class="empty"><h3>Project not found</h3><p>${esc(error?.message || 'It may belong to another account.')}</p><a class="btn btn-primary" href="#/app">Back to projects</a></div>`, 'dash'); return;
+  let project;
+  try { project = await localProject(id); } catch (error) {}
+  if (!project) {
+    shell(`<div class="empty"><h3>Project not found</h3><p>This project is not stored in this browser.</p><a class="btn btn-primary" href="#/app">Back to projects</a></div>`, 'dash'); return;
   }
-  const project = rows[0];
   const cfg = project.config || { rules: { ...DEFAULT_RULES }, exceptions: [], spans: [] };
   let netlist = null, validations = null;
 
@@ -514,10 +394,14 @@ async function renderProjectPage(id) {
   const views = [tabConfig, tabNumbering, tabNetlist, tabExceptions, tabValidation, tabSchedule, tabDiagram, tabDrawings, tabWireValidate, tabExport];
 
   async function saveProject(patch) {
-    const { data, error } = await cloud.database.from('projects').update({ ...patch, updated_at: new Date().toISOString() }).eq('id', id).select();
-    if (error || !data || !data.length) { toast('Save failed — the project may not be yours.', 'error'); return false; }
-    Object.assign(project, data[0]);
-    return true;
+    try {
+      Object.assign(project, patch, { updated_at: new Date().toISOString() });
+      await localPutProject(project);
+      return true;
+    } catch (error) { toast('Save failed: ' + error.message, 'error'); return false; }
+  }
+  async function saveUnderlayBlob(blob, kind) {
+    await localPutUnderlay(id, blob, kind);
   }
 
   async function switchTab(i) {
@@ -526,7 +410,7 @@ async function renderProjectPage(id) {
     document.getElementById('advanced').open = true;
     document.querySelectorAll('.tab').forEach(t => t.classList.toggle('on', +t.dataset.i === i));
     body.innerHTML = `<div class="loading">…</div>`;
-    await views[i](body, project, { saveProject, getNetlist, getValidations, loadUnderlay, switchTab });
+    await views[i](body, project, { saveProject, saveUnderlayBlob, getNetlist, getValidations, loadUnderlay, switchTab });
   }
   function stepIndex(step) { return tabs.indexOf(step.view); }
   async function renderWorkspace() {
@@ -583,7 +467,7 @@ async function renderProjectPage(id) {
       result.innerHTML = `<div class="import-progress"><span class="import-spinner"></span><span id="workspace-import-status">Reading ${esc(file.name)}…</span></div>`;
       const status = result.querySelector('#workspace-import-status');
       try {
-        const imported = await importRackDrawing(file, project, { saveProject, loadUnderlay }, {
+        const imported = await importRackDrawing(file, project, { saveProject, saveUnderlayBlob, loadUnderlay }, {
           onStatus: message => { status.textContent = message; },
         });
         let report = '';
@@ -631,25 +515,21 @@ async function renderProjectPage(id) {
     project.underlay = null;
     if (!project.underlay_url) return;
     try {
-      const { data, error } = await cloud.storage.createSignedUrl(project.underlay_url, 600);
-      if (error || !data) return;
-      const url = data.url || data;
-      const kind = project.underlay_kind || 'image';
+      const saved = await localGetUnderlay(id);
+      if (!saved || !saved.blob) return;
+      const kind = saved.kind || project.underlay_kind || 'image';
       const fit = {
         x: project.underlay_x ?? 120, y: project.underlay_y ?? 280,
         w: project.underlay_w ?? 1000, h: project.underlay_h ?? 640,
       };
       if (kind === 'dxf') {
-        const res = await fetch(url);
-        const parsed = rackParseDxf(await res.text());
+        const parsed = rackParseDxf(await saved.blob.text());
         project.underlay = { kind: 'dxf', prims: rackFitDxf(parsed, fit) };
       } else {
-        const res = await fetch(url);
-        const blob = await res.blob();
         const src = await new Promise((ok, fail) => {
           const fr = new FileReader();
           fr.onload = () => ok(fr.result); fr.onerror = fail;
-          fr.readAsDataURL(blob);
+          fr.readAsDataURL(saved.blob);
         });
         project.underlay = { kind: 'image', src, ...fit };
       }
@@ -1184,10 +1064,8 @@ function tabNumbering(el, project, ctx) {
         cx.translate(cv.width / 2, cv.height / 2); cx.rotate(Math.PI);
         cx.drawImage(img, -cv.width / 2, -cv.height / 2);
         const blob = await new Promise((res, rej) => cv.toBlob((b) => b ? res(b) : rej(new Error('could not encode PNG')), 'image/png'));
-        if (!session) throw new Error('Sign in required to store the rotated picture');
-        const path = cloud.storage.userPath(session.user.id, `underlay/${Date.now()}_rot180.png`);
-        const up = await cloud.storage.upload(path, blob, { contentType: 'image/png' });
-        if (up.error) throw up.error;
+        await ctx.saveUnderlayBlob(blob, 'image');
+        const path = `local-underlay:${project.id}`;
         const fit = {
           underlay_x: project.underlay_x, underlay_y: project.underlay_y,
           underlay_w: project.underlay_w, underlay_h: project.underlay_h,
@@ -1541,8 +1419,7 @@ async function tabDiagram(el, project, ctx) {
 
   /* ---- offer a previously saved .vsdx ---- */
   try {
-    const { data: saved } = await cloud.database.from('project_files')
-      .select('*').eq('project_id', project.id).order('created_at', { ascending: false });
+    const saved = await localProjectFiles(project.id);
     const row = (saved || []).find((f) => /\.vsdx$/i.test(f.filename || ''));
     if (row) {
       st.savedRow = row;
@@ -1550,12 +1427,8 @@ async function tabDiagram(el, project, ctx) {
       wrap.innerHTML = `<button class="btn btn-ghost btn-sm">Load saved: ${esc(row.filename)}</button>`;
       wrap.firstChild.onclick = async () => {
         try {
-          $('#vsdx-status').textContent = 'Downloading saved file…';
-          const { data, error } = await cloud.storage.createSignedUrl(row.storage_path, 600);
-          if (error) throw error;
-          const res = await fetch(data.url || data);
-          if (!res.ok) throw new Error('download failed (' + res.status + ')');
-          await openBuffer(await res.arrayBuffer(), row.filename);
+          $('#vsdx-status').textContent = 'Opening saved file…';
+          await openBuffer(await row.blob.arrayBuffer(), row.filename);
         } catch (e) {
           $('#vsdx-status').textContent = '';
           toast('Could not load the saved Visio file (' + (e && e.message ? e.message : 'network error') +
@@ -1636,7 +1509,6 @@ async function tabDiagram(el, project, ctx) {
     if (!r || !r.foreigns || !r.foreigns.length) return;
     const status = $('#vsdx-status');
     try {
-      if (!session) throw new Error('Sign in required');
       status.textContent = 'Preparing wiring base…';
       const f = r.foreigns.reduce((a, b) => (a.w * a.h >= b.w * b.h ? a : b));
       /* The picture blob travels with the render record — no fetch needed.
@@ -1648,9 +1520,8 @@ async function tabDiagram(el, project, ctx) {
         catch (e1) { blob = vsdxHrefToBlob(f.href); }
       }
       if (!blob) throw new Error('The embedded rack picture could not be read from this page — re-open the .vsdx from disk and try again.');
-      const path = cloud.storage.userPath(session.user.id, `underlay/${Date.now()}_rack-from-visio.png`);
-      const up = await cloud.storage.upload(path, blob, { contentType: 'image/png' });
-      if (up.error) throw up.error;
+      await ctx.saveUnderlayBlob(blob, 'image');
+      const path = `local-underlay:${project.id}`;
       const U = 101.6;
       const page = st.doc.pages[st.page];
       const ok = await ctx.saveProject({
@@ -1675,15 +1546,11 @@ async function tabDiagram(el, project, ctx) {
     if (!st.file) return;
     const status = $('#vsdx-status');
     try {
-      if (!session) throw new Error('Sign in required');
-      status.textContent = 'Saving to project storage…';
-      const path = cloud.storage.userPath(session.user.id, `vsdx/${Date.now()}_${st.file.name}`);
-      const up = await cloud.storage.upload(path, st.file, { contentType: 'application/vnd.ms-visio.drawing.main+xml' });
-      if (up.error) throw up.error;
-      await unwrap(cloud.database.from('project_files').insert({
-        project_id: project.id, filename: st.file.name, storage_path: path,
-        size_bytes: st.file.size, aps_status: 'stored', owner_name: currentUser?.name || null,
-      }).select(), 'Save Visio file');
+      status.textContent = 'Saving on this device…';
+      await localAddFile({
+        project_id: project.id, filename: st.file.name, blob: st.file,
+        size_bytes: st.file.size, aps_status: 'stored', created_at: new Date().toISOString(),
+      });
       status.textContent += ' · saved ✓';
       toast('Visio file saved to the project.');
       $('#btn-vsdx-save').style.display = 'none';
@@ -1854,6 +1721,10 @@ async function tabExport(el, project, ctx) {
 
 /* ---- Tab 8: Drawings (DWG + Autodesk) ---- */
 async function tabDrawings(el, project, ctx) {
+  el.innerHTML = `<div class="empty"><h3>Autodesk APS is not connected</h3>
+    <p>This internal browser edition keeps project data on this device. Use the Diagram, DXF, SCR and VSDX export tools without a cloud account.</p>
+    <a class="btn btn-ghost" href="#/integrations">About optional APS integration</a></div>`;
+  return;
   el.innerHTML = `<div class="loading">Loading drawing files…</div>`;
   const { data: files, error } = await cloud.database.from('project_files').select('*').eq('project_id', project.id).order('created_at', { ascending: false });
   const { data: integRows } = await cloud.database.from('integrations').select('*').eq('owner_id', session.user.id).maybeSingle();
@@ -1958,6 +1829,11 @@ async function tabDrawings(el, project, ctx) {
 
 /* ================= INTEGRATIONS (APS) ================= */
 async function renderIntegrations() {
+  shell(`<div class="page-head"><div><h1>Autodesk APS</h1><p class="muted">Optional advanced integration</p></div></div>
+    <div class="empty"><h3>Cloud integration is disabled</h3>
+    <p>AYK WireFlow now runs as an internal, account-free browser tool. Projects, rack drawings and saved Visio files stay on this device. DXF, SCR, VSDX and PDF exports remain available from each project.</p>
+    <a class="btn btn-primary" href="#/app">Back to projects</a></div>`, 'int');
+  return;
   shell(`<div class="loading">…</div>`, 'int');
   const { data: rows } = await cloud.database.from('integrations').select('*').maybeSingle();
   const integ = rows;
@@ -2015,6 +1891,5 @@ async function renderIntegrations() {
 
 /* ================= BOOT ================= */
 (async function boot() {
-  await initAuth();
   await route();
 })();

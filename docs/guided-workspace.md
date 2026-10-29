@@ -32,8 +32,8 @@ cable schedule downloads continue to use their established exporters.
 
 ## Guided rack import
 
-The home-screen import button runs the same `importRackDrawing()` upload and
-save path used by Configuration. VSDX files continue through
+The home-screen import button runs the same `importRackDrawing()` local-save
+path used by Configuration. VSDX files continue through
 `underlayFromVsdxFile()`; that function selects the largest foreign picture and
 uses the blob carried by the render record. It does not fetch the foreign href.
 
@@ -43,12 +43,9 @@ picture-selection failures stay on the workspace as a user-facing error card,
 while technical details are logged to the browser console. Successful imports
 open Numbering automatically so calibration is the next visible task.
 
-Rack-picture storage first uses the established SDK upload. If that multipart
-request is interrupted before an HTTP response, the same in-memory picture blob
-is retried through the SDK's signed upload URL; the app never fetches the foreign
-picture href. If both routes fail, the workspace explains that extraction
-succeeded but project storage could not be reached, instead of exposing a raw
-`Failed to fetch` message.
+The same in-memory picture blob is written directly to IndexedDB; the app never
+fetches the foreign picture href. Projects and rack pictures therefore work on
+localhost and GitHub Pages without an account or cloud-storage origin allowlist.
 
 ## Wire, validate and deliver
 

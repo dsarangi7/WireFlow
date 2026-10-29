@@ -4,8 +4,9 @@ AYK WireFlow turns a marine battery rack configuration into complete power & com
 wiring diagrams, cable schedules and BOMs — governed by approved engineering rules and
 exported as native **Visio (.vsdx)**, **AutoCAD DXF/.scr**, **SVG** and **CSV**.
 
-Built as a SaaS app: landing page, per-user accounts (email OTP), and a deterministic
-rule engine implementing the Wiring Diagram Tool Engineering Rules (R01–R12, V01–V12).
+Built as an internal AYK Energy browser tool with device-local project storage and a
+deterministic rule engine implementing the Wiring Diagram Tool Engineering Rules
+(R01–R12, V01–V12). No account, login or payment flow is required.
 
 Live site: https://dsarangi7.github.io/WireFlow/
 
@@ -42,15 +43,15 @@ Live site: https://dsarangi7.github.io/WireFlow/
   project and flowing through the netlist, schedule, CSV, VSDX and JSON spec
 - **Autodesk Platform Services (optional)** — upload DWG references, translate via
   Model Derivative, inspect in the embedded APS Viewer (bring your own APS app credentials)
-- **Cloud backend** — WorkBuddy Cloud Service: end-user auth (email OTP), per-user data
-  isolation via RLS, file storage for DWG references
+- **Local project storage** — projects, rack pictures and saved Visio files are kept in
+  the browser's IndexedDB on the engineer's device
 
 ## Project structure
 
 ```
 index.html          SPA entry (landing, auth, dashboard, project workspace)
 styles.css          Full application styling
-js/config.js        Cloud service public config (endpoint + publishable key)
+js/config.js        Legacy WorkBuddy public config (not loaded by the internal edition)
 js/engine.js        Deterministic wiring engine + sheet layout + SVG/DXF/SCR renderers
 js/zip.js           Minimal store-method ZIP writer (for .vsdx packaging)
 js/vsdx.js          Visio .vsdx generator (OPC package, 14 layers, 1D wires, logo, underlay, Notes page)
@@ -70,7 +71,7 @@ docs/variable-ssc-layout.md  Variable rack layout: per-SSC chains, assignment, g
 docs/guided-workspace.md  Guided post-login workspace, progress derivation and Advanced access
 js/aps.js           Autodesk APS client (token, OSS upload, translate, viewer)
 js/app.js           Router, landing page, auth (email OTP), dashboard, workspace UI
-tests/drawing.test.js  329-assertion regression suite (node tests/drawing.test.js)
+tests/drawing.test.js  331-assertion regression suite (node tests/drawing.test.js)
 ```
 
 ## Running locally
@@ -82,9 +83,9 @@ python -m http.server 8080
 # open http://localhost:8080
 ```
 
-The cloud backend enforces an exact Origin match, so sign-in/data work when the app is
-served from its registered domain; locally you can still explore the landing page and the
-deterministic engine outputs (netlist → validation → exports all run client-side).
+The internal edition opens the Projects workspace immediately. Project data belongs to
+the browser profile and host origin in which it was created; clearing site data removes
+those local projects, so completed drawing packages should also be exported to files.
 
 ## Tests
 
@@ -103,10 +104,8 @@ and the front-view wiring (calibration, terminal anchors, hop geometry, px→she
 
 ## Security notes
 
-- No secrets in the repo: the publishable key is a public, origin-locked identifier;
-  APS client secrets are entered at runtime per user and stored in that user's private
-  database row — never committed.
-- All user data is isolated server-side with row-level security (`owner_id = auth.uid()`).
+- The internal edition makes no authentication or project-storage requests; data stays
+  in IndexedDB in the current browser profile.
 - CAD text outputs are sanitised to ASCII at the writer boundary (DXF R12/.scr are cp1252).
 
 ## Engineering rules encoded

@@ -417,11 +417,11 @@ eq('all engine/aps symbols used by app.js are defined', missingFns.join(',') || 
 // export button wiring + call sites: assert inside the owning function body so the
 // check cannot be satisfied by a comment or by a different function's call.
 const tabDiagramBody = fnBody(appSrc, 'tabDiagram');
-const renderLandingBody = fnBody(appSrc, 'renderLanding');
+const routeBody = fnBody(appSrc, 'route');
 ok('fnBody extracted tabDiagram()', !!tabDiagramBody, tabDiagramBody ? tabDiagramBody.length + ' chars' : 'not found');
-ok('fnBody extracted renderLanding()', !!renderLandingBody, renderLandingBody ? renderLandingBody.length + ' chars' : 'not found');
+ok('fnBody extracted internal route()', !!routeBody, routeBody ? routeBody.length + ' chars' : 'not found');
 const tabBody = tabDiagramBody || '';
-const heroBody = renderLandingBody || '';
+const internalRouteBody = routeBody || '';
 const sigChecks = [
   ['scheduleCSV(conns, project)', /scheduleCSV\(conns,\s*project\)/.test(appSrc)],
   ['dxfExport(conns, project)', /dxfExport\(conns,\s*project\)/.test(appSrc)],
@@ -429,7 +429,7 @@ const sigChecks = [
   ['Diagram tab fetches the netlist', /await ctx\.getNetlist\(\)/.test(tabBody)],
   ['Diagram tab passes that netlist to renderDiagramSVG', /renderDiagramSVG\(project,\s*conns\)/.test(tabBody)],
   ['Diagram tab no longer passes an empty array', !/renderDiagramSVG\(project,\s*\[\]\)/.test(tabBody)],
-  ['hero still passes an empty array', /renderDiagramSVG\(demo,\s*\[\]\)/.test(heroBody)],
+  ['root route opens the projects dashboard', /case '#\/'[\s\S]*renderDashboard\(\)/.test(internalRouteBody)],
 ];
 for (const [label, condValue] of sigChecks) ok('app.js call site: ' + label, condValue);
 
@@ -493,13 +493,16 @@ eq('VSDX quality verdict accepts the selected embedded picture',
   JSON.stringify({ ok: true, reason: 'The largest embedded picture is ready to use as the wiring base.' }));
 
 const importRackBody = fnBody(appSrc, 'importRackDrawing') || '';
-const uploadRackBody = fnBody(appSrc, 'uploadRackBlob') || '';
-ok('guided rack import uses the resilient storage helper',
-  /await uploadRackBlob\(path, blob, contentType, status\)/.test(importRackBody));
-ok('rack upload retries through a signed URL without refetching the picture href',
-  /createSignedUploadUrl/.test(uploadRackBody) && /uploadToSignedUrl/.test(uploadRackBody) && !/fetch\s*\(/.test(uploadRackBody));
-ok('rack upload transport failure is explained without a raw fetch error',
-  /rack picture was extracted, but the secure upload could not reach project storage/.test(uploadRackBody));
+ok('guided rack import stores the extracted blob locally',
+  /await ctx\.saveUnderlayBlob\(blob, kind\)/.test(importRackBody));
+ok('guided rack import no longer requires an authenticated session',
+  !/Sign in required/.test(importRackBody) && !/cloud\.storage/.test(importRackBody));
+ok('internal edition redirects the obsolete login route to the app',
+  /case '#\/login': location\.replace\('#\/app'\)/.test(internalRouteBody));
+ok('internal edition has no login renderer or OTP flow',
+  !/function renderLogin\b/.test(appSrc) && !/sendOtp|verifyOtp/.test(appSrc));
+ok('internal edition has no pricing or payment screen',
+  !/Simple pricing|Start free trial|\$49/.test(appSrc));
 
 /* ============================================================
  * 3. OUTPUT CORRECTNESS — SVG / DXF / SCR
