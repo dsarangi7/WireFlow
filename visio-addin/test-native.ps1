@@ -24,6 +24,16 @@ try {
     # The source drawing can carry OLE objects and external references.
     else { Write-Output 'Opening a copy of the supplied drawing.'; $doc = $app.Documents.OpenEx($copy, 1480) }
     $page = $doc.Pages.Item(1)
+    $marker=$page.DrawRectangle(1,1,2,2)
+    $position=[Ayk.WireFlow.VisioAddIn.MarkerCoordinates]::Read($marker,$page)
+    if ([math]::Abs($position.X-1.5) -gt 0.00001 -or [math]::Abs($position.Y-1.5) -gt 0.00001) { throw 'Top-level marker coordinates were incorrect.' }
+    $group=$marker.Group()
+    $child=$group.Shapes.Item(1)
+    $rejected=$false
+    try { [void][Ayk.WireFlow.VisioAddIn.MarkerCoordinates]::Read($child,$page) } catch { $rejected=$true }
+    if (!$rejected) { throw 'A nested marker was incorrectly accepted.' }
+    [void]$group.Delete()
+    Write-Output 'PASS: top-level marker coordinates and nested-marker guard.'
     if ($MouseEvents) {
         Write-Output 'Registering the mouse event sink.'
         $sink = New-Object Ayk.WireFlow.VisioAddIn.PageMouseSink

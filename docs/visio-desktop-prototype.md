@@ -15,7 +15,8 @@ be identified by this guard, and completeness across the drawing is not checked.
 In the prototype window the
 engineer selects a separate top-level Visio marker shape at each SSC, junction-box
 and module terminal; its PinX/PinY page coordinates are recorded in the open
-session. The engineer must mark SSC S/N, string NEG/POS, bus B−/B+, junction-box
+session. Markers inside groups or on another page are rejected because their
+coordinates are not directly comparable to the page. The engineer must mark SSC S/N, string NEG/POS, bus B−/B+, junction-box
 NEG/POS, then each M1…Mn S/N/NEG/POS. It then proposes the normal R02–R06 and
 R11 endpoint connections and adds red power and green communication lines to
 the active page. Marker shapes are not deleted. Generated lines are ordinary

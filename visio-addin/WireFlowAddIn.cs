@@ -42,6 +42,17 @@ namespace Ayk.WireFlow.VisioAddIn {
     }
 
     public sealed class Point { public double X; public double Y; public Point(double x, double y) { if (Double.IsNaN(x) || Double.IsInfinity(x) || Double.IsNaN(y) || Double.IsInfinity(y)) throw new ArgumentException("Invalid terminal coordinates."); X=x; Y=y; } }
+    public static class MarkerCoordinates {
+        public static Point Read(object selectedShape, object expectedPage) {
+            if(selectedShape==null || expectedPage==null) throw new InvalidOperationException("Select a marker on the active page.");
+            dynamic shape=selectedShape; dynamic page=expectedPage;
+            object shapePage=shape.ContainingPage;
+            if(shapePage==null || !Object.Equals(shapePage,expectedPage)) throw new InvalidOperationException("The selected marker belongs to another page.");
+            dynamic container=shape.ContainingShape;
+            if(container==null || (int)container.ID != (int)page.PageSheet.ID) throw new InvalidOperationException("Select a top-level marker, not a shape inside a group.");
+            return new Point((double)shape.CellsU["PinX"].ResultIU,(double)shape.CellsU["PinY"].ResultIU);
+        }
+    }
     public sealed class Segment { public string Network; public string From; public string To; public Point A; public Point B; public int Bank; public int Ssc; public List<Point> Waypoints; }
     public sealed class Crossing { public Segment First; public Segment Second; }
     public sealed class ExistingDrafts { public readonly List<Segment> Segments=new List<Segment>(); public readonly HashSet<string> Identities=new HashSet<string>(); public int Unreadable; }
@@ -475,9 +486,8 @@ namespace Ayk.WireFlow.VisioAddIn {
                 if (page != app.ActivePage) throw new InvalidOperationException("Return to the page on which marking started.");
                 dynamic selection=app.ActiveWindow.Selection;
                 if ((int)selection.Count != 1) throw new InvalidOperationException("Select exactly one terminal marker shape in Visio.");
-                dynamic shape=selection[1];
-                double x=shape.CellsU["PinX"].ResultIU; double y=shape.CellsU["PinY"].ResultIU;
-                plan.Set(prompts[next],x,y); next++; undo.Enabled=true;
+                object shape=selection[1]; var point=MarkerCoordinates.Read(shape,page);
+                plan.Set(prompts[next],point.X,point.Y); next++; undo.Enabled=true;
                 if (next == prompts.Count) { mark.Enabled=false; pick.Enabled=false; draw.Enabled=true; review.Enabled=true; PopulateRoutes(); status.Text="All terminal positions recorded. Add route waypoints if needed, then draw a draft for review."; }
                 else ShowPrompt();
             } catch (Exception ex) { status.Text="Could not record: "+ex.Message+"\nSelect one marker on the original page and try again."; }
@@ -499,7 +509,7 @@ namespace Ayk.WireFlow.VisioAddIn {
                 CheckChainInputs(); if(page != app.ActivePage) throw new InvalidOperationException("Return to the page on which marking started.");
                 var option=routeChoice.SelectedItem as RouteOption; if(option==null) throw new InvalidOperationException("Choose a connection first.");
                 dynamic selection=app.ActiveWindow.Selection; if((int)selection.Count!=1) throw new InvalidOperationException("Select one top-level route marker shape.");
-                dynamic shape=selection[1]; var point=new Point((double)shape.CellsU["PinX"].ResultIU,(double)shape.CellsU["PinY"].ResultIU);
+                object shape=selection[1]; var point=MarkerCoordinates.Read(shape,page);
                 List<Point> current; var points=plan.Routes.TryGetValue(DraftPlan.RouteKey(option.From,option.To),out current) ? new List<Point>(current) : new List<Point>();
                 points.Add(point); plan.SetRoute(option.From,option.To,points); ShowRoute();
             } catch(Exception ex) { routeStatus.Text="Could not add waypoint: "+ex.Message; }

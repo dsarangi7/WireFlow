@@ -14,6 +14,9 @@ public sealed class FakeShape {
 }
 public sealed class FakeMouseWindow { public object Page { get; set; } }
 public sealed class FakeMouseEvent { public int Button { get; set; } public double x { get; set; } public double y { get; set; } public FakeMouseWindow Window { get; set; } }
+public sealed class FakeId { public int ID { get; set; } }
+public sealed class FakeMarkerPage { public FakeId PageSheet { get; set; } }
+public sealed class FakeMarker { public object ContainingPage { get; set; } public FakeId ContainingShape { get; set; } public FakeCells CellsU=new FakeCells(); }
 public sealed class FakePage {
     public readonly List<FakeShape> Shapes = new List<FakeShape>();
     public int FailAt = -1; public int Polylines; public double[] LastPolyline;
@@ -48,6 +51,15 @@ public static class TestCore {
         mouse.Button=2; Check(!(bool)sink.VisEventProc(709,null,0,0,mouse,null) && captured==1,"right click does not capture or suppress default");
         mouse.Button=1; mouse.Window.Page=new object(); Check(!(bool)sink.VisEventProc(709,null,0,0,mouse,null) && captured==1,"click on another page remains untouched");
         Check(!(bool)sink.VisEventProc(710,null,0,0,mouse,null),"mouse move is not treated as a port click");
+        var markerPage=new FakeMarkerPage { PageSheet=new FakeId { ID=0 } };
+        var marker=new FakeMarker { ContainingPage=markerPage, ContainingShape=new FakeId { ID=0 } };
+        marker.CellsU["PinX"].ResultIU=1.25; marker.CellsU["PinY"].ResultIU=2.5;
+        var markerPoint=MarkerCoordinates.Read(marker,markerPage);
+        Check(markerPoint.X==1.25 && markerPoint.Y==2.5,"top-level marker coordinates are read on the expected page");
+        marker.ContainingShape.ID=8; bool nestedRejected=false; try { MarkerCoordinates.Read(marker,markerPage); } catch(InvalidOperationException) { nestedRejected=true; }
+        Check(nestedRejected,"nested group markers are rejected before parent-relative coordinates can be used");
+        marker.ContainingShape.ID=0; bool pageRejected=false; try { MarkerCoordinates.Read(marker,new FakeMarkerPage { PageSheet=new FakeId { ID=0 } }); } catch(InvalidOperationException) { pageRejected=true; }
+        Check(pageRejected,"markers on another page are rejected even when page-sheet IDs match");
         Check(DraftReview.Intersects(Line(0,0,2,2),Line(0,2,2,0)),"interior crossing is reported");
         Check(!DraftReview.Intersects(Line(0,0,1,1),Line(1,1,2,0)),"shared endpoints are not reported as crossing");
         Check(DraftReview.Intersects(Line(0,0,2,0),Line(1,0,1,1)),"endpoint touching another segment interior is reported");
