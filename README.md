@@ -23,7 +23,8 @@ and the limits of the grid and draft cable routing.
 
 - **Visio desktop prototype** — early 64-bit COM add-in source for marking
   selected terminal shapes, saving marks for the same drawing/page and drawing
-  editable draft wires. It is not installed or approved for release; see
+  editable draft wires, with a 2D warning for proposed line crossings. It is
+  not installed or approved for release; see
   [prototype status](docs/visio-desktop-prototype.md).
 - **Ordered bank marking** — declare MSM/SSC/module/junction-box/ACDP counts per
   bank, follow one large click command at a time, and preserve SSC ownership and

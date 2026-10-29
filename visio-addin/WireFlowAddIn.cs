@@ -43,6 +43,38 @@ namespace Ayk.WireFlow.VisioAddIn {
 
     public sealed class Point { public double X; public double Y; public Point(double x, double y) { if (Double.IsNaN(x) || Double.IsInfinity(x) || Double.IsNaN(y) || Double.IsInfinity(y)) throw new ArgumentException("Invalid terminal coordinates."); X=x; Y=y; } }
     public sealed class Segment { public string Network; public string From; public string To; public Point A; public Point B; }
+    public sealed class Crossing { public Segment First; public Segment Second; }
+    public static class DraftReview {
+        private static double Cross(double ax,double ay,double bx,double by) { return ax*by-ay*bx; }
+        private static bool Same(Point a, Point b, double e) { return Math.Abs(a.X-b.X)<=e && Math.Abs(a.Y-b.Y)<=e; }
+        public static bool Intersects(Segment a, Segment b) {
+            // This is only a two-dimensional line-overlap warning, in Visio's
+            // internal drawing units; it is not a physical clearance check.
+            double ux=a.B.X-a.A.X, uy=a.B.Y-a.A.Y, vx=b.B.X-b.A.X, vy=b.B.Y-b.A.Y;
+            double al=Math.Sqrt(ux*ux+uy*uy), bl=Math.Sqrt(vx*vx+vy*vy);
+            if (al==0 || bl==0) return false;
+            double e=1e-9*Math.Max(1,Math.Max(al,bl));
+            double wx=b.A.X-a.A.X, wy=b.A.Y-a.A.Y;
+            double denominator=Cross(ux,uy,vx,vy);
+            if (Math.Abs(denominator)<=e*Math.Max(al,bl)) {
+                if (Math.Abs(Cross(wx,wy,ux,uy))>e*al) return false;
+                // Collinear overlap is distinct from a single shared endpoint.
+                double t0=(wx*ux+wy*uy)/(al*al), t1=((b.B.X-a.A.X)*ux+(b.B.Y-a.A.Y)*uy)/(al*al);
+                return Math.Min(1,Math.Max(t0,t1))-Math.Max(0,Math.Min(t0,t1)) > e/al;
+            }
+            double t=Cross(wx,wy,vx,vy)/denominator, u=Cross(wx,wy,ux,uy)/denominator;
+            double tolA=e/al, tolB=e/bl;
+            if (t < -tolA || t > 1+tolA || u < -tolB || u > 1+tolB) return false;
+            if (Same(a.A,b.A,e) || Same(a.A,b.B,e) || Same(a.B,b.A,e) || Same(a.B,b.B,e)) return false;
+            return true;
+        }
+        public static List<Crossing> FindCrossings(IList<Segment> segments) {
+            var found=new List<Crossing>();
+            for(int i=0;i<segments.Count;i++) for(int j=i+1;j<segments.Count;j++)
+                if (Intersects(segments[i],segments[j])) found.Add(new Crossing { First=segments[i],Second=segments[j] });
+            return found;
+        }
+    }
     // Visio's AddAdvise accepts an IDispatch sink. Mouse coordinates arrive in
     // Visio internal drawing units; confirmation against real zoom/pan is pending.
     [ComVisible(true), Guid("F00478F4-2CB1-426E-BB77-0A873DDC81CD"), InterfaceType(ComInterfaceType.InterfaceIsIDispatch)]
@@ -329,8 +361,17 @@ namespace Ayk.WireFlow.VisioAddIn {
             try {
                 if (page != app.ActivePage) throw new InvalidOperationException("Return to the page on which marking started.");
                 CheckChainInputs();
+                var crossings=DraftReview.FindCrossings(plan.Build());
+                if (crossings.Count > 0) {
+                    var lines=new List<string>();
+                    for(int i=0;i<Math.Min(3,crossings.Count);i++) {
+                        var c=crossings[i]; lines.Add(c.First.From+" → "+c.First.To+" / "+c.Second.From+" → "+c.Second.To);
+                    }
+                    string warning=crossings.Count+" possible crossing or overlap(s) in the straight-line preview:\n"+String.Join("\n",lines.ToArray())+"\n\nThis is a visual warning, not a clearance or routing validation. Generate the draft for review anyway?";
+                    if (MessageBox.Show(this,warning,"Review draft crossings",MessageBoxButtons.YesNo,MessageBoxIcon.Warning) != DialogResult.Yes) { status.Text="Draft not drawn. Review the terminal marks and planned routes."; return; }
+                }
                 int n=DraftRenderer.Draw(app,page,plan); draw.Enabled=false; undo.Enabled=false;
-                status.Text=n+" draft wire shapes added. Review routes, endpoints, harnesses and approvals. Use Visio Undo to remove this draft.";
+                status.Text=n+" draft wire shapes added. "+crossings.Count+" possible crossing(s). Review routes, endpoints, harnesses and approvals. Use Visio Undo to remove this draft.";
             } catch (Exception ex) { status.Text="No complete draft was added: "+ex.Message; }
         }
     }

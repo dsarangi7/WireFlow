@@ -29,6 +29,7 @@ public sealed class FakeApp {
 }
 public static class TestCore {
     private static void Check(bool condition,string name) { if (!condition) throw new Exception(name); Console.WriteLine("PASS " + name); }
+    private static Segment Line(double x1,double y1,double x2,double y2) { return new Segment { A=new Point(x1,y1),B=new Point(x2,y2) }; }
     public static int Main() {
         var addin=new WireFlowAddIn();
         Check(addin.GetCustomUI("Microsoft.Visio.Document").Contains("onAction=\"OpenWorkspace\""),"ribbon advertises the workspace callback");
@@ -40,6 +41,13 @@ public static class TestCore {
         mouse.Button=2; Check(!(bool)sink.VisEventProc(709,null,0,0,mouse,null) && captured==1,"right click does not capture or suppress default");
         mouse.Button=1; mouse.Window.Page=new object(); Check(!(bool)sink.VisEventProc(709,null,0,0,mouse,null) && captured==1,"click on another page remains untouched");
         Check(!(bool)sink.VisEventProc(710,null,0,0,mouse,null),"mouse move is not treated as a port click");
+        Check(DraftReview.Intersects(Line(0,0,2,2),Line(0,2,2,0)),"interior crossing is reported");
+        Check(!DraftReview.Intersects(Line(0,0,1,1),Line(1,1,2,0)),"shared endpoints are not reported as crossing");
+        Check(DraftReview.Intersects(Line(0,0,2,0),Line(1,0,1,1)),"endpoint touching another segment interior is reported");
+        Check(DraftReview.Intersects(Line(0,0,2,0),Line(1,0,3,0)),"collinear overlapping lines are reported");
+        Check(!DraftReview.Intersects(Line(0,0,1,0),Line(1,0,2,0)),"collinear lines meeting at one endpoint are not reported");
+        Check(!DraftReview.Intersects(Line(0,0,1,0),Line(0,1,1,1)) && !DraftReview.Intersects(Line(0,0,1,0),Line(2,0,3,0)),"parallel and separated lines are not reported");
+        Check(DraftReview.FindCrossings(new [] {Line(0,0,2,2),Line(0,2,2,0),Line(3,3,4,4)}).Count==1,"crossing review counts each wire pair once");
         var plan=new DraftPlan(); plan.Modules=2;
         string[] names={"SSC.S","SSC.N","SSC.NEG","SSC.POS","SSC.B-","SSC.B+","JB.NEG","JB.POS","M1.S","M1.N","M1.NEG","M1.POS","M2.S","M2.N","M2.NEG","M2.POS"};
         for(int i=0;i<names.Length;i++) plan.Set(names[i],i+1,i+1);

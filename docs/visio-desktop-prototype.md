@@ -59,6 +59,15 @@ allowances, and harness approval decisions; these must not be inferred from a
 visual match. The engineer must verify every endpoint and route and approve
 the final drawing.
 
+Before drawing, the prototype checks pairs of proposed straight-line segments
+in the current chain for 2D intersections and overlaps. Shared endpoints are not
+counted as crossings; endpoint-to-interior contacts and overlapping collinear
+segments are counted. If any are found, the engineer sees a count and up to
+three pairs of terminal names and can cancel or generate the draft for review.
+The check does not inspect existing Visio shapes, other SSC chains, curves,
+actual clearances, channel separation or cable routing, and zero reported
+crossings is not evidence of a safe or approved installation.
+
 Build locally with `powershell -NoProfile -File visio-addin/build.ps1`. On a
 computer with Visio installed, `powershell -NoProfile -File
 visio-addin/test-native.ps1` copies the supplied golden file into the ignored
