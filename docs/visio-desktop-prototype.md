@@ -6,6 +6,11 @@ The source and assembly are not an approved, signed or installed AYK add-in.
 There is no add-in login URL. AYK IT must review deployment and access before
 installation on employee computers. No registry entries or user settings are
 modified by the build and test scripts.
+The assembly defaults to COM-invisible, exposing only its add-in and event-sink
+classes intentionally. `test-registration.ps1` generates a local registry preview
+and checks that internal model and helper classes are not exported; it does not
+modify the registry or demonstrate that Visio can load the add-in. The preview
+assembly is unsigned and is not a distribution package.
 
 The pilot accepts one SSC chain of 2–48 modules at a time. The engineer enters
 its bank and SSC numbers before marking. Before drawing, a top-level tagged draft

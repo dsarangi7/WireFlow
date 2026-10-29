@@ -9,6 +9,8 @@ using System.Windows.Forms;
 using System.IO;
 using System.Web.Script.Serialization;
 
+[assembly: ComVisible(false)]
+
 namespace Ayk.WireFlow.VisioAddIn {
     [ComVisible(true), Guid("B65AD801-ABAF-11D0-BB8B-00A0C90F2744"), InterfaceType(ComInterfaceType.InterfaceIsIDispatch)]
     public interface IDTExtensibility2 {
