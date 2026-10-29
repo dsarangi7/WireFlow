@@ -7,7 +7,9 @@ There is no add-in login URL. AYK IT must review deployment and access before
 installation on employee computers. No registry entries or user settings are
 modified by the build and test scripts.
 
-The pilot accepts one SSC chain of 2–48 modules. In the prototype window the
+The pilot accepts one SSC chain of 2–48 modules at a time. The engineer enters
+its bank and SSC numbers before marking; those identities are not automatically
+checked for duplicates or completeness across the drawing. In the prototype window the
 engineer selects a separate top-level Visio marker shape at each SSC, junction-box
 and module terminal; its PinX/PinY page coordinates are recorded in the open
 session. The engineer must mark SSC S/N, string NEG/POS, bus B−/B+, junction-box
@@ -17,16 +19,19 @@ the active page. Marker shapes are not deleted. Generated lines are ordinary
 editable Visio shapes in one undo scope. This pilot intentionally needs separate
 marker shapes because an embedded rack picture is not a set of terminal shapes.
 Each generated shape includes user-defined ShapeSheet cells recording its draft
-network, from-terminal, to-terminal and `DRAFT` status. Those cells are editable
+network, bank, SSC, from-terminal, to-terminal and `DRAFT` status. Those cells are editable
 annotations: if an engineer moves or edits a wire, they can become stale and do
 not prove that the actual wire, connectors or route have been validated. The
 prototype currently handles one SSC at a time; terminal labels in these cells are
-local to that chain and do not identify the bank or SSC number.
+local to that explicitly numbered chain.
 During marking, **Undo last terminal mark** returns to the previous terminal and
 blocks drawing until that terminal has been recorded again. After drawing, use
 Visio's Undo for the entire generated draft before creating a replacement.
+Starting a new chain while marks exist asks before clearing the current session.
 The engineer may explicitly save partially or fully marked terminals to a local
-JSON file and reload them on the same saved drawing path and page ID. The file
+JSON file and reload them on the same saved drawing path and page ID. Version 2
+records the bank and SSC identity. Earlier prototype version 1 files lack that
+identity and are rejected; the terminals must be marked again. The file
 contains the drawing path and terminal coordinates and should be handled under
 AYK's drawing-data policy. Reload checks the path, page, count, order and duplicate
 coordinates; it does not detect changes made to the drawing at the same path, so

@@ -67,6 +67,8 @@ namespace Ayk.WireFlow.VisioAddIn {
     public sealed class DraftPlan {
         public readonly Dictionary<string, Point> Terminals = new Dictionary<string, Point>();
         public int Modules;
+        public int Bank = 1;
+        public int Ssc = 1;
         public void Set(string name, double x, double y) {
             var point = new Point(x,y);
             foreach (var entry in Terminals) if (entry.Key != name && entry.Value.X == x && entry.Value.Y == y) throw new InvalidOperationException("This marker is already assigned to " + entry.Key + ". Select a different terminal marker.");
@@ -77,6 +79,7 @@ namespace Ayk.WireFlow.VisioAddIn {
         private Segment Connect(string network, string a, string b) { return new Segment { Network=network, From=a, To=b, A=Require(a), B=Require(b) }; }
         public List<Segment> Build() {
             if (Modules < 2 || Modules > 48) throw new InvalidOperationException("Enter 2 to 48 modules in the chain.");
+            if (Bank < 1 || Bank > 9999 || Ssc < 1 || Ssc > 9999) throw new InvalidOperationException("Enter a valid bank and SSC number.");
             var result = new List<Segment>();
             result.Add(Connect("POWER", "SSC.POS", "M1.POS"));
             result.Add(Connect("COMM", "SSC.S", "M1.N"));
@@ -97,6 +100,8 @@ namespace Ayk.WireFlow.VisioAddIn {
         public string DrawingPath { get; set; }
         public int PageId { get; set; }
         public int Modules { get; set; }
+        public int Bank { get; set; }
+        public int Ssc { get; set; }
         public List<MarkEntry> Marks { get; set; }
     }
     public static class MarkPersistence {
@@ -108,8 +113,8 @@ namespace Ayk.WireFlow.VisioAddIn {
         }
         public static string Serialize(DraftPlan plan, string drawingPath, int pageId, int count) {
             var steps=Steps(plan.Modules);
-            if (String.IsNullOrWhiteSpace(drawingPath) || pageId < 0 || count < 0 || count > steps.Count || plan.Terminals.Count != count) throw new InvalidOperationException("Cannot save an invalid marking session.");
-            var file=new MarkFile { Version=1, DrawingPath=Path.GetFullPath(drawingPath), PageId=pageId, Modules=plan.Modules, Marks=new List<MarkEntry>() };
+            if (String.IsNullOrWhiteSpace(drawingPath) || pageId < 0 || count < 0 || count > steps.Count || plan.Terminals.Count != count || plan.Bank < 1 || plan.Bank > 9999 || plan.Ssc < 1 || plan.Ssc > 9999) throw new InvalidOperationException("Cannot save an invalid marking session.");
+            var file=new MarkFile { Version=2, DrawingPath=Path.GetFullPath(drawingPath), PageId=pageId, Modules=plan.Modules, Bank=plan.Bank, Ssc=plan.Ssc, Marks=new List<MarkEntry>() };
             for(int i=0;i<count;i++) {
                 Point p; if(!plan.Terminals.TryGetValue(steps[i],out p)) throw new InvalidOperationException("Terminal markings must be in order.");
                 file.Marks.Add(new MarkEntry { Name=steps[i], X=p.X, Y=p.Y });
@@ -119,10 +124,11 @@ namespace Ayk.WireFlow.VisioAddIn {
         public static DraftPlan Deserialize(string json, string drawingPath, int pageId, out int count) {
             if (json == null || json.Length > 1048576 || String.IsNullOrWhiteSpace(drawingPath)) throw new InvalidOperationException("The marking file or active drawing is invalid.");
             var file=new JavaScriptSerializer().Deserialize<MarkFile>(json);
-            if (file == null || file.Version != 1 || String.IsNullOrWhiteSpace(file.DrawingPath) || file.PageId != pageId || !String.Equals(Path.GetFullPath(file.DrawingPath),Path.GetFullPath(drawingPath),StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("This marking file belongs to another drawing or page.");
+            if (file == null || file.Version != 2 || file.Bank < 1 || file.Bank > 9999 || file.Ssc < 1 || file.Ssc > 9999) throw new InvalidOperationException("This marking file is missing a valid bank and SSC identity. Mark the terminals again.");
+            if (String.IsNullOrWhiteSpace(file.DrawingPath) || file.PageId != pageId || !String.Equals(Path.GetFullPath(file.DrawingPath),Path.GetFullPath(drawingPath),StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("This marking file belongs to another drawing or page.");
             var steps=Steps(file.Modules);
             if (file.Marks == null || file.Marks.Count > steps.Count) throw new InvalidOperationException("The marking file has invalid entries.");
-            var plan=new DraftPlan { Modules=file.Modules };
+            var plan=new DraftPlan { Modules=file.Modules, Bank=file.Bank, Ssc=file.Ssc };
             for(int i=0;i<file.Marks.Count;i++) {
                 var mark=file.Marks[i]; if(mark == null || mark.Name != steps[i]) throw new InvalidOperationException("The marking file is not in the required order.");
                 plan.Set(mark.Name,mark.X,mark.Y);
@@ -131,11 +137,11 @@ namespace Ayk.WireFlow.VisioAddIn {
         }
     }
     public static class DraftRenderer {
-        private static void WriteMetadata(dynamic shape, Segment segment) {
+        private static void WriteMetadata(dynamic shape, Segment segment, DraftPlan plan) {
             // User cells are editable annotations, not electrical validation.
             shape.AddSection((short)242); // visSectionUser
-            string[] keys={"WireFlowFrom","WireFlowTo","WireFlowNetwork","WireFlowStatus"};
-            string[] values={segment.From,segment.To,segment.Network,"DRAFT"};
+            string[] keys={"WireFlowFrom","WireFlowTo","WireFlowNetwork","WireFlowStatus","WireFlowBank","WireFlowSSC"};
+            string[] values={segment.From,segment.To,segment.Network,"DRAFT",plan.Bank.ToString(CultureInfo.InvariantCulture),plan.Ssc.ToString(CultureInfo.InvariantCulture)};
             for(int i=0;i<keys.Length;i++) {
                 shape.AddNamedRow((short)242,keys[i],(short)0);
                 shape.CellsU["User."+keys[i]+".Value"].FormulaU="\""+values[i].Replace("\"","\"\"")+"\"";
@@ -152,7 +158,7 @@ namespace Ayk.WireFlow.VisioAddIn {
                     shape.CellsU["LineColor"].FormulaU = segment.Network == "POWER" ? "RGB(255,0,0)" : "RGB(0,176,80)";
                     shape.CellsU["LineWeight"].FormulaU = "0.012 in";
                     shape.Text = "";
-                    WriteMetadata(shape,segment);
+                    WriteMetadata(shape,segment,plan);
                 }
                 app.EndUndoScope(scope, true); return segments.Count;
             } catch { app.EndUndoScope(scope, false); throw; }
@@ -163,6 +169,8 @@ namespace Ayk.WireFlow.VisioAddIn {
         private readonly dynamic app;
         private readonly DraftPlan plan = new DraftPlan();
         private readonly NumericUpDown count = new NumericUpDown { Minimum=2, Maximum=48, Value=12, Width=70 };
+        private readonly NumericUpDown bank = new NumericUpDown { Minimum=1, Maximum=9999, Value=1, Width=70 };
+        private readonly NumericUpDown ssc = new NumericUpDown { Minimum=1, Maximum=9999, Value=1, Width=70 };
         private readonly Label status = new Label { AutoSize=false, Width=520, Height=92 };
         private readonly Button mark = new Button { Text="Record selected terminal marker", Width=245, Height=40 };
         private readonly Button undo = new Button { Text="Undo last terminal mark", Width=245, Height=36 };
@@ -179,7 +187,10 @@ namespace Ayk.WireFlow.VisioAddIn {
         public WorkspaceForm(object application) {
             app=application; Text="AYK WireFlow — prototype"; Width=580; Height=340; TopMost=true;
             var layout=new FlowLayoutPanel { Dock=DockStyle.Fill, FlowDirection=FlowDirection.TopDown, Padding=new Padding(12), WrapContents=false, AutoScroll=true };
-            layout.Controls.Add(new Label { Text="Modules in this SSC chain:", Width=500, Height=22 }); layout.Controls.Add(count);
+            var ids=new FlowLayoutPanel { Width=520, Height=34, WrapContents=false };
+            ids.Controls.Add(new Label { Text="Bank", AutoSize=true }); ids.Controls.Add(bank);
+            ids.Controls.Add(new Label { Text="SSC", AutoSize=true }); ids.Controls.Add(ssc);
+            ids.Controls.Add(new Label { Text="Modules", AutoSize=true }); ids.Controls.Add(count); layout.Controls.Add(ids);
             var start=new Button { Text="Start terminal marking", Width=245, Height=36 };
             layout.Controls.Add(start); layout.Controls.Add(status); layout.Controls.Add(pick); layout.Controls.Add(mark); layout.Controls.Add(undo); layout.Controls.Add(saveMarks); layout.Controls.Add(loadMarks); layout.Controls.Add(draw); Controls.Add(layout);
             start.Click += delegate { StartPlan(); }; mark.Click += delegate { Record(); }; pick.Click += delegate { TogglePicking(); }; undo.Click += delegate { UndoMark(); }; draw.Click += delegate { Draw(); };
@@ -197,8 +208,9 @@ namespace Ayk.WireFlow.VisioAddIn {
         }
         private void StartPlan() {
             try {
+                if (next > 0 && MessageBox.Show(this,"Starting a new chain clears the current terminal marks from this window. Save them first if you need to return to them. Continue?","Start a new chain",MessageBoxButtons.YesNo,MessageBoxIcon.Question) != DialogResult.Yes) return;
                 StopPicking(); page=app.ActivePage; if (page == null) throw new InvalidOperationException("Open a Visio drawing first.");
-                plan.Terminals.Clear(); plan.Modules=(int)count.Value; prompts.Clear(); next=0;
+                plan.Terminals.Clear(); plan.Modules=(int)count.Value; plan.Bank=(int)bank.Value; plan.Ssc=(int)ssc.Value; prompts.Clear(); next=0;
                 prompts.AddRange(MarkPersistence.Steps(plan.Modules));
                 // The event sink needs real interactive Visio validation before
                 // it can be enabled in a build intended for other users.
@@ -259,10 +271,14 @@ namespace Ayk.WireFlow.VisioAddIn {
             if (String.IsNullOrWhiteSpace(path) || !Path.IsPathRooted(path) || !File.Exists(path)) throw new InvalidOperationException("Save the Visio drawing to a local file first.");
             return path;
         }
+        private void CheckChainInputs() {
+            if ((int)bank.Value != plan.Bank || (int)ssc.Value != plan.Ssc || (int)count.Value != plan.Modules) throw new InvalidOperationException("Bank, SSC or module count changed. Restore the marked values or start a new chain.");
+        }
         private void SaveMarks() {
             try {
                 if (picking) throw new InvalidOperationException("Stop direct clicking before saving.");
                 if (page != app.ActivePage) throw new InvalidOperationException("Return to the page on which marking started.");
+                CheckChainInputs();
                 string json=MarkPersistence.Serialize(plan,ActiveDrawingPath(),(int)((dynamic)page).ID,next);
                 using(var dialog=new SaveFileDialog { Filter="WireFlow terminal marks (*.json)|*.json", AddExtension=true, DefaultExt="json" }) {
                     if(dialog.ShowDialog(this) != DialogResult.OK) return;
@@ -282,9 +298,9 @@ namespace Ayk.WireFlow.VisioAddIn {
                     var info=new FileInfo(dialog.FileName); if(info.Length > 1048576) throw new InvalidOperationException("The marking file is too large.");
                     int restoredCount;
                     var restored=MarkPersistence.Deserialize(File.ReadAllText(dialog.FileName),drawingPath,(int)((dynamic)activePage).ID,out restoredCount);
-                    StopPicking(); page=activePage; plan.Terminals.Clear(); plan.Modules=restored.Modules;
+                    StopPicking(); page=activePage; plan.Terminals.Clear(); plan.Modules=restored.Modules; plan.Bank=restored.Bank; plan.Ssc=restored.Ssc;
                     foreach(var entry in restored.Terminals) plan.Terminals.Add(entry.Key,entry.Value);
-                    prompts.Clear(); prompts.AddRange(MarkPersistence.Steps(plan.Modules)); count.Value=plan.Modules; next=restoredCount;
+                    prompts.Clear(); prompts.AddRange(MarkPersistence.Steps(plan.Modules)); count.Value=plan.Modules; bank.Value=plan.Bank; ssc.Value=plan.Ssc; next=restoredCount;
                     bool complete=next==prompts.Count; mark.Enabled=!complete; undo.Enabled=next>0; saveMarks.Enabled=true; draw.Enabled=complete;
 #if EXPERIMENTAL_MOUSE_PICKING
                     pick.Enabled=!complete;
@@ -312,6 +328,7 @@ namespace Ayk.WireFlow.VisioAddIn {
         private void Draw() {
             try {
                 if (page != app.ActivePage) throw new InvalidOperationException("Return to the page on which marking started.");
+                CheckChainInputs();
                 int n=DraftRenderer.Draw(app,page,plan); draw.Enabled=false; undo.Enabled=false;
                 status.Text=n+" draft wire shapes added. Review routes, endpoints, harnesses and approvals. Use Visio Undo to remove this draft.";
             } catch (Exception ex) { status.Text="No complete draft was added: "+ex.Message; }
