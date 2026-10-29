@@ -1641,7 +1641,7 @@ function projectPrintPages(project, conns) {
   const groups = layoutGroups(project);
   const canDraw = !!(cal.ok && project.underlay && project.underlay.kind === 'image' && project.underlay.src);
   const frontSvg = canDraw && modulePortsValid(numbering.modulePorts)
-    ? fvSvg(cal, { src: project.underlay.src }, pictureModuleWiring(groups, cal, numbering.modulePorts, numbering.devicePorts), { noGrid: true, sscLabels: true })
+    ? fvSvg(cal, { src: project.underlay.src }, pictureModuleWiring(groups, cal, numbering.modulePorts, numbering.devicePorts), { noGrid: true, sscLabels: true }).replace('</svg>', pictureDeviceLabelsSvg(numbering.marking, cal) + '</svg>')
     : '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1680 1188"><rect width="1680" height="1188" fill="#fff"/><text x="840" y="594" text-anchor="middle" font-family="Arial" font-size="28" fill="#687386">Front-view wiring is unavailable until the rack picture is calibrated.</text></svg>';
   return buildPrintDocument({
     sheetSvg: renderDiagramSVG(project, conns),

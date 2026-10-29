@@ -17,10 +17,14 @@ using the existing endpoint rules. It reports rule failures and exports a draft
 SVG, print/PDF, or Visio file with individually editable wire shapes and an AYK
 logo in the title block. Cable routes are still straight-line previews. See
 [the guided workspace documentation](docs/guided-workspace.md) for the workflow
-and the limits of the grid and automatic SSC assignment.
+and the limits of the grid and draft cable routing.
 
 ## Features
 
+- **Ordered bank marking** — declare MSM/SSC/module/junction-box/ACDP counts per
+  bank, follow one large click command at a time, and preserve SSC ownership and
+  M1…MN click order. Progress is saved locally; missing counts block generation.
+  ACDPs are marked last as labels only. See [ordered marking](docs/ordered-marking.md).
 - **Physical module numbering** — M1…MN is derived from the rack itself: the chain starts
   and ends next to the SSC and skips the ACDP / MSM / junction-box slots. Automatic mode
   scores serpentine, straight-raster and optimised (nearest-neighbour + 2-opt) paths against

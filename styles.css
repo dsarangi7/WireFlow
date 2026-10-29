@@ -361,6 +361,12 @@ table.data tr:hover td { background: #f8fafc; }
 .port-instruction-progress { flex-basis: 100%; color: var(--accent); font-size: 12px; font-weight: 800; letter-spacing: .06em; }
 .port-instruction strong { flex-basis: 100%; font-size: clamp(20px, 2.4vw, 28px); line-height: 1.25; }
 .port-instruction span { flex: 1; color: var(--muted); }
+.marking-table { overflow-x: auto; margin: 16px 0; }
+.marking-table input { width: 88px; min-height: 36px; padding: 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); }
+.marking-table th, .marking-table td { padding: 8px 12px; text-align: left; }
+.marking-progress { padding: 12px 16px; margin: 12px 0; background: var(--surface-2); border-radius: var(--radius); font-size: 13px; }
+.marking-progress p { margin: 4px 0; }
+.marking-warnings { margin: 12px 0; padding: 12px 16px 12px 32px; border-left: 3px solid var(--warn); background: var(--surface-2); color: var(--text); font-size: 13px; }
 
 @media (prefers-reduced-motion: reduce) {
   .flow-step, .import-spinner, .toast { animation: none !important; transition: none !important; }

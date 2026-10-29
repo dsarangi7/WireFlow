@@ -481,11 +481,11 @@ eq('print-document builder returns ordered title/svg page records',
 const projectPrintBody = fnBody(appSrc, 'projectPrintPages');
 let printWiringOptions = null;
 let printSvgOptions = null;
-const printProjectPages = new Function('project', 'conns', 'fvCalib', 'layoutGroups', 'modulePortsValid', 'pictureModuleWiring', 'fvSvg', 'buildPrintDocument', 'renderDiagramSVG', 'schedulePrintSvg', projectPrintBody);
+const printProjectPages = new Function('project', 'conns', 'fvCalib', 'layoutGroups', 'modulePortsValid', 'pictureModuleWiring', 'fvSvg', 'buildPrintDocument', 'renderDiagramSVG', 'schedulePrintSvg', 'pictureDeviceLabelsSvg', projectPrintBody);
 const overlayPages = printProjectPages({ config: { numbering: { cal: {} } }, underlay: { kind: 'image', src: 'data:image/png;base64,AA' } }, [],
   () => ({ ok: true }), () => ['group'], () => true, (groups, cal, ports) => { printWiringOptions = { groups, cal, ports }; return ['wire']; },
   (cal, image, wires, options) => { printSvgOptions = options; return wires.join(','); },
-  parts => parts, () => '<svg/>', () => '<svg/>');
+  parts => parts, () => '<svg/>', () => '<svg/>', () => '');
 eq('printed rack picture includes generated wiring', overlayPages.frontSvg, 'wire');
 ok('printed rack uses calibrated wiring and keeps the source image proportions',
   printWiringOptions.groups[0] === 'group' && printSvgOptions.noGrid === true && printSvgOptions.width === undefined);
@@ -497,9 +497,66 @@ ok('print title block embeds the AYK logo and drawing details',
 
 const simpleSrc = fs.readFileSync(path.join(ROOT, 'js', 'simple-wiring.js'), 'utf8');
 const portFactory = new Function('slotCell', 'fvSlotCenter', 'fvDist', 'SSC_PALETTE',
-  simpleSrc + '\nreturn { modulePortsValid, pictureModuleWiring, pictureVisioModel, portMarkingPrompt };');
+  simpleSrc + '\nreturn { modulePortsValid, pictureModuleWiring, pictureVisioModel, portMarkingPrompt, markingPlanErrors, markingSteps, markingIssues, markingRecord, markingLayout, pictureDeviceLabels, pictureDeviceLabelsSvg };');
 const portsApi = portFactory(E.slotCell, (cal, c, r) => ({ x: cal.x0 + c * cal.pitchX, y: cal.y0 + r * cal.pitchY }),
   (a, b) => Math.hypot(a.x - b.x, a.y - b.y), E.SSC_PALETTE);
+const orderedBanks = [{ msms: 1, sscs: 2, modules: 3, junctionBoxes: 2, acdps: 1 }, { msms: 2, sscs: 1, modules: 2, junctionBoxes: 1, acdps: 2 }];
+const orderedSteps = portsApi.markingSteps(orderedBanks);
+const sixtyModules = portsApi.markingSteps([{ msms: 1, sscs: 5, modules: 12, junctionBoxes: 5, acdps: 2 }]);
+ok('one MSM and five SSCs request exactly twelve ordered modules each', sixtyModules.filter(s => s.kind === 'module').length === 60 && sixtyModules[14].key === 'SSC-1:M12' && sixtyModules[15].key === 'SSC-2');
+eq('ordered marking starts with MSM then SSC, its box and numbered modules',
+  orderedSteps.slice(0, 7).map(s => s.key).join('|'), 'MSM-1|SSC-1|SSC-1:JB|SSC-1:M1|SSC-1:M2|SSC-1:M3|SSC-2');
+ok('ordered marking retains separate per-bank counts and SSC identities',
+  orderedSteps.filter(s => s.kind === 'ssc').map(s => s.bank).join(',') === '1,1,2' && orderedSteps.filter(s => s.kind === 'module' && s.bank === 2).length === 2);
+eq('ACDPs appear only at the final steps across all banks', orderedSteps.slice(-3).map(s => s.label).join(','), 'ACDP1,ACDP2,ACDP3');
+ok('invalid fractional, negative, absent and excessive counts are rejected',
+  portsApi.markingPlanErrors([]).length && portsApi.markingPlanErrors([{ ...orderedBanks[0], modules: 1.5 }]).length &&
+  portsApi.markingPlanErrors([{ ...orderedBanks[0], acdps: -1 }]).length && portsApi.markingPlanErrors([{ ...orderedBanks[0], sscs: 25 }]).length);
+const orderedPlan = { version: 1, banks: orderedBanks, records: [] };
+ok('missing components produce a remaining-step and missing-box warning', portsApi.markingIssues(orderedPlan).some(s => s.includes('Next: Bank 1')) && portsApi.markingIssues(orderedPlan).some(s => s.includes('junction boxes still unmarked')));
+let markedSlot = 0;
+orderedSteps.forEach((step, i) => {
+  const slot = (7 - markedSlot % 8) + ',' + Math.floor(markedSlot / 8);
+  const result = portsApi.markingRecord(orderedPlan, { x: i * 20, y: 100 }, slot, step.defaultJb);
+  if (step.kind !== 'jb') markedSlot++;
+  if (result.error) throw new Error(result.error);
+  orderedPlan.records.push(result.record);
+});
+eq('all configured components complete without missing-count warnings', portsApi.markingIssues(orderedPlan).length, 0);
+const savedOrderedPlan = JSON.parse(JSON.stringify(orderedPlan));
+const orderedLayout = portsApi.markingLayout(savedOrderedPlan);
+ok('saved module click order and SSC ownership survive serialization',
+  orderedLayout.mode === 'manual' && orderedLayout.sscs[0].order.join('|') === orderedPlan.records.slice(3, 6).map(r => r.slot).join('|') &&
+  orderedLayout.assignment[orderedLayout.sscs[1].order[0]] === 'SSC-2' && orderedLayout.sscs[2].jb === 'JB-3');
+const orderedCells = [];
+for (let r = 0; r < 8; r++) for (let c = 0; c < 8; c++) orderedCells.push({ c, r, kind: 'empty' });
+orderedSteps.forEach((step, i) => { const record = orderedPlan.records[i]; if (record.slot) { const p = E.slotCell(record.slot); orderedCells.find(c => c.c === p.c && c.r === p.r).kind = step.kind; } });
+const orderedProject = { config: { rules: { ...E.DEFAULT_RULES, modulesPerString: 3 }, numbering: { rack: { cols: 8, rows: 8, cells: orderedCells }, marking: savedOrderedPlan }, layout: orderedLayout } };
+E.layoutApply(orderedProject, E.layoutGroups(orderedProject));
+eq('planner and netlist input preserve explicit chains instead of optimizing click order', JSON.stringify(E.layoutGroups(orderedProject).map(g => g.order)), JSON.stringify(orderedLayout.sscs.map(s => s.order)));
+eq('variable modules per SSC become saved per-string counts', orderedProject.config.numbering.counts.join(','), '3,3,2');
+ok('generation preserves bank metadata and omits ACDPs from wiring groups', orderedProject.config.numbering.marking.banks.length === 2 && E.layoutGroups(orderedProject).length === 3);
+const undoPlan = JSON.parse(JSON.stringify(orderedPlan)); undoPlan.records.pop();
+ok('undo reopens exactly the last expected component and blocks completion', portsApi.markingIssues(undoPlan).some(s => s.includes('ACDP3')));
+const duplicatePlan = { banks: orderedBanks, records: [orderedPlan.records[0]] };
+ok('duplicate grid clicks cannot create a second component identity', !!portsApi.markingRecord(duplicatePlan, { x: 10, y: 10 }, orderedPlan.records[0].slot).error);
+const sharedBank = { msms: 1, sscs: 2, modules: 2, junctionBoxes: 1, acdps: 0 };
+const sharedPlan = { banks: [sharedBank], records: [] };
+portsApi.markingSteps(sharedPlan.banks).forEach((step, i) => {
+  const result = portsApi.markingRecord(sharedPlan, step.kind === 'jb' ? { x: 80, y: 5 } : { x: 20 * i, y: 100 }, i + ',0', step.kind === 'jb' ? 'JB-1' : undefined);
+  if (result.error) throw new Error(result.error);
+  sharedPlan.records.push(result.record);
+});
+ok('a shared junction box requires explicit identity and uses the same position', !portsApi.markingIssues(sharedPlan).length && portsApi.markingLayout(sharedPlan).sscs.every(s => s.jb === 'JB-1'));
+const missingBoxSelection = { banks: [sharedBank], records: sharedPlan.records.slice(0, 6) };
+ok('sharing never silently assigns a box when none was selected', !!portsApi.markingRecord(missingBoxSelection, { x: 80, y: 5 }, '', '').error);
+const extraBoxPlan = { banks: [{ ...sharedBank, sscs: 1, junctionBoxes: 3, acdps: 1 }], records: [] };
+eq('additional declared boxes are requested before the final ACDP marks', portsApi.markingSteps(extraBoxPlan.banks).slice(-3).map(s => s.label).join('|'), 'JB-2|JB-3|ACDP1');
+const corruptPlan = JSON.parse(JSON.stringify(orderedPlan)); corruptPlan.records[3].key = 'SSC-2:M1';
+ok('corrupt saved sequence cannot produce a manual layout', portsApi.markingIssues(corruptPlan).some(s => s.includes('inconsistent')));
+const identityLabels = portsApi.pictureDeviceLabels(sharedPlan, { ok: true });
+ok('shared boxes have one output label while SSC and MSM identities remain visible', identityLabels.filter(item => item.label === 'JB-1').length === 1 && identityLabels.some(item => item.label === 'SSC2') && identityLabels.some(item => item.label === 'MSM1'));
+ok('ACDP labels reach the SVG output without adding any connection', portsApi.pictureDeviceLabelsSvg(orderedPlan, { ok: true, pitchX: 100, pitchY: 80 }).includes('ACDP3</text>') && !portsApi.pictureDeviceLabelsSvg(orderedPlan, { ok: true, pitchX: 100, pitchY: 80 }).includes('<polyline'));
 const modulePrompts = [1, 2, 3, 4, 5].map(step => portsApi.portMarkingPrompt(step, 0));
 ok('module port prompts advance through five explicit steps',
   modulePrompts.every((prompt, index) => prompt.current === index + 1 && prompt.total === 5) &&
