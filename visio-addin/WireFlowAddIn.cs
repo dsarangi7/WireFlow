@@ -6,6 +6,8 @@ using System.Globalization;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
+using System.IO;
+using System.Web.Script.Serialization;
 
 namespace Ayk.WireFlow.VisioAddIn {
     [ComVisible(true), Guid("B65AD801-ABAF-11D0-BB8B-00A0C90F2744"), InterfaceType(ComInterfaceType.InterfaceIsIDispatch)]
@@ -89,6 +91,45 @@ namespace Ayk.WireFlow.VisioAddIn {
             return result;
         }
     }
+    public sealed class MarkEntry { public string Name { get; set; } public double X { get; set; } public double Y { get; set; } }
+    public sealed class MarkFile {
+        public int Version { get; set; }
+        public string DrawingPath { get; set; }
+        public int PageId { get; set; }
+        public int Modules { get; set; }
+        public List<MarkEntry> Marks { get; set; }
+    }
+    public static class MarkPersistence {
+        public static List<string> Steps(int modules) {
+            if (modules < 2 || modules > 48) throw new InvalidOperationException("Enter 2 to 48 modules in the chain.");
+            var steps = new List<string> { "SSC.S","SSC.N","SSC.NEG","SSC.POS","SSC.B-","SSC.B+","JB.NEG","JB.POS" };
+            for (int i=1; i<=modules; i++) foreach (var port in new [] {"S","N","NEG","POS"}) steps.Add("M"+i+"."+port);
+            return steps;
+        }
+        public static string Serialize(DraftPlan plan, string drawingPath, int pageId, int count) {
+            var steps=Steps(plan.Modules);
+            if (String.IsNullOrWhiteSpace(drawingPath) || pageId < 0 || count < 0 || count > steps.Count || plan.Terminals.Count != count) throw new InvalidOperationException("Cannot save an invalid marking session.");
+            var file=new MarkFile { Version=1, DrawingPath=Path.GetFullPath(drawingPath), PageId=pageId, Modules=plan.Modules, Marks=new List<MarkEntry>() };
+            for(int i=0;i<count;i++) {
+                Point p; if(!plan.Terminals.TryGetValue(steps[i],out p)) throw new InvalidOperationException("Terminal markings must be in order.");
+                file.Marks.Add(new MarkEntry { Name=steps[i], X=p.X, Y=p.Y });
+            }
+            return new JavaScriptSerializer().Serialize(file);
+        }
+        public static DraftPlan Deserialize(string json, string drawingPath, int pageId, out int count) {
+            if (json == null || json.Length > 1048576 || String.IsNullOrWhiteSpace(drawingPath)) throw new InvalidOperationException("The marking file or active drawing is invalid.");
+            var file=new JavaScriptSerializer().Deserialize<MarkFile>(json);
+            if (file == null || file.Version != 1 || String.IsNullOrWhiteSpace(file.DrawingPath) || file.PageId != pageId || !String.Equals(Path.GetFullPath(file.DrawingPath),Path.GetFullPath(drawingPath),StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("This marking file belongs to another drawing or page.");
+            var steps=Steps(file.Modules);
+            if (file.Marks == null || file.Marks.Count > steps.Count) throw new InvalidOperationException("The marking file has invalid entries.");
+            var plan=new DraftPlan { Modules=file.Modules };
+            for(int i=0;i<file.Marks.Count;i++) {
+                var mark=file.Marks[i]; if(mark == null || mark.Name != steps[i]) throw new InvalidOperationException("The marking file is not in the required order.");
+                plan.Set(mark.Name,mark.X,mark.Y);
+            }
+            count=file.Marks.Count; return plan;
+        }
+    }
     public static class DraftRenderer {
         public static int Draw(object application, object page, DraftPlan plan) {
             // Validate all endpoints before touching the page. Undo scope rolls back a partial failure.
@@ -114,6 +155,8 @@ namespace Ayk.WireFlow.VisioAddIn {
         private readonly Label status = new Label { AutoSize=false, Width=520, Height=92 };
         private readonly Button mark = new Button { Text="Record selected terminal marker", Width=245, Height=40 };
         private readonly Button undo = new Button { Text="Undo last terminal mark", Width=245, Height=36 };
+        private readonly Button saveMarks = new Button { Text="Save terminal marks", Width=245, Height=36 };
+        private readonly Button loadMarks = new Button { Text="Load terminal marks", Width=245, Height=36 };
         private readonly Button pick = new Button { Text="Click ports on drawing", Width=245, Height=40 };
         private readonly Button draw = new Button { Text="Draw draft on active page", Width=245, Height=40 };
         private readonly List<string> prompts = new List<string>();
@@ -127,13 +170,14 @@ namespace Ayk.WireFlow.VisioAddIn {
             var layout=new FlowLayoutPanel { Dock=DockStyle.Fill, FlowDirection=FlowDirection.TopDown, Padding=new Padding(12), WrapContents=false, AutoScroll=true };
             layout.Controls.Add(new Label { Text="Modules in this SSC chain:", Width=500, Height=22 }); layout.Controls.Add(count);
             var start=new Button { Text="Start terminal marking", Width=245, Height=36 };
-            layout.Controls.Add(start); layout.Controls.Add(status); layout.Controls.Add(pick); layout.Controls.Add(mark); layout.Controls.Add(undo); layout.Controls.Add(draw); Controls.Add(layout);
+            layout.Controls.Add(start); layout.Controls.Add(status); layout.Controls.Add(pick); layout.Controls.Add(mark); layout.Controls.Add(undo); layout.Controls.Add(saveMarks); layout.Controls.Add(loadMarks); layout.Controls.Add(draw); Controls.Add(layout);
             start.Click += delegate { StartPlan(); }; mark.Click += delegate { Record(); }; pick.Click += delegate { TogglePicking(); }; undo.Click += delegate { UndoMark(); }; draw.Click += delegate { Draw(); };
+            saveMarks.Click += delegate { SaveMarks(); }; loadMarks.Click += delegate { LoadMarks(); };
             FormClosed += delegate { StopPicking(); };
 #if !EXPERIMENTAL_MOUSE_PICKING
             pick.Visible=false;
 #endif
-            pick.Enabled=false; mark.Enabled=false; undo.Enabled=false; draw.Enabled=false;
+            pick.Enabled=false; mark.Enabled=false; undo.Enabled=false; saveMarks.Enabled=false; draw.Enabled=false;
 #if EXPERIMENTAL_MOUSE_PICKING
             status.Text="Pilot: mark terminal positions in order, directly on the drawing or by selecting marker shapes.";
 #else
@@ -144,8 +188,7 @@ namespace Ayk.WireFlow.VisioAddIn {
             try {
                 StopPicking(); page=app.ActivePage; if (page == null) throw new InvalidOperationException("Open a Visio drawing first.");
                 plan.Terminals.Clear(); plan.Modules=(int)count.Value; prompts.Clear(); next=0;
-                foreach (var port in new [] {"SSC.S","SSC.N","SSC.NEG","SSC.POS","SSC.B-","SSC.B+","JB.NEG","JB.POS"}) prompts.Add(port);
-                for (int i=1; i<=plan.Modules; i++) foreach (var port in new [] {"S","N","NEG","POS"}) prompts.Add("M"+i+"."+port);
+                prompts.AddRange(MarkPersistence.Steps(plan.Modules));
                 // The event sink needs real interactive Visio validation before
                 // it can be enabled in a build intended for other users.
 #if EXPERIMENTAL_MOUSE_PICKING
@@ -153,7 +196,7 @@ namespace Ayk.WireFlow.VisioAddIn {
 #else
                 pick.Enabled=false;
 #endif
-                mark.Enabled=true; undo.Enabled=false; draw.Enabled=false; ShowPrompt();
+                mark.Enabled=true; undo.Enabled=false; saveMarks.Enabled=true; draw.Enabled=false; ShowPrompt();
             } catch (Exception ex) { status.Text="Could not start: "+ex.Message; }
         }
         private void ShowPrompt() {
@@ -199,6 +242,48 @@ namespace Ayk.WireFlow.VisioAddIn {
             pick.Enabled=true;
 #endif
             undo.Enabled=next>0; ShowPrompt();
+        }
+        private string ActiveDrawingPath() {
+            string path=(string)app.ActiveDocument.FullName;
+            if (String.IsNullOrWhiteSpace(path) || !Path.IsPathRooted(path) || !File.Exists(path)) throw new InvalidOperationException("Save the Visio drawing to a local file first.");
+            return path;
+        }
+        private void SaveMarks() {
+            try {
+                if (picking) throw new InvalidOperationException("Stop direct clicking before saving.");
+                if (page != app.ActivePage) throw new InvalidOperationException("Return to the page on which marking started.");
+                string json=MarkPersistence.Serialize(plan,ActiveDrawingPath(),(int)((dynamic)page).ID,next);
+                using(var dialog=new SaveFileDialog { Filter="WireFlow terminal marks (*.json)|*.json", AddExtension=true, DefaultExt="json" }) {
+                    if(dialog.ShowDialog(this) != DialogResult.OK) return;
+                    if (!String.Equals(Path.GetExtension(dialog.FileName),".json",StringComparison.OrdinalIgnoreCase) || String.Equals(Path.GetFullPath(dialog.FileName),Path.GetFullPath(ActiveDrawingPath()),StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("Choose a separate .json file for the terminal marks.");
+                    File.WriteAllText(dialog.FileName,json,System.Text.Encoding.UTF8);
+                    status.Text="Terminal marks saved. Keep the file with the drawing and verify positions after drawing changes.";
+                }
+            } catch(Exception ex) { status.Text="Could not save terminal marks: "+ex.Message; }
+        }
+        private void LoadMarks() {
+            try {
+                if (picking) throw new InvalidOperationException("Stop direct clicking before loading.");
+                object activePage=app.ActivePage; if (activePage == null) throw new InvalidOperationException("Open the matching Visio page first.");
+                string drawingPath=ActiveDrawingPath();
+                using(var dialog=new OpenFileDialog { Filter="WireFlow terminal marks (*.json)|*.json", CheckFileExists=true }) {
+                    if(dialog.ShowDialog(this) != DialogResult.OK) return;
+                    var info=new FileInfo(dialog.FileName); if(info.Length > 1048576) throw new InvalidOperationException("The marking file is too large.");
+                    int restoredCount;
+                    var restored=MarkPersistence.Deserialize(File.ReadAllText(dialog.FileName),drawingPath,(int)((dynamic)activePage).ID,out restoredCount);
+                    StopPicking(); page=activePage; plan.Terminals.Clear(); plan.Modules=restored.Modules;
+                    foreach(var entry in restored.Terminals) plan.Terminals.Add(entry.Key,entry.Value);
+                    prompts.Clear(); prompts.AddRange(MarkPersistence.Steps(plan.Modules)); count.Value=plan.Modules; next=restoredCount;
+                    bool complete=next==prompts.Count; mark.Enabled=!complete; undo.Enabled=next>0; saveMarks.Enabled=true; draw.Enabled=complete;
+#if EXPERIMENTAL_MOUSE_PICKING
+                    pick.Enabled=!complete;
+#else
+                    pick.Enabled=false;
+#endif
+                    if(complete) status.Text="All saved terminals loaded. Verify positions and review routes before drawing.";
+                    else ShowPrompt();
+                }
+            } catch(Exception ex) { status.Text="Could not load terminal marks: "+ex.Message; }
         }
         private void Record() {
             try {

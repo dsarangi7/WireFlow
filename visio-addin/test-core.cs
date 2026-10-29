@@ -51,6 +51,17 @@ public static class TestCore {
         bool afterUndo=false; try { plan.Build(); } catch (InvalidOperationException) { afterUndo=true; }
         Check(afterUndo,"an undone terminal blocks drawing until re-marked");
         plan.Set("M2.POS",16,16);
+        var order=MarkPersistence.Steps(2); int restoredCount;
+        var partial=new DraftPlan{Modules=2}; for(int i=0;i<5;i++) partial.Set(order[i],i+1,i+1);
+        var serialized=MarkPersistence.Serialize(partial,@"G:\\sample.vsdx",42,5);
+        var restored=MarkPersistence.Deserialize(serialized,@"g:\\sample.vsdx",42,out restoredCount);
+        Check(restoredCount==5 && restored.Modules==2 && restored.Terminals[order[4]].X==5,"partial terminal markings round trip in order for the original drawing and page");
+        bool differentPage=false; try { MarkPersistence.Deserialize(serialized,@"G:\\sample.vsdx",43,out restoredCount); } catch(InvalidOperationException) { differentPage=true; }
+        Check(differentPage,"marks cannot be loaded onto a different page");
+        bool differentFile=false; try { MarkPersistence.Deserialize(serialized,@"G:\\other.vsdx",42,out restoredCount); } catch(InvalidOperationException) { differentFile=true; }
+        Check(differentFile,"marks cannot be loaded into a different drawing");
+        bool malformed=false; try { MarkPersistence.Deserialize(serialized.Replace("SSC.S", "M2.POS"),@"G:\\sample.vsdx",42,out restoredCount); } catch(InvalidOperationException) { malformed=true; }
+        Check(malformed,"out-of-order marking files are rejected");
         var page=new FakePage(); var app=new FakeApp{Page=page};
         var incomplete=new DraftPlan{Modules=2}; bool rejected=false;
         try { DraftRenderer.Draw(app,page,incomplete); } catch(InvalidOperationException) { rejected=true; }

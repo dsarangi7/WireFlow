@@ -19,6 +19,13 @@ marker shapes because an embedded rack picture is not a set of terminal shapes.
 During marking, **Undo last terminal mark** returns to the previous terminal and
 blocks drawing until that terminal has been recorded again. After drawing, use
 Visio's Undo for the entire generated draft before creating a replacement.
+The engineer may explicitly save partially or fully marked terminals to a local
+JSON file and reload them on the same saved drawing path and page ID. The file
+contains the drawing path and terminal coordinates and should be handled under
+AYK's drawing-data policy. Reload checks the path, page, count, order and duplicate
+coordinates; it does not detect changes made to the drawing at the same path, so
+the engineer must check all terminal locations after any drawing edit. Loading a
+mapping onto a different copy or a drawing moved to a new path is not supported.
 
 An experimental direct-click event sink has been added to the source, but it is
 disabled in the standard build. An out-of-process Visio test hung when trying to
@@ -34,7 +41,7 @@ These lines are **draft previews only**, not released engineering routes: they
 are straight endpoint-to-endpoint lines. The pilot does not establish route
 channels, bend radii, crossing avoidance, component counts across banks, route
 length, harness part number, cable schedule, BOM, electrical release validation,
-file history, access control, or saved/reloaded terminal mappings. It does not
+file history or access control. It does not
 yet integrate the existing browser project's configuration or wiring engine.
 The supplied engineering specification identifies unresolved directionality,
 allowances, and harness approval decisions; these must not be inferred from a
@@ -56,6 +63,6 @@ the hang needs investigation in an interactive Visio test environment.
 Before distribution, IT needs to choose an installation method, code-signing
 and trusted publisher policy, user-versus-machine registration and access
 control. Next development work includes verifying Visio's actual add-in loading
-and ribbon callback, a safe installer, direct point picking, persistent mappings,
+and ribbon callback, a safe installer, direct point picking, mapping verification,
 multiple banks and SSCs, importing the browser engine's output, route rules and
 conflict checks, reconnecting edits, and acceptance against the released BOM.
