@@ -16,6 +16,12 @@ R11 endpoint connections and adds red power and green communication lines to
 the active page. Marker shapes are not deleted. Generated lines are ordinary
 editable Visio shapes in one undo scope. This pilot intentionally needs separate
 marker shapes because an embedded rack picture is not a set of terminal shapes.
+Each generated shape includes user-defined ShapeSheet cells recording its draft
+network, from-terminal, to-terminal and `DRAFT` status. Those cells are editable
+annotations: if an engineer moves or edits a wire, they can become stale and do
+not prove that the actual wire, connectors or route have been validated. The
+prototype currently handles one SSC at a time; terminal labels in these cells are
+local to that chain and do not identify the bank or SSC number.
 During marking, **Undo last terminal mark** returns to the previous terminal and
 blocks drawing until that terminal has been recorded again. After drawing, use
 Visio's Undo for the entire generated draft before creating a replacement.

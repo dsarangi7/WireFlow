@@ -131,6 +131,16 @@ namespace Ayk.WireFlow.VisioAddIn {
         }
     }
     public static class DraftRenderer {
+        private static void WriteMetadata(dynamic shape, Segment segment) {
+            // User cells are editable annotations, not electrical validation.
+            shape.AddSection((short)242); // visSectionUser
+            string[] keys={"WireFlowFrom","WireFlowTo","WireFlowNetwork","WireFlowStatus"};
+            string[] values={segment.From,segment.To,segment.Network,"DRAFT"};
+            for(int i=0;i<keys.Length;i++) {
+                shape.AddNamedRow((short)242,keys[i],(short)0);
+                shape.CellsU["User."+keys[i]+".Value"].FormulaU="\""+values[i].Replace("\"","\"\"")+"\"";
+            }
+        }
         public static int Draw(object application, object page, DraftPlan plan) {
             // Validate all endpoints before touching the page. Undo scope rolls back a partial failure.
             var segments = plan.Build();
@@ -142,6 +152,7 @@ namespace Ayk.WireFlow.VisioAddIn {
                     shape.CellsU["LineColor"].FormulaU = segment.Network == "POWER" ? "RGB(255,0,0)" : "RGB(0,176,80)";
                     shape.CellsU["LineWeight"].FormulaU = "0.012 in";
                     shape.Text = "";
+                    WriteMetadata(shape,segment);
                 }
                 app.EndUndoScope(scope, true); return segments.Count;
             } catch { app.EndUndoScope(scope, false); throw; }

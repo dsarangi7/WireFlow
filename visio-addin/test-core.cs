@@ -7,7 +7,11 @@ public sealed class FakeCells {
     private readonly Dictionary<string,FakeCell> cells = new Dictionary<string,FakeCell>();
     public FakeCell this[string name] { get { if (!cells.ContainsKey(name)) cells[name]=new FakeCell(); return cells[name]; } }
 }
-public sealed class FakeShape { public FakeCells CellsU = new FakeCells(); public string Text { get; set; } }
+public sealed class FakeShape {
+    public FakeCells CellsU = new FakeCells(); public string Text { get; set; }
+    public short AddSection(short section) { if(section != 242) throw new Exception("Wrong section"); return section; }
+    public short AddNamedRow(short section,string name,short tag) { if(section != 242 || tag != 0) throw new Exception("Wrong row"); return 0; }
+}
 public sealed class FakeMouseWindow { public object Page { get; set; } }
 public sealed class FakeMouseEvent { public int Button { get; set; } public double x { get; set; } public double y { get; set; } public FakeMouseWindow Window { get; set; } }
 public sealed class FakePage {
@@ -68,6 +72,7 @@ public static class TestCore {
         Check(rejected && page.Shapes.Count==0 && app.Starts==0,"incomplete terminals are rejected before page changes");
         Check(DraftRenderer.Draw(app,page,plan)==8 && page.Shapes.Count==8 && app.Committed && app.Ends==1,"valid plan draws once within one undo scope");
         Check(page.Shapes[0].CellsU["LineColor"].FormulaU=="RGB(255,0,0)" && page.Shapes[1].CellsU["LineColor"].FormulaU=="RGB(0,176,80)","draft power and communication colours");
+        Check(page.Shapes[0].CellsU["User.WireFlowFrom.Value"].FormulaU=="\"SSC.POS\"" && page.Shapes[0].CellsU["User.WireFlowTo.Value"].FormulaU=="\"M1.POS\"" && page.Shapes[0].CellsU["User.WireFlowStatus.Value"].FormulaU=="\"DRAFT\"", "every generated shape carries explicit draft endpoint metadata");
         page=new FakePage{FailAt=3}; app=new FakeApp{Page=page}; bool failed=false;
         try { DraftRenderer.Draw(app,page,plan); } catch(InvalidOperationException) { failed=true; }
         Check(failed && page.Shapes.Count==0 && !app.Committed && app.Ends==1,"drawing error rolls back partial changes");
