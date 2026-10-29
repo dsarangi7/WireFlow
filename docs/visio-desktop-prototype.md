@@ -31,10 +31,19 @@ During marking, **Undo last terminal mark** returns to the previous terminal and
 blocks drawing until that terminal has been recorded again. After drawing, use
 Visio's Undo for the entire generated draft before creating a replacement.
 Starting a new chain while marks exist asks before clearing the current session.
-The engineer may explicitly save partially or fully marked terminals to a local
-JSON file and reload them on the same saved drawing path and page ID. Version 2
-records the bank and SSC identity. Earlier prototype version 1 files lack that
-identity and are rejected; the terminals must be marked again. The file
+After terminal marking, the engineer may select a proposed connection and use
+top-level marker shapes to add or remove ordered route waypoints. A connection
+with waypoints is drawn as one editable Visio polyline through those points;
+without waypoints it remains straight. These routes are manual draft geometry:
+the tool does not infer rails, produce curves or verify bend radii. Changing a
+terminal using Undo clears the current chain's routes so stale waypoints cannot
+be silently reused. The engineer reviews and approves every resulting route.
+
+The engineer may explicitly save partially or fully marked terminals and any
+completed manual routes to a local JSON file and reload them on the same saved
+drawing path and page ID. Version 3 records routes as well as bank and SSC identity;
+version 2 sessions remain readable with no routes. Earlier prototype version 1
+files lack that identity and are rejected; the terminals must be marked again. The file
 contains the drawing path and terminal coordinates and should be handled under
 AYK's drawing-data policy. Reload checks the path, page, count, order and duplicate
 coordinates; it does not detect changes made to the drawing at the same path, so
@@ -52,7 +61,8 @@ it is not approved for engineer use. The optional `test-native.ps1 -Blank
 -MouseEvents` check can hang and must only be run in a controlled test session.
 
 These lines are **draft previews only**, not released engineering routes: they
-are straight endpoint-to-endpoint lines. The pilot does not establish route
+are straight endpoint-to-endpoint lines unless the engineer supplies waypoints.
+The pilot does not establish route
 channels, bend radii, crossing avoidance, component counts across banks, route
 length, harness part number, cable schedule, BOM, electrical release validation,
 file history or access control. It does not
@@ -62,16 +72,18 @@ allowances, and harness approval decisions; these must not be inferred from a
 visual match. The engineer must verify every endpoint and route and approve
 the final drawing.
 
-Before drawing, the prototype checks pairs of proposed straight-line segments
-in the current chain and against top-level shapes carrying readable WireFlow draft
+Before drawing, the prototype checks the proposed line segments and manually
+defined polyline pieces in the current chain, including self-crossings, against
+one another and against top-level shapes carrying readable WireFlow draft
 metadata on the same page for 2D intersections and overlaps. It uses the current
 begin/end points of the tagged shapes; these are straight approximations even if
 the engineer has edited the geometry. Shared endpoints are not
 counted as crossings; endpoint-to-interior contacts and overlapping collinear
 segments are counted. If any are found, the engineer sees a count and up to
 three pairs of terminal names and can cancel or generate the draft for review.
-It warns when a shape with a readable `DRAFT` status has other unreadable metadata
-or endpoints. The check does not inspect untagged shapes, grouped shapes, exact
+It warns when a shape with a readable `DRAFT` status has unreadable metadata or
+endpoints, or is tagged as a manual polyline whose full geometry is not inspected.
+Its bank/SSC identity still prevents a duplicate chain. The check does not inspect untagged shapes, grouped shapes, exact
 curve geometry, actual clearances, channel separation or cable routing, and zero
 reported crossings is not evidence of a safe or approved installation.
 

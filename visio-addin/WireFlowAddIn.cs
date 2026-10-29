@@ -42,9 +42,9 @@ namespace Ayk.WireFlow.VisioAddIn {
     }
 
     public sealed class Point { public double X; public double Y; public Point(double x, double y) { if (Double.IsNaN(x) || Double.IsInfinity(x) || Double.IsNaN(y) || Double.IsInfinity(y)) throw new ArgumentException("Invalid terminal coordinates."); X=x; Y=y; } }
-    public sealed class Segment { public string Network; public string From; public string To; public Point A; public Point B; public int Bank; public int Ssc; }
+    public sealed class Segment { public string Network; public string From; public string To; public Point A; public Point B; public int Bank; public int Ssc; public List<Point> Waypoints; }
     public sealed class Crossing { public Segment First; public Segment Second; }
-    public sealed class ExistingDrafts { public readonly List<Segment> Segments=new List<Segment>(); public int Unreadable; }
+    public sealed class ExistingDrafts { public readonly List<Segment> Segments=new List<Segment>(); public readonly HashSet<string> Identities=new HashSet<string>(); public int Unreadable; }
     public static class DraftReview {
         private static string Literal(object formula) {
             string value=formula as string;
@@ -71,6 +71,10 @@ namespace Ayk.WireFlow.VisioAddIn {
                     int bankId,sscId;
                     if (!Int32.TryParse(bank,NumberStyles.None,CultureInfo.InvariantCulture,out bankId) || bankId < 1 || bankId > 9999 || !Int32.TryParse(ssc,NumberStyles.None,CultureInfo.InvariantCulture,out sscId) || sscId < 1 || sscId > 9999) throw new InvalidOperationException("Invalid draft identity.");
                     if (network != "POWER" && network != "COMM") throw new InvalidOperationException("Unknown draft network.");
+                    found.Identities.Add(bankId+":"+sscId);
+                    string routeMode="STRAIGHT";
+                    try { routeMode=Literal((object)shape.CellsU["User.WireFlowRoute.Value"].FormulaU); } catch { }
+                    if(routeMode!="STRAIGHT") throw new InvalidOperationException("Routed draft requires geometric inspection.");
                     found.Segments.Add(new Segment { Network=network, Bank=bankId, Ssc=sscId, From="B"+bank+"/SSC"+ssc+":"+from, To=to,
                         A=new Point((double)shape.CellsU["BeginX"].ResultIU,(double)shape.CellsU["BeginY"].ResultIU),
                         B=new Point((double)shape.CellsU["EndX"].ResultIU,(double)shape.CellsU["EndY"].ResultIU) });
@@ -79,11 +83,11 @@ namespace Ayk.WireFlow.VisioAddIn {
             return found;
         }
         public static bool HasChain(ExistingDrafts drafts, int bank, int ssc) {
-            return drafts.Segments.Exists(segment => segment.Bank==bank && segment.Ssc==ssc);
+            return drafts.Identities.Contains(bank+":"+ssc);
         }
         private static double Cross(double ax,double ay,double bx,double by) { return ax*by-ay*bx; }
         private static bool Same(Point a, Point b, double e) { return Math.Abs(a.X-b.X)<=e && Math.Abs(a.Y-b.Y)<=e; }
-        public static bool Intersects(Segment a, Segment b) {
+        private static bool StraightIntersects(Segment a, Segment b) {
             // This is only a two-dimensional line-overlap warning, in Visio's
             // internal drawing units; it is not a physical clearance check.
             double ux=a.B.X-a.A.X, uy=a.B.Y-a.A.Y, vx=b.B.X-b.A.X, vy=b.B.Y-b.A.Y;
@@ -104,10 +108,22 @@ namespace Ayk.WireFlow.VisioAddIn {
             if (Same(a.A,b.A,e) || Same(a.A,b.B,e) || Same(a.B,b.A,e) || Same(a.B,b.B,e)) return false;
             return true;
         }
+        private static List<Segment> Parts(Segment s) {
+            var points=new List<Point>(); points.Add(s.A); if(s.Waypoints!=null) points.AddRange(s.Waypoints); points.Add(s.B);
+            var parts=new List<Segment>(); for(int i=1;i<points.Count;i++) parts.Add(new Segment { A=points[i-1], B=points[i] }); return parts;
+        }
+        public static bool Intersects(Segment a, Segment b) {
+            foreach(var x in Parts(a)) foreach(var y in Parts(b)) if(StraightIntersects(x,y)) return true;
+            return false;
+        }
         public static List<Crossing> FindCrossings(IList<Segment> segments) {
             var found=new List<Crossing>();
-            for(int i=0;i<segments.Count;i++) for(int j=i+1;j<segments.Count;j++)
-                if (Intersects(segments[i],segments[j])) found.Add(new Crossing { First=segments[i],Second=segments[j] });
+            for(int i=0;i<segments.Count;i++) {
+                var parts=Parts(segments[i]); bool self=false;
+                for(int a=0;a<parts.Count && !self;a++) for(int b=a+1;b<parts.Count;b++) if(StraightIntersects(parts[a],parts[b])) { self=true; break; }
+                if(self) found.Add(new Crossing { First=segments[i],Second=segments[i] });
+                for(int j=i+1;j<segments.Count;j++) if (Intersects(segments[i],segments[j])) found.Add(new Crossing { First=segments[i],Second=segments[j] });
+            }
             return found;
         }
         public static List<Crossing> FindBetween(IList<Segment> proposed,IList<Segment> existing) {
@@ -139,6 +155,7 @@ namespace Ayk.WireFlow.VisioAddIn {
     }
     public sealed class DraftPlan {
         public readonly Dictionary<string, Point> Terminals = new Dictionary<string, Point>();
+        public readonly Dictionary<string, List<Point>> Routes = new Dictionary<string, List<Point>>();
         public int Modules;
         public int Bank = 1;
         public int Ssc = 1;
@@ -148,6 +165,21 @@ namespace Ayk.WireFlow.VisioAddIn {
             Terminals[name] = point;
         }
         public bool Remove(string name) { return Terminals.Remove(name); }
+        public static string RouteKey(string from,string to) { return from+">"+to; }
+        public void SetRoute(string from,string to,IList<Point> points) {
+            if(points==null || points.Count>20) throw new InvalidOperationException("Use no more than 20 waypoints per connection.");
+            var segment=Build().Find(s => s.From==from && s.To==to);
+            if(segment==null) throw new InvalidOperationException("The selected connection is not part of this chain.");
+            var copy=new List<Point>(); Point previous=segment.A;
+            foreach(var p in points) {
+                if(p==null) throw new InvalidOperationException("A waypoint is missing.");
+                var point=new Point(p.X,p.Y);
+                if(point.X==previous.X && point.Y==previous.Y) throw new InvalidOperationException("Consecutive route points must differ.");
+                copy.Add(point); previous=point;
+            }
+            if(copy.Count>0 && previous.X==segment.B.X && previous.Y==segment.B.Y) throw new InvalidOperationException("The last waypoint duplicates the end terminal.");
+            string key=RouteKey(from,to); if(copy.Count==0) Routes.Remove(key); else Routes[key]=copy;
+        }
         private Point Require(string key) { Point p; if (!Terminals.TryGetValue(key, out p)) throw new InvalidOperationException("Missing terminal: " + key); return p; }
         private Segment Connect(string network, string a, string b) { return new Segment { Network=network, Bank=Bank, Ssc=Ssc, From=a, To=b, A=Require(a), B=Require(b) }; }
         public List<Segment> Build() {
@@ -164,9 +196,12 @@ namespace Ayk.WireFlow.VisioAddIn {
             result.Add(Connect("COMM", "SSC.N", "M"+Modules+".S"));
             result.Add(Connect("POWER", "SSC.B-", "JB.NEG"));
             result.Add(Connect("POWER", "SSC.B+", "JB.POS"));
+            foreach(var segment in result) { List<Point> points; if(Routes.TryGetValue(RouteKey(segment.From,segment.To),out points)) segment.Waypoints=new List<Point>(points); }
             return result;
         }
     }
+    public sealed class RoutePoint { public double X { get; set; } public double Y { get; set; } }
+    public sealed class RouteEntry { public string From { get; set; } public string To { get; set; } public List<RoutePoint> Points { get; set; } }
     public sealed class MarkEntry { public string Name { get; set; } public double X { get; set; } public double Y { get; set; } }
     public sealed class MarkFile {
         public int Version { get; set; }
@@ -176,6 +211,7 @@ namespace Ayk.WireFlow.VisioAddIn {
         public int Bank { get; set; }
         public int Ssc { get; set; }
         public List<MarkEntry> Marks { get; set; }
+        public List<RouteEntry> Routes { get; set; }
     }
     public static class MarkPersistence {
         public static List<string> Steps(int modules) {
@@ -187,17 +223,23 @@ namespace Ayk.WireFlow.VisioAddIn {
         public static string Serialize(DraftPlan plan, string drawingPath, int pageId, int count) {
             var steps=Steps(plan.Modules);
             if (String.IsNullOrWhiteSpace(drawingPath) || pageId < 0 || count < 0 || count > steps.Count || plan.Terminals.Count != count || plan.Bank < 1 || plan.Bank > 9999 || plan.Ssc < 1 || plan.Ssc > 9999) throw new InvalidOperationException("Cannot save an invalid marking session.");
-            var file=new MarkFile { Version=2, DrawingPath=Path.GetFullPath(drawingPath), PageId=pageId, Modules=plan.Modules, Bank=plan.Bank, Ssc=plan.Ssc, Marks=new List<MarkEntry>() };
+            if(count < steps.Count && plan.Routes.Count>0) throw new InvalidOperationException("Finish terminal marking before saving routes.");
+            var file=new MarkFile { Version=3, DrawingPath=Path.GetFullPath(drawingPath), PageId=pageId, Modules=plan.Modules, Bank=plan.Bank, Ssc=plan.Ssc, Marks=new List<MarkEntry>(), Routes=new List<RouteEntry>() };
             for(int i=0;i<count;i++) {
                 Point p; if(!plan.Terminals.TryGetValue(steps[i],out p)) throw new InvalidOperationException("Terminal markings must be in order.");
                 file.Marks.Add(new MarkEntry { Name=steps[i], X=p.X, Y=p.Y });
             }
+            if(plan.Routes.Count>0) foreach(var segment in plan.Build()) if(segment.Waypoints!=null) {
+                var route=new RouteEntry { From=segment.From, To=segment.To, Points=new List<RoutePoint>() };
+                foreach(var point in segment.Waypoints) route.Points.Add(new RoutePoint { X=point.X,Y=point.Y }); file.Routes.Add(route);
+            }
+            if(file.Routes.Count!=plan.Routes.Count) throw new InvalidOperationException("A route is not part of this chain.");
             return new JavaScriptSerializer().Serialize(file);
         }
         public static DraftPlan Deserialize(string json, string drawingPath, int pageId, out int count) {
             if (json == null || json.Length > 1048576 || String.IsNullOrWhiteSpace(drawingPath)) throw new InvalidOperationException("The marking file or active drawing is invalid.");
             var file=new JavaScriptSerializer().Deserialize<MarkFile>(json);
-            if (file == null || file.Version != 2 || file.Bank < 1 || file.Bank > 9999 || file.Ssc < 1 || file.Ssc > 9999) throw new InvalidOperationException("This marking file is missing a valid bank and SSC identity. Mark the terminals again.");
+            if (file == null || (file.Version != 2 && file.Version != 3) || file.Bank < 1 || file.Bank > 9999 || file.Ssc < 1 || file.Ssc > 9999) throw new InvalidOperationException("This marking file is missing a valid bank and SSC identity. Mark the terminals again.");
             if (String.IsNullOrWhiteSpace(file.DrawingPath) || file.PageId != pageId || !String.Equals(Path.GetFullPath(file.DrawingPath),Path.GetFullPath(drawingPath),StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("This marking file belongs to another drawing or page.");
             var steps=Steps(file.Modules);
             if (file.Marks == null || file.Marks.Count > steps.Count) throw new InvalidOperationException("The marking file has invalid entries.");
@@ -206,6 +248,15 @@ namespace Ayk.WireFlow.VisioAddIn {
                 var mark=file.Marks[i]; if(mark == null || mark.Name != steps[i]) throw new InvalidOperationException("The marking file is not in the required order.");
                 plan.Set(mark.Name,mark.X,mark.Y);
             }
+            if(file.Version==3) {
+                if(file.Routes==null || file.Routes.Count>2*file.Modules+4 || (file.Routes.Count>0 && file.Marks.Count!=steps.Count)) throw new InvalidOperationException("The saved routes are incomplete or invalid.");
+                var seen=new HashSet<string>();
+                foreach(var route in file.Routes) {
+                    if(route==null || route.From==null || route.To==null || route.Points==null || route.Points.Count==0 || !seen.Add(DraftPlan.RouteKey(route.From,route.To))) throw new InvalidOperationException("A saved route is invalid or duplicated.");
+                    var points=new List<Point>(); foreach(var p in route.Points) { if(p==null) throw new InvalidOperationException("A waypoint is missing."); points.Add(new Point(p.X,p.Y)); }
+                    plan.SetRoute(route.From,route.To,points);
+                }
+            }
             count=file.Marks.Count; return plan;
         }
     }
@@ -213,8 +264,8 @@ namespace Ayk.WireFlow.VisioAddIn {
         private static void WriteMetadata(dynamic shape, Segment segment, DraftPlan plan) {
             // User cells are editable annotations, not electrical validation.
             shape.AddSection((short)242); // visSectionUser
-            string[] keys={"WireFlowFrom","WireFlowTo","WireFlowNetwork","WireFlowStatus","WireFlowBank","WireFlowSSC"};
-            string[] values={segment.From,segment.To,segment.Network,"DRAFT",plan.Bank.ToString(CultureInfo.InvariantCulture),plan.Ssc.ToString(CultureInfo.InvariantCulture)};
+            string[] keys={"WireFlowFrom","WireFlowTo","WireFlowNetwork","WireFlowStatus","WireFlowBank","WireFlowSSC","WireFlowRoute"};
+            string[] values={segment.From,segment.To,segment.Network,"DRAFT",plan.Bank.ToString(CultureInfo.InvariantCulture),plan.Ssc.ToString(CultureInfo.InvariantCulture),segment.Waypoints==null ? "STRAIGHT" : "WAYPOINTS"};
             for(int i=0;i<keys.Length;i++) {
                 shape.AddNamedRow((short)242,keys[i],(short)0);
                 shape.CellsU["User."+keys[i]+".Value"].FormulaU="\""+values[i].Replace("\"","\"\"")+"\"";
@@ -227,7 +278,13 @@ namespace Ayk.WireFlow.VisioAddIn {
             int scope = app.BeginUndoScope("AYK WireFlow draft wiring");
             try {
                 foreach (var segment in segments) {
-                    dynamic shape = pg.DrawLine(segment.A.X, segment.A.Y, segment.B.X, segment.B.Y);
+                    dynamic shape;
+                    if(segment.Waypoints==null) shape=pg.DrawLine(segment.A.X, segment.A.Y, segment.B.X, segment.B.Y);
+                    else {
+                        var points=new List<Point>(); points.Add(segment.A); points.AddRange(segment.Waypoints); points.Add(segment.B);
+                        double[] xy=new double[points.Count*2]; for(int i=0;i<points.Count;i++) { xy[i*2]=points[i].X; xy[i*2+1]=points[i].Y; }
+                        shape=pg.DrawPolyline(ref xy,(short)8); // visPolyline1D
+                    }
                     shape.CellsU["LineColor"].FormulaU = segment.Network == "POWER" ? "RGB(255,0,0)" : "RGB(0,176,80)";
                     shape.CellsU["LineWeight"].FormulaU = "0.012 in";
                     shape.Text = "";
@@ -239,6 +296,7 @@ namespace Ayk.WireFlow.VisioAddIn {
     }
 
     internal sealed class WorkspaceForm : Form {
+        private sealed class RouteOption { public string From; public string To; public string Network; public override string ToString() { return Network+" · "+From+" → "+To; } }
         private readonly dynamic app;
         private readonly DraftPlan plan = new DraftPlan();
         private readonly NumericUpDown count = new NumericUpDown { Minimum=2, Maximum=48, Value=12, Width=70 };
@@ -249,6 +307,10 @@ namespace Ayk.WireFlow.VisioAddIn {
         private readonly Button undo = new Button { Text="Undo last terminal mark", Width=245, Height=36 };
         private readonly Button saveMarks = new Button { Text="Save terminal marks", Width=245, Height=36 };
         private readonly Button loadMarks = new Button { Text="Load terminal marks", Width=245, Height=36 };
+        private readonly ComboBox routeChoice = new ComboBox { Width=480, DropDownStyle=ComboBoxStyle.DropDownList };
+        private readonly Button addWaypoint = new Button { Text="Add selected route marker", Width=245, Height=36 };
+        private readonly Button removeWaypoint = new Button { Text="Remove last route marker", Width=245, Height=36 };
+        private readonly Label routeStatus = new Label { Width=510, Height=42 };
         private readonly Button pick = new Button { Text="Click ports on drawing", Width=245, Height=40 };
         private readonly Button draw = new Button { Text="Draw draft on active page", Width=245, Height=40 };
         private readonly List<string> prompts = new List<string>();
@@ -258,21 +320,23 @@ namespace Ayk.WireFlow.VisioAddIn {
         private PageMouseSink mouseSink;
         private bool picking;
         public WorkspaceForm(object application) {
-            app=application; Text="AYK WireFlow — prototype"; Width=580; Height=340; TopMost=true;
+            app=application; Text="AYK WireFlow — prototype"; Width=580; Height=540; TopMost=true;
             var layout=new FlowLayoutPanel { Dock=DockStyle.Fill, FlowDirection=FlowDirection.TopDown, Padding=new Padding(12), WrapContents=false, AutoScroll=true };
             var ids=new FlowLayoutPanel { Width=520, Height=34, WrapContents=false };
             ids.Controls.Add(new Label { Text="Bank", AutoSize=true }); ids.Controls.Add(bank);
             ids.Controls.Add(new Label { Text="SSC", AutoSize=true }); ids.Controls.Add(ssc);
             ids.Controls.Add(new Label { Text="Modules", AutoSize=true }); ids.Controls.Add(count); layout.Controls.Add(ids);
             var start=new Button { Text="Start terminal marking", Width=245, Height=36 };
-            layout.Controls.Add(start); layout.Controls.Add(status); layout.Controls.Add(pick); layout.Controls.Add(mark); layout.Controls.Add(undo); layout.Controls.Add(saveMarks); layout.Controls.Add(loadMarks); layout.Controls.Add(draw); Controls.Add(layout);
+            layout.Controls.Add(start); layout.Controls.Add(status); layout.Controls.Add(pick); layout.Controls.Add(mark); layout.Controls.Add(undo); layout.Controls.Add(saveMarks); layout.Controls.Add(loadMarks);
+            layout.Controls.Add(new Label { Text="Optional route waypoints (draft only):", Width=500, Height=22 }); layout.Controls.Add(routeChoice); layout.Controls.Add(routeStatus); layout.Controls.Add(addWaypoint); layout.Controls.Add(removeWaypoint); layout.Controls.Add(draw); Controls.Add(layout);
             start.Click += delegate { StartPlan(); }; mark.Click += delegate { Record(); }; pick.Click += delegate { TogglePicking(); }; undo.Click += delegate { UndoMark(); }; draw.Click += delegate { Draw(); };
             saveMarks.Click += delegate { SaveMarks(); }; loadMarks.Click += delegate { LoadMarks(); };
+            routeChoice.SelectedIndexChanged += delegate { ShowRoute(); }; addWaypoint.Click += delegate { AddWaypoint(); }; removeWaypoint.Click += delegate { RemoveWaypoint(); };
             FormClosed += delegate { StopPicking(); };
 #if !EXPERIMENTAL_MOUSE_PICKING
             pick.Visible=false;
 #endif
-            pick.Enabled=false; mark.Enabled=false; undo.Enabled=false; saveMarks.Enabled=false; draw.Enabled=false;
+            pick.Enabled=false; mark.Enabled=false; undo.Enabled=false; saveMarks.Enabled=false; draw.Enabled=false; routeChoice.Enabled=false; addWaypoint.Enabled=false; removeWaypoint.Enabled=false;
 #if EXPERIMENTAL_MOUSE_PICKING
             status.Text="Pilot: mark terminal positions in order, directly on the drawing or by selecting marker shapes.";
 #else
@@ -283,7 +347,7 @@ namespace Ayk.WireFlow.VisioAddIn {
             try {
                 if (next > 0 && MessageBox.Show(this,"Starting a new chain clears the current terminal marks from this window. Save them first if you need to return to them. Continue?","Start a new chain",MessageBoxButtons.YesNo,MessageBoxIcon.Question) != DialogResult.Yes) return;
                 StopPicking(); page=app.ActivePage; if (page == null) throw new InvalidOperationException("Open a Visio drawing first.");
-                plan.Terminals.Clear(); plan.Modules=(int)count.Value; plan.Bank=(int)bank.Value; plan.Ssc=(int)ssc.Value; prompts.Clear(); next=0;
+                plan.Terminals.Clear(); plan.Routes.Clear(); plan.Modules=(int)count.Value; plan.Bank=(int)bank.Value; plan.Ssc=(int)ssc.Value; prompts.Clear(); next=0;
                 prompts.AddRange(MarkPersistence.Steps(plan.Modules));
                 // The event sink needs real interactive Visio validation before
                 // it can be enabled in a build intended for other users.
@@ -292,7 +356,7 @@ namespace Ayk.WireFlow.VisioAddIn {
 #else
                 pick.Enabled=false;
 #endif
-                mark.Enabled=true; undo.Enabled=false; saveMarks.Enabled=true; draw.Enabled=false; ShowPrompt();
+                mark.Enabled=true; undo.Enabled=false; saveMarks.Enabled=true; draw.Enabled=false; DisableRoutes(); ShowPrompt();
             } catch (Exception ex) { status.Text="Could not start: "+ex.Message; }
         }
         private void ShowPrompt() {
@@ -324,7 +388,7 @@ namespace Ayk.WireFlow.VisioAddIn {
             try {
                 plan.Set(prompts[next],x,y); next++; undo.Enabled=true;
                 if (next == prompts.Count) {
-                    picking=false; mark.Enabled=false; pick.Enabled=false; draw.Enabled=true;
+                    picking=false; mark.Enabled=false; pick.Enabled=false; draw.Enabled=true; PopulateRoutes();
                     status.Text="All terminal positions recorded. Draw a draft and review every endpoint and route.";
                     BeginInvoke(new Action(StopPicking));
                 } else ShowPrompt();
@@ -333,7 +397,8 @@ namespace Ayk.WireFlow.VisioAddIn {
         }
         private void UndoMark() {
             if (next == 0) return;
-            StopPicking(); next--; plan.Remove(prompts[next]); mark.Enabled=true; draw.Enabled=false;
+            if (plan.Routes.Count>0 && MessageBox.Show(this,"Changing a terminal clears all manual routes for this chain. Save your marks first if needed. Continue?","Clear manual routes",MessageBoxButtons.YesNo,MessageBoxIcon.Question) != DialogResult.Yes) return;
+            StopPicking(); next--; plan.Remove(prompts[next]); plan.Routes.Clear(); DisableRoutes(); mark.Enabled=true; draw.Enabled=false;
 #if EXPERIMENTAL_MOUSE_PICKING
             pick.Enabled=true;
 #endif
@@ -371,8 +436,10 @@ namespace Ayk.WireFlow.VisioAddIn {
                     var info=new FileInfo(dialog.FileName); if(info.Length > 1048576) throw new InvalidOperationException("The marking file is too large.");
                     int restoredCount;
                     var restored=MarkPersistence.Deserialize(File.ReadAllText(dialog.FileName),drawingPath,(int)((dynamic)activePage).ID,out restoredCount);
-                    StopPicking(); page=activePage; plan.Terminals.Clear(); plan.Modules=restored.Modules; plan.Bank=restored.Bank; plan.Ssc=restored.Ssc;
+                    if(next>0 && MessageBox.Show(this,"Loading this file replaces the current terminal marks and routes in this window. Continue?","Load terminal marks",MessageBoxButtons.YesNo,MessageBoxIcon.Question) != DialogResult.Yes) return;
+                    StopPicking(); page=activePage; plan.Terminals.Clear(); plan.Routes.Clear(); plan.Modules=restored.Modules; plan.Bank=restored.Bank; plan.Ssc=restored.Ssc;
                     foreach(var entry in restored.Terminals) plan.Terminals.Add(entry.Key,entry.Value);
+                    foreach(var entry in restored.Routes) plan.Routes.Add(entry.Key,new List<Point>(entry.Value));
                     prompts.Clear(); prompts.AddRange(MarkPersistence.Steps(plan.Modules)); count.Value=plan.Modules; bank.Value=plan.Bank; ssc.Value=plan.Ssc; next=restoredCount;
                     bool complete=next==prompts.Count; mark.Enabled=!complete; undo.Enabled=next>0; saveMarks.Enabled=true; draw.Enabled=complete;
 #if EXPERIMENTAL_MOUSE_PICKING
@@ -380,8 +447,8 @@ namespace Ayk.WireFlow.VisioAddIn {
 #else
                     pick.Enabled=false;
 #endif
-                    if(complete) status.Text="All saved terminals loaded. Verify positions and review routes before drawing.";
-                    else ShowPrompt();
+                    if(complete) { PopulateRoutes(); status.Text="Saved terminals and routes loaded. Verify positions and review routes before drawing."; }
+                    else { DisableRoutes(); ShowPrompt(); }
                 }
             } catch(Exception ex) { status.Text="Could not load terminal marks: "+ex.Message; }
         }
@@ -394,9 +461,38 @@ namespace Ayk.WireFlow.VisioAddIn {
                 dynamic shape=selection[1];
                 double x=shape.CellsU["PinX"].ResultIU; double y=shape.CellsU["PinY"].ResultIU;
                 plan.Set(prompts[next],x,y); next++; undo.Enabled=true;
-                if (next == prompts.Count) { mark.Enabled=false; pick.Enabled=false; draw.Enabled=true; status.Text="All terminal positions recorded. Draw a draft and review every endpoint and route."; }
+                if (next == prompts.Count) { mark.Enabled=false; pick.Enabled=false; draw.Enabled=true; PopulateRoutes(); status.Text="All terminal positions recorded. Add route waypoints if needed, then draw a draft for review."; }
                 else ShowPrompt();
             } catch (Exception ex) { status.Text="Could not record: "+ex.Message+"\nSelect one marker on the original page and try again."; }
+        }
+        private void DisableRoutes() { routeChoice.Items.Clear(); routeChoice.Enabled=false; addWaypoint.Enabled=false; removeWaypoint.Enabled=false; routeStatus.Text="Mark all terminals before defining routes."; }
+        private void PopulateRoutes() {
+            routeChoice.Items.Clear();
+            foreach(var segment in plan.Build()) routeChoice.Items.Add(new RouteOption { From=segment.From, To=segment.To, Network=segment.Network });
+            routeChoice.Enabled=true; addWaypoint.Enabled=true; if(routeChoice.Items.Count>0) routeChoice.SelectedIndex=0; ShowRoute();
+        }
+        private void ShowRoute() {
+            var option=routeChoice.SelectedItem as RouteOption; List<Point> points;
+            int n=option!=null && plan.Routes.TryGetValue(DraftPlan.RouteKey(option.From,option.To),out points) ? points.Count : 0;
+            removeWaypoint.Enabled=routeChoice.Enabled && n>0;
+            routeStatus.Text=n==0 ? "No waypoints: a straight draft line will be drawn." : n+" waypoint(s), in selected order. Review the route and bend requirements.";
+        }
+        private void AddWaypoint() {
+            try {
+                CheckChainInputs(); if(page != app.ActivePage) throw new InvalidOperationException("Return to the page on which marking started.");
+                var option=routeChoice.SelectedItem as RouteOption; if(option==null) throw new InvalidOperationException("Choose a connection first.");
+                dynamic selection=app.ActiveWindow.Selection; if((int)selection.Count!=1) throw new InvalidOperationException("Select one top-level route marker shape.");
+                dynamic shape=selection[1]; var point=new Point((double)shape.CellsU["PinX"].ResultIU,(double)shape.CellsU["PinY"].ResultIU);
+                List<Point> current; var points=plan.Routes.TryGetValue(DraftPlan.RouteKey(option.From,option.To),out current) ? new List<Point>(current) : new List<Point>();
+                points.Add(point); plan.SetRoute(option.From,option.To,points); ShowRoute();
+            } catch(Exception ex) { routeStatus.Text="Could not add waypoint: "+ex.Message; }
+        }
+        private void RemoveWaypoint() {
+            try {
+                var option=routeChoice.SelectedItem as RouteOption; List<Point> current;
+                if(option==null || !plan.Routes.TryGetValue(DraftPlan.RouteKey(option.From,option.To),out current) || current.Count==0) return;
+                var points=new List<Point>(current); points.RemoveAt(points.Count-1); plan.SetRoute(option.From,option.To,points); ShowRoute();
+            } catch(Exception ex) { routeStatus.Text="Could not remove waypoint: "+ex.Message; }
         }
         private void Draw() {
             try {
@@ -412,10 +508,10 @@ namespace Ayk.WireFlow.VisioAddIn {
                     for(int i=0;i<Math.Min(3,crossings.Count);i++) {
                         var c=crossings[i]; lines.Add(c.First.From+" → "+c.First.To+" / "+c.Second.From+" → "+c.Second.To);
                     }
-                    string warning=crossings.Count+" possible crossing or overlap(s) among proposed lines and tagged draft wires:\n"+String.Join("\n",lines.ToArray())+(existing.Unreadable > 0 ? "\n"+existing.Unreadable+" tagged draft shape(s) could not be inspected." : "")+"\n\nThis compares straight endpoints only. It does not inspect untagged wires, bends or clearance. Generate the draft for review anyway?";
+                    string warning=crossings.Count+" possible crossing or overlap(s) among proposed paths and tagged draft wires:\n"+String.Join("\n",lines.ToArray())+(existing.Unreadable > 0 ? "\n"+existing.Unreadable+" tagged draft shape(s) could not be inspected." : "")+"\n\nThis is a 2D visual check. It does not inspect untagged wires, prior routed paths, curves or clearance. Generate the draft for review anyway?";
                     if (MessageBox.Show(this,warning,"Review draft crossings",MessageBoxButtons.YesNo,MessageBoxIcon.Warning) != DialogResult.Yes) { status.Text="Draft not drawn. Review the terminal marks and planned routes."; return; }
                 }
-                int n=DraftRenderer.Draw(app,page,plan); draw.Enabled=false; undo.Enabled=false;
+                int n=DraftRenderer.Draw(app,page,plan); draw.Enabled=false; undo.Enabled=false; routeChoice.Enabled=false; addWaypoint.Enabled=false; removeWaypoint.Enabled=false;
                 status.Text=n+" draft wire shapes added. "+crossings.Count+" possible crossing(s). Review routes, endpoints, harnesses and approvals. Use Visio Undo to remove this draft.";
             } catch (Exception ex) { status.Text="No complete draft was added: "+ex.Message; }
         }
