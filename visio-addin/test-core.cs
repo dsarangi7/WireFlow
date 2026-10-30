@@ -99,27 +99,32 @@ public static class TestCore {
         Check(afterUndo,"an undone terminal blocks drawing until re-marked");
         plan.Set("M2.POS",16,16);
         var order=MarkPersistence.Steps(2); int restoredCount;
-        var partial=new DraftPlan{Modules=2,Bank=2,Ssc=3}; for(int i=0;i<5;i++) partial.Set(order[i],i+1,i+1);
+        var partial=new DraftPlan{Modules=2,Bank=2,Ssc=3,JunctionBox=5}; for(int i=0;i<5;i++) partial.Set(order[i],i+1,i+1);
         var serialized=MarkPersistence.Serialize(partial,@"G:\\sample.vsdx",42,5);
         var restored=MarkPersistence.Deserialize(serialized,@"g:\\sample.vsdx",42,out restoredCount);
-        Check(restoredCount==5 && restored.Modules==2 && restored.Bank==2 && restored.Ssc==3 && restored.Terminals[order[4]].X==5,"partial marks and bank/SSC identity round trip for the original drawing and page");
-        var legacyV2=MarkPersistence.Deserialize(serialized.Replace("\"Version\":3", "\"Version\":2"),@"G:\\sample.vsdx",42,out restoredCount);
-        Check(restoredCount==5 && legacyV2.Routes.Count==0 && legacyV2.Ssc==3,"version 2 terminal sessions remain readable without invented routes");
+        Check(restoredCount==5 && restored.Modules==2 && restored.Bank==2 && restored.Ssc==3 && restored.JunctionBox==5 && restored.Terminals[order[4]].X==5,"partial marks and chain identities round trip for the original drawing and page");
+        string oldV2=serialized.Replace("\"Version\":4", "\"Version\":2");
+        bool needsJb=false; try { MarkPersistence.Deserialize(oldV2,@"G:\\sample.vsdx",42,out restoredCount); } catch(InvalidOperationException) { needsJb=true; }
+        Check(needsJb,"legacy sessions require an explicitly confirmed junction box");
+        var legacyV2=MarkPersistence.Deserialize(oldV2,@"G:\\sample.vsdx",42,7,out restoredCount);
+        Check(restoredCount==5 && legacyV2.Routes.Count==0 && legacyV2.Ssc==3 && legacyV2.JunctionBox==7,"version 2 sessions accept explicit junction box without invented routes");
         bool differentPage=false; try { MarkPersistence.Deserialize(serialized,@"G:\\sample.vsdx",43,out restoredCount); } catch(InvalidOperationException) { differentPage=true; }
         Check(differentPage,"marks cannot be loaded onto a different page");
         bool differentFile=false; try { MarkPersistence.Deserialize(serialized,@"G:\\other.vsdx",42,out restoredCount); } catch(InvalidOperationException) { differentFile=true; }
         Check(differentFile,"marks cannot be loaded into a different drawing");
         bool malformed=false; try { MarkPersistence.Deserialize(serialized.Replace("SSC.S", "M2.POS"),@"G:\\sample.vsdx",42,out restoredCount); } catch(InvalidOperationException) { malformed=true; }
         Check(malformed,"out-of-order marking files are rejected");
-        bool oldVersion=false; try { MarkPersistence.Deserialize(serialized.Replace("\"Version\":3", "\"Version\":1"),@"G:\\sample.vsdx",42,out restoredCount); } catch(InvalidOperationException) { oldVersion=true; }
+        bool oldVersion=false; try { MarkPersistence.Deserialize(serialized.Replace("\"Version\":4", "\"Version\":1"),@"G:\\sample.vsdx",42,out restoredCount); } catch(InvalidOperationException) { oldVersion=true; }
         Check(oldVersion,"old mark files without verified bank and SSC identity are rejected");
-        plan.Bank=2; plan.Ssc=3;
+        plan.Bank=2; plan.Ssc=3; plan.JunctionBox=5;
         plan.SetRoute("SSC.POS","M1.POS",new [] {new Point(20,21),new Point(22,23)});
         var routeFile=MarkPersistence.Serialize(plan,@"G:\\sample.vsdx",42,order.Count);
         var restoredRoute=MarkPersistence.Deserialize(routeFile,@"G:\\sample.vsdx",42,out restoredCount);
         Check(restoredRoute.Routes[DraftPlan.RouteKey("SSC.POS","M1.POS")].Count==2 && restoredRoute.Routes[DraftPlan.RouteKey("SSC.POS","M1.POS")][0].X==20,"manual waypoints round trip in their original order");
+        var legacyV3=MarkPersistence.Deserialize(routeFile.Replace("\"Version\":4", "\"Version\":3"),@"G:\\sample.vsdx",42,8,out restoredCount);
+        Check(legacyV3.JunctionBox==8 && legacyV3.Routes[DraftPlan.RouteKey("SSC.POS","M1.POS")].Count==2,"version 3 routes load with an explicitly assigned junction box");
         string preview=DraftReview.FormatPreview(restoredRoute);
-        Check(preview.Contains("Bank 2") && preview.Contains("SSC 3") && preview.Contains("SSC.POS\tM1.POS") && preview.Contains("20,21 → 22,23") && preview.Contains("DRAFT"),"preview lists chain identity, endpoints and manual route points as draft");
+        Check(preview.Contains("Bank 2") && preview.Contains("SSC 3") && preview.Contains("junction box 5") && preview.Contains("SSC.POS\tM1.POS") && preview.Contains("20,21 → 22,23") && preview.Contains("DRAFT"),"preview lists chain identity, endpoints and manual route points as draft");
         bool wrongRoute=false; try { plan.SetRoute("M2.POS","SSC.POS",new [] {new Point(20,21)}); } catch(InvalidOperationException) { wrongRoute=true; }
         Check(wrongRoute,"routes cannot be attached to an unlisted connection");
         var page=new FakePage(); var app=new FakeApp{Page=page};
@@ -129,7 +134,7 @@ public static class TestCore {
         Check(DraftRenderer.Draw(app,page,plan)==8 && page.Shapes.Count==8 && app.Committed && app.Ends==1,"valid plan draws once within one undo scope");
         Check(page.Polylines==1 && page.LastPolyline.Length==8 && page.LastPolyline[2]==20 && page.LastPolyline[4]==22,"manual route is one editable polyline with exact waypoints");
         Check(page.Shapes[0].CellsU["LineColor"].FormulaU=="RGB(255,0,0)" && page.Shapes[1].CellsU["LineColor"].FormulaU=="RGB(0,176,80)","draft power and communication colours");
-        Check(page.Shapes[0].CellsU["User.WireFlowFrom.Value"].FormulaU=="\"SSC.POS\"" && page.Shapes[0].CellsU["User.WireFlowTo.Value"].FormulaU=="\"M1.POS\"" && page.Shapes[0].CellsU["User.WireFlowStatus.Value"].FormulaU=="\"DRAFT\"" && page.Shapes[0].CellsU["User.WireFlowBank.Value"].FormulaU=="\"2\"" && page.Shapes[0].CellsU["User.WireFlowSSC.Value"].FormulaU=="\"3\"", "every generated shape carries explicit bank, SSC and draft endpoint metadata");
+        Check(page.Shapes[0].CellsU["User.WireFlowFrom.Value"].FormulaU=="\"SSC.POS\"" && page.Shapes[0].CellsU["User.WireFlowTo.Value"].FormulaU=="\"M1.POS\"" && page.Shapes[0].CellsU["User.WireFlowStatus.Value"].FormulaU=="\"DRAFT\"" && page.Shapes[0].CellsU["User.WireFlowBank.Value"].FormulaU=="\"2\"" && page.Shapes[0].CellsU["User.WireFlowSSC.Value"].FormulaU=="\"3\"" && page.Shapes[0].CellsU["User.WireFlowJB.Value"].FormulaU=="\"5\"", "every generated shape carries explicit chain identities and draft endpoint metadata");
         var reading=new FakeReadPage(); reading.Shapes.Items.Add(new FakeShape());
         var routedTagged=page.Shapes[0]; reading.Shapes.Items.Add(routedTagged);
         var tagged=page.Shapes[1]; tagged.CellsU["BeginX"].ResultIU=0; tagged.CellsU["BeginY"].ResultIU=0; tagged.CellsU["EndX"].ResultIU=2; tagged.CellsU["EndY"].ResultIU=2; reading.Shapes.Items.Add(tagged);

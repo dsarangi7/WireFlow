@@ -63,7 +63,7 @@ namespace Ayk.WireFlow.VisioAddIn {
         public static string FormatPreview(DraftPlan plan) {
             var segments=plan.Build(); var lines=new List<string>();
             lines.Add("DRAFT — verify endpoints, routes and harnesses before release.");
-            lines.Add("Bank "+plan.Bank+" · SSC "+plan.Ssc+" · "+plan.Modules+" modules · coordinates in Visio internal inches");
+            lines.Add("Bank "+plan.Bank+" · SSC "+plan.Ssc+" · junction box "+plan.JunctionBox+" · "+plan.Modules+" modules · coordinates in Visio internal inches");
             lines.Add("Network\tFrom\tTo\tRoute points (x,y)");
             foreach(var segment in segments) {
                 var points=new List<string>(); points.Add(PointLabel(segment.A));
@@ -187,6 +187,7 @@ namespace Ayk.WireFlow.VisioAddIn {
         public int Modules;
         public int Bank = 1;
         public int Ssc = 1;
+        public int JunctionBox = 1;
         public void Set(string name, double x, double y) {
             var point = new Point(x,y);
             foreach (var entry in Terminals) if (entry.Key != name && entry.Value.X == x && entry.Value.Y == y) throw new InvalidOperationException("This marker is already assigned to " + entry.Key + ". Select a different terminal marker.");
@@ -212,7 +213,7 @@ namespace Ayk.WireFlow.VisioAddIn {
         private Segment Connect(string network, string a, string b) { return new Segment { Network=network, Bank=Bank, Ssc=Ssc, From=a, To=b, A=Require(a), B=Require(b) }; }
         public List<Segment> Build() {
             if (Modules < 2 || Modules > 48) throw new InvalidOperationException("Enter 2 to 48 modules in the chain.");
-            if (Bank < 1 || Bank > 9999 || Ssc < 1 || Ssc > 9999) throw new InvalidOperationException("Enter a valid bank and SSC number.");
+            if (Bank < 1 || Bank > 9999 || Ssc < 1 || Ssc > 9999 || JunctionBox < 1 || JunctionBox > 9999) throw new InvalidOperationException("Enter a valid bank, SSC and junction-box number.");
             var result = new List<Segment>();
             result.Add(Connect("POWER", "SSC.POS", "M1.POS"));
             result.Add(Connect("COMM", "SSC.S", "M1.N"));
@@ -235,7 +236,7 @@ namespace Ayk.WireFlow.VisioAddIn {
         private static readonly string[] Ports={"S","N","NEG","POS"};
         public static void CopyPorts(DraftPlan plan, Point referenceCentre, Point targetCentre, int targetModule) {
             if(plan==null || referenceCentre==null || targetCentre==null || targetModule<2 || targetModule>plan.Modules || plan.Routes.Count!=0) throw new InvalidOperationException("Choose the next module before defining routes.");
-            var staged=new DraftPlan { Modules=plan.Modules, Bank=plan.Bank, Ssc=plan.Ssc };
+            var staged=new DraftPlan { Modules=plan.Modules, Bank=plan.Bank, Ssc=plan.Ssc, JunctionBox=plan.JunctionBox };
             foreach(var entry in plan.Terminals) staged.Set(entry.Key,entry.Value.X,entry.Value.Y);
             foreach(string port in Ports) {
                 Point source; string key="M"+targetModule+"."+port;
@@ -253,6 +254,7 @@ namespace Ayk.WireFlow.VisioAddIn {
         public int Modules { get; set; }
         public int Bank { get; set; }
         public int Ssc { get; set; }
+        public int JunctionBox { get; set; }
         public List<MarkEntry> Marks { get; set; }
         public List<RouteEntry> Routes { get; set; }
     }
@@ -265,9 +267,9 @@ namespace Ayk.WireFlow.VisioAddIn {
         }
         public static string Serialize(DraftPlan plan, string drawingPath, int pageId, int count) {
             var steps=Steps(plan.Modules);
-            if (String.IsNullOrWhiteSpace(drawingPath) || pageId < 0 || count < 0 || count > steps.Count || plan.Terminals.Count != count || plan.Bank < 1 || plan.Bank > 9999 || plan.Ssc < 1 || plan.Ssc > 9999) throw new InvalidOperationException("Cannot save an invalid marking session.");
+            if (String.IsNullOrWhiteSpace(drawingPath) || pageId < 0 || count < 0 || count > steps.Count || plan.Terminals.Count != count || plan.Bank < 1 || plan.Bank > 9999 || plan.Ssc < 1 || plan.Ssc > 9999 || plan.JunctionBox < 1 || plan.JunctionBox > 9999) throw new InvalidOperationException("Cannot save an invalid marking session.");
             if(count < steps.Count && plan.Routes.Count>0) throw new InvalidOperationException("Finish terminal marking before saving routes.");
-            var file=new MarkFile { Version=3, DrawingPath=Path.GetFullPath(drawingPath), PageId=pageId, Modules=plan.Modules, Bank=plan.Bank, Ssc=plan.Ssc, Marks=new List<MarkEntry>(), Routes=new List<RouteEntry>() };
+            var file=new MarkFile { Version=4, DrawingPath=Path.GetFullPath(drawingPath), PageId=pageId, Modules=plan.Modules, Bank=plan.Bank, Ssc=plan.Ssc, JunctionBox=plan.JunctionBox, Marks=new List<MarkEntry>(), Routes=new List<RouteEntry>() };
             for(int i=0;i<count;i++) {
                 Point p; if(!plan.Terminals.TryGetValue(steps[i],out p)) throw new InvalidOperationException("Terminal markings must be in order.");
                 file.Marks.Add(new MarkEntry { Name=steps[i], X=p.X, Y=p.Y });
@@ -279,19 +281,26 @@ namespace Ayk.WireFlow.VisioAddIn {
             if(file.Routes.Count!=plan.Routes.Count) throw new InvalidOperationException("A route is not part of this chain.");
             return new JavaScriptSerializer().Serialize(file);
         }
-        public static DraftPlan Deserialize(string json, string drawingPath, int pageId, out int count) {
+        public static int Version(string json) {
+            if (json == null || json.Length > 1048576) throw new InvalidOperationException("The marking file is invalid.");
+            var file=new JavaScriptSerializer().Deserialize<MarkFile>(json); return file==null ? 0 : file.Version;
+        }
+        public static DraftPlan Deserialize(string json, string drawingPath, int pageId, out int count) { return Deserialize(json,drawingPath,pageId,0,out count); }
+        public static DraftPlan Deserialize(string json, string drawingPath, int pageId, int legacyJunctionBox, out int count) {
             if (json == null || json.Length > 1048576 || String.IsNullOrWhiteSpace(drawingPath)) throw new InvalidOperationException("The marking file or active drawing is invalid.");
             var file=new JavaScriptSerializer().Deserialize<MarkFile>(json);
-            if (file == null || (file.Version != 2 && file.Version != 3) || file.Bank < 1 || file.Bank > 9999 || file.Ssc < 1 || file.Ssc > 9999) throw new InvalidOperationException("This marking file is missing a valid bank and SSC identity. Mark the terminals again.");
+            if (file == null || (file.Version != 2 && file.Version != 3 && file.Version != 4) || file.Bank < 1 || file.Bank > 9999 || file.Ssc < 1 || file.Ssc > 9999) throw new InvalidOperationException("This marking file is missing a valid bank and SSC identity. Mark the terminals again.");
+            int jb=file.Version < 4 ? legacyJunctionBox : file.JunctionBox;
+            if(jb<1 || jb>9999) throw new InvalidOperationException("The marking file needs an explicitly confirmed junction-box number.");
             if (String.IsNullOrWhiteSpace(file.DrawingPath) || file.PageId != pageId || !String.Equals(Path.GetFullPath(file.DrawingPath),Path.GetFullPath(drawingPath),StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("This marking file belongs to another drawing or page.");
             var steps=Steps(file.Modules);
             if (file.Marks == null || file.Marks.Count > steps.Count) throw new InvalidOperationException("The marking file has invalid entries.");
-            var plan=new DraftPlan { Modules=file.Modules, Bank=file.Bank, Ssc=file.Ssc };
+            var plan=new DraftPlan { Modules=file.Modules, Bank=file.Bank, Ssc=file.Ssc, JunctionBox=jb };
             for(int i=0;i<file.Marks.Count;i++) {
                 var mark=file.Marks[i]; if(mark == null || mark.Name != steps[i]) throw new InvalidOperationException("The marking file is not in the required order.");
                 plan.Set(mark.Name,mark.X,mark.Y);
             }
-            if(file.Version==3) {
+            if(file.Version>=3) {
                 if(file.Routes==null || file.Routes.Count>2*file.Modules+4 || (file.Routes.Count>0 && file.Marks.Count!=steps.Count)) throw new InvalidOperationException("The saved routes are incomplete or invalid.");
                 var seen=new HashSet<string>();
                 foreach(var route in file.Routes) {
@@ -307,8 +316,8 @@ namespace Ayk.WireFlow.VisioAddIn {
         private static void WriteMetadata(dynamic shape, Segment segment, DraftPlan plan) {
             // User cells are editable annotations, not electrical validation.
             shape.AddSection((short)242); // visSectionUser
-            string[] keys={"WireFlowFrom","WireFlowTo","WireFlowNetwork","WireFlowStatus","WireFlowBank","WireFlowSSC","WireFlowRoute"};
-            string[] values={segment.From,segment.To,segment.Network,"DRAFT",plan.Bank.ToString(CultureInfo.InvariantCulture),plan.Ssc.ToString(CultureInfo.InvariantCulture),segment.Waypoints==null ? "STRAIGHT" : "WAYPOINTS"};
+            string[] keys={"WireFlowFrom","WireFlowTo","WireFlowNetwork","WireFlowStatus","WireFlowBank","WireFlowSSC","WireFlowJB","WireFlowRoute"};
+            string[] values={segment.From,segment.To,segment.Network,"DRAFT",plan.Bank.ToString(CultureInfo.InvariantCulture),plan.Ssc.ToString(CultureInfo.InvariantCulture),plan.JunctionBox.ToString(CultureInfo.InvariantCulture),segment.Waypoints==null ? "STRAIGHT" : "WAYPOINTS"};
             for(int i=0;i<keys.Length;i++) {
                 shape.AddNamedRow((short)242,keys[i],(short)0);
                 shape.CellsU["User."+keys[i]+".Value"].FormulaU="\""+values[i].Replace("\"","\"\"")+"\"";
@@ -345,6 +354,7 @@ namespace Ayk.WireFlow.VisioAddIn {
         private readonly NumericUpDown count = new NumericUpDown { Minimum=2, Maximum=48, Value=12, Width=70 };
         private readonly NumericUpDown bank = new NumericUpDown { Minimum=1, Maximum=9999, Value=1, Width=70 };
         private readonly NumericUpDown ssc = new NumericUpDown { Minimum=1, Maximum=9999, Value=1, Width=70 };
+        private readonly NumericUpDown junctionBox = new NumericUpDown { Minimum=1, Maximum=9999, Value=1, Width=70 };
         private readonly Label status = new Label { AutoSize=false, Width=520, Height=116, Font=new System.Drawing.Font(System.Drawing.SystemFonts.MessageBoxFont.FontFamily,14,System.Drawing.FontStyle.Bold) };
         private readonly Button mark = new Button { Text="Record selected terminal marker", Width=245, Height=40 };
         private readonly Button undo = new Button { Text="Undo last terminal mark", Width=245, Height=36 };
@@ -374,6 +384,7 @@ namespace Ayk.WireFlow.VisioAddIn {
             var ids=new FlowLayoutPanel { Width=520, Height=34, WrapContents=false };
             ids.Controls.Add(new Label { Text="Bank", AutoSize=true }); ids.Controls.Add(bank);
             ids.Controls.Add(new Label { Text="SSC", AutoSize=true }); ids.Controls.Add(ssc);
+            ids.Controls.Add(new Label { Text="JB", AutoSize=true }); ids.Controls.Add(junctionBox);
             ids.Controls.Add(new Label { Text="Modules", AutoSize=true }); ids.Controls.Add(count); layout.Controls.Add(ids);
             var start=new Button { Text="Start terminal marking", Width=245, Height=36 };
             layout.Controls.Add(start); layout.Controls.Add(status); layout.Controls.Add(pick); layout.Controls.Add(mark); layout.Controls.Add(undo); layout.Controls.Add(setModuleReference); layout.Controls.Add(repeatModulePorts); layout.Controls.Add(templateStatus); layout.Controls.Add(saveMarks); layout.Controls.Add(loadMarks);
@@ -398,7 +409,7 @@ namespace Ayk.WireFlow.VisioAddIn {
             try {
                 if (next > 0 && MessageBox.Show(this,"Starting a new chain clears the current terminal marks from this window. Save them first if you need to return to them. Continue?","Start a new chain",MessageBoxButtons.YesNo,MessageBoxIcon.Question) != DialogResult.Yes) return;
                 StopPicking(); page=app.ActivePage; if (page == null) throw new InvalidOperationException("Open a Visio drawing first.");
-                plan.Terminals.Clear(); plan.Routes.Clear(); ResetModuleReference(); plan.Modules=(int)count.Value; plan.Bank=(int)bank.Value; plan.Ssc=(int)ssc.Value; prompts.Clear(); next=0;
+                plan.Terminals.Clear(); plan.Routes.Clear(); ResetModuleReference(); plan.Modules=(int)count.Value; plan.Bank=(int)bank.Value; plan.Ssc=(int)ssc.Value; plan.JunctionBox=(int)junctionBox.Value; prompts.Clear(); next=0;
                 prompts.AddRange(MarkPersistence.Steps(plan.Modules));
                 // The event sink needs real interactive Visio validation before
                 // it can be enabled in a build intended for other users.
@@ -489,7 +500,7 @@ namespace Ayk.WireFlow.VisioAddIn {
             return path;
         }
         private void CheckChainInputs() {
-            if ((int)bank.Value != plan.Bank || (int)ssc.Value != plan.Ssc || (int)count.Value != plan.Modules) throw new InvalidOperationException("Bank, SSC or module count changed. Restore the marked values or start a new chain.");
+            if ((int)bank.Value != plan.Bank || (int)ssc.Value != plan.Ssc || (int)junctionBox.Value != plan.JunctionBox || (int)count.Value != plan.Modules) throw new InvalidOperationException("Bank, SSC, junction box or module count changed. Restore the marked values or start a new chain.");
         }
         private void SaveMarks() {
             try {
@@ -514,12 +525,17 @@ namespace Ayk.WireFlow.VisioAddIn {
                     if(dialog.ShowDialog(this) != DialogResult.OK) return;
                     var info=new FileInfo(dialog.FileName); if(info.Length > 1048576) throw new InvalidOperationException("The marking file is too large.");
                     int restoredCount;
-                    var restored=MarkPersistence.Deserialize(File.ReadAllText(dialog.FileName),drawingPath,(int)((dynamic)activePage).ID,out restoredCount);
+                    string json=File.ReadAllText(dialog.FileName); int version=MarkPersistence.Version(json); int legacyJb=0;
+                    if(version==2 || version==3) {
+                        if(MessageBox.Show(this,"This older file does not identify its junction box. Assign JB "+(int)junctionBox.Value+" to this chain? Check the drawing before confirming.","Confirm junction box",MessageBoxButtons.YesNo,MessageBoxIcon.Question)!=DialogResult.Yes) return;
+                        legacyJb=(int)junctionBox.Value;
+                    }
+                    var restored=MarkPersistence.Deserialize(json,drawingPath,(int)((dynamic)activePage).ID,legacyJb,out restoredCount);
                     if(next>0 && MessageBox.Show(this,"Loading this file replaces the current terminal marks and routes in this window. Continue?","Load terminal marks",MessageBoxButtons.YesNo,MessageBoxIcon.Question) != DialogResult.Yes) return;
-                    StopPicking(); page=activePage; plan.Terminals.Clear(); plan.Routes.Clear(); ResetModuleReference(); plan.Modules=restored.Modules; plan.Bank=restored.Bank; plan.Ssc=restored.Ssc;
+                    StopPicking(); page=activePage; plan.Terminals.Clear(); plan.Routes.Clear(); ResetModuleReference(); plan.Modules=restored.Modules; plan.Bank=restored.Bank; plan.Ssc=restored.Ssc; plan.JunctionBox=restored.JunctionBox;
                     foreach(var entry in restored.Terminals) plan.Terminals.Add(entry.Key,entry.Value);
                     foreach(var entry in restored.Routes) plan.Routes.Add(entry.Key,new List<Point>(entry.Value));
-                    prompts.Clear(); prompts.AddRange(MarkPersistence.Steps(plan.Modules)); count.Value=plan.Modules; bank.Value=plan.Bank; ssc.Value=plan.Ssc; next=restoredCount;
+                    prompts.Clear(); prompts.AddRange(MarkPersistence.Steps(plan.Modules)); count.Value=plan.Modules; bank.Value=plan.Bank; ssc.Value=plan.Ssc; junctionBox.Value=plan.JunctionBox; next=restoredCount;
                     bool complete=next==prompts.Count; mark.Enabled=!complete; undo.Enabled=next>0; saveMarks.Enabled=true; draw.Enabled=complete; review.Enabled=complete;
 #if EXPERIMENTAL_MOUSE_PICKING
                     pick.Enabled=!complete;

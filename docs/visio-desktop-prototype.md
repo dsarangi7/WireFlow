@@ -56,14 +56,16 @@ the tool does not infer rails, produce curves or verify bend radii. Changing a
 terminal using Undo clears the current chain's routes so stale waypoints cannot
 be silently reused. The engineer reviews and approves every resulting route.
 The prototype window highlights the next terminal in larger text and offers a
-read-only connection preview showing the bank, SSC, each network and terminal
+read-only connection preview showing the bank, SSC, junction box, each network and terminal
 pair, and the ordered route coordinates in Visio's internal inches. This preview
 is not a schedule or harness approval and must be checked before drawing.
 
 The engineer may explicitly save partially or fully marked terminals and any
 completed manual routes to a local JSON file and reload them on the same saved
-drawing path and page ID. Version 3 records routes as well as bank and SSC identity;
-version 2 sessions remain readable with no routes. Earlier prototype version 1
+drawing path and page ID. Version 4 records the junction-box number as well as
+routes and bank and SSC identity. When loading a version 2 or 3 session, the
+engineer must confirm its junction-box number against the drawing; version 2
+sessions contain no routes. Earlier prototype version 1
 files lack that identity and are rejected; the terminals must be marked again. The file
 contains the drawing path and terminal coordinates and should be handled under
 AYK's drawing-data policy. Reload checks the path, page, count, order and duplicate

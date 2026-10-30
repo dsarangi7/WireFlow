@@ -59,7 +59,7 @@ try {
     if ($created -ne 8 -or $page.Shapes.Count -ne ($before + 8)) { throw 'Native Visio wire count differs.' }
     $first = $page.Shapes.Item($before + 1)
     if ([math]::Abs($first.CellsU('BeginX').ResultIU - $segments[0].A.X) -gt 0.00001 -or [math]::Abs($first.CellsU('EndY').ResultIU - $segments[0].B.Y) -gt 0.00001) { throw 'Wire endpoints moved.' }
-    if ($first.CellsU('User.WireFlowFrom.Value').FormulaU -ne '"SSC.POS"' -or $first.CellsU('User.WireFlowTo.Value').FormulaU -ne '"M1.POS"' -or $first.CellsU('User.WireFlowStatus.Value').FormulaU -ne '"DRAFT"' -or $first.CellsU('User.WireFlowBank.Value').FormulaU -ne '"1"' -or $first.CellsU('User.WireFlowSSC.Value').FormulaU -ne '"1"') { throw 'Wire identity or endpoint metadata missing or incorrect.' }
+    if ($first.CellsU('User.WireFlowFrom.Value').FormulaU -ne '"SSC.POS"' -or $first.CellsU('User.WireFlowTo.Value').FormulaU -ne '"M1.POS"' -or $first.CellsU('User.WireFlowStatus.Value').FormulaU -ne '"DRAFT"' -or $first.CellsU('User.WireFlowBank.Value').FormulaU -ne '"1"' -or $first.CellsU('User.WireFlowSSC.Value').FormulaU -ne '"1"' -or $first.CellsU('User.WireFlowJB.Value').FormulaU -ne '"1"') { throw 'Wire identity or endpoint metadata missing or incorrect.' }
     if ($first.CellsU('User.WireFlowRoute.Value').FormulaU -ne '"WAYPOINTS"' -or $first.RowCount(10) -lt 3) { throw 'The explicit route was not retained as editable polyline geometry.' }
     $prior = [Ayk.WireFlow.VisioAddIn.DraftReview]::ReadExisting($page)
     if ($prior.Segments.Count -ne 7 -or $prior.Unreadable -ne 1 -or $prior.Segments[0].From -ne 'B1/SSC1:SSC.S') { throw 'Prior draft wires could not be inspected or manual route was not flagged.' }
