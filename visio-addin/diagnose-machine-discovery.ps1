@@ -10,16 +10,9 @@ try {
     New-ItemProperty -LiteralPath $key -Name Description -Value 'Temporary discovery diagnostic' | Out-Null
     New-ItemProperty -LiteralPath $key -Name LoadBehavior -PropertyType DWord -Value 3 | Out-Null
     New-ItemProperty -LiteralPath $key -Name CommandLineSafe -PropertyType DWord -Value 0 | Out-Null
-    $visio = [Runtime.InteropServices.Marshal]::GetActiveObject('Visio.Application')
-    $visio.COMAddIns.Update()
-    $found = $false
-    foreach ($addin in $visio.COMAddIns) {
-        if ($addin.ProgId -eq 'AYK.WireFlow.VisioAddIn') {
-            $found = $true
-            Write-Output ('WireFlow listed; connected = ' + $addin.Connect)
-        }
-    }
-    if (!$found) { Write-Output 'WireFlow was not listed after refreshing COM add-ins.' }
+    Write-Host 'Temporary registration is active. Leave this window open and tell Codex: READY.'
+    Write-Host 'After Codex finishes checking Visio, press Enter here to remove the entry.'
+    Read-Host 'Press Enter only after the check' | Out-Null
 }
 finally {
     if ($created) { Remove-Item -LiteralPath $key -Recurse -ErrorAction Stop }
