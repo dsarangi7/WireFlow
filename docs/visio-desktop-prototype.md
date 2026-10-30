@@ -6,6 +6,15 @@ The source and assembly are not an approved, signed or installed AYK add-in.
 There is no add-in login URL. AYK IT must review deployment and access before
 installation on employee computers. No registry entries or user settings are
 modified by the build and test scripts.
+For a local interactive pilot, open a disposable drawing in desktop Visio,
+build with `powershell -NoProfile -ExecutionPolicy Bypass -File visio-addin\build.ps1`,
+then run `powershell -NoProfile -STA -ExecutionPolicy Bypass -File visio-addin\live-pilot.ps1`.
+This opens the prototype workspace as a separate process connected to the
+running Visio instance; it does not establish ribbon add-in loading or install
+an add-in. Closing the workspace ends the pilot. In an interactive test the
+engineer recorded one selected marker and advanced from step 1 to step 2 on a
+blank drawing; complete chain generation and user interaction on the supplied
+rack drawing remain unverified. Routes and connections remain engineering drafts.
 The assembly defaults to COM-invisible, exposing only its add-in and event-sink
 classes intentionally. `test-registration.ps1` generates a local registry preview
 and checks that internal model and helper classes are not exported; it does not
