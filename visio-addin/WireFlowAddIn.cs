@@ -12,7 +12,7 @@ using System.Web.Script.Serialization;
 [assembly: ComVisible(false)]
 
 namespace Ayk.WireFlow.VisioAddIn {
-    [ComVisible(true), Guid("B65AD801-ABAF-11D0-BB8B-00A0C90F2744"), InterfaceType(ComInterfaceType.InterfaceIsIDispatch)]
+    [ComVisible(true), Guid("B65AD801-ABAF-11D0-BB8B-00A0C90F2744"), InterfaceType(ComInterfaceType.InterfaceIsDual)]
     public interface IDTExtensibility2 {
         [DispId(1)] void OnConnection([MarshalAs(UnmanagedType.IDispatch)] object application, int connectMode, [MarshalAs(UnmanagedType.IDispatch)] object addInInst, ref Array custom);
         [DispId(2)] void OnDisconnection(int removeMode, ref Array custom);
@@ -20,7 +20,7 @@ namespace Ayk.WireFlow.VisioAddIn {
         [DispId(4)] void OnStartupComplete(ref Array custom);
         [DispId(5)] void OnBeginShutdown(ref Array custom);
     }
-    [ComVisible(true), Guid("000C0396-0000-0000-C000-000000000046"), InterfaceType(ComInterfaceType.InterfaceIsIDispatch)]
+    [ComVisible(true), Guid("000C0396-0000-0000-C000-000000000046"), InterfaceType(ComInterfaceType.InterfaceIsDual)]
     public interface IRibbonExtensibility { [DispId(1)] string GetCustomUI(string ribbonId); }
     [ComVisible(true), Guid("A93A0C27-8C7C-4A96-B777-67DA7B92D10D"), InterfaceType(ComInterfaceType.InterfaceIsIDispatch)]
     public interface IWireFlowCallbacks { [DispId(1)] void OpenWorkspace([MarshalAs(UnmanagedType.IDispatch)] object control); }

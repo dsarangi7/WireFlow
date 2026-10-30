@@ -44,6 +44,10 @@ public static class TestCore {
         var addin=new WireFlowAddIn();
         Check(addin.GetCustomUI("Microsoft.Visio.Document").Contains("onAction=\"OpenWorkspace\""),"ribbon advertises the workspace callback");
         Check(typeof(WireFlowAddIn).GetInterface("IDTExtensibility2") != null && typeof(WireFlowAddIn).GetInterface("IRibbonExtensibility") != null,"COM add-in exposes lifecycle and ribbon interfaces");
+        foreach(var contract in new [] { typeof(IDTExtensibility2), typeof(IRibbonExtensibility) }) {
+            var kind=(System.Runtime.InteropServices.InterfaceTypeAttribute)Attribute.GetCustomAttribute(contract,typeof(System.Runtime.InteropServices.InterfaceTypeAttribute));
+            Check(kind!=null && kind.Value==System.Runtime.InteropServices.ComInterfaceType.InterfaceIsDual,"Office contract exposes its required dual COM vtable: "+contract.Name);
+        }
         var sink=new PageMouseSink(); var expectedPage=new object(); int captured=0; double clickedX=0, clickedY=0;
         sink.SetHandlers((p,x,y)=> { if (!Object.ReferenceEquals(p,expectedPage)) return false; captured++; clickedX=x; clickedY=y; return true; }, message => { throw new Exception(message); });
         var mouse=new FakeMouseEvent{Button=1,x=3.5,y=4.25,Window=new FakeMouseWindow{Page=expectedPage}};
