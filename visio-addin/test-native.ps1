@@ -27,13 +27,20 @@ try {
     $marker=$page.DrawRectangle(1,1,2,2)
     $position=[Ayk.WireFlow.VisioAddIn.MarkerCoordinates]::Read($marker,$page)
     if ([math]::Abs($position.X-1.5) -gt 0.00001 -or [math]::Abs($position.Y-1.5) -gt 0.00001) { throw 'Top-level marker coordinates were incorrect.' }
+    $targetMarker=$page.DrawRectangle(4,4,5,5)
+    $targetPosition=[Ayk.WireFlow.VisioAddIn.MarkerCoordinates]::Read($targetMarker,$page)
+    $template=New-Object Ayk.WireFlow.VisioAddIn.DraftPlan; $template.Modules=2
+    $template.Set('M1.S',1.1,1.25); $template.Set('M1.N',1.3,1.25); $template.Set('M1.NEG',1.7,1.25); $template.Set('M1.POS',1.9,1.25)
+    [Ayk.WireFlow.VisioAddIn.ModuleTemplate]::CopyPorts($template,$position,$targetPosition,2)
+    if ([math]::Abs($template.Terminals['M2.S'].X-4.1) -gt 0.00001 -or [math]::Abs($template.Terminals['M2.POS'].Y-4.25) -gt 0.00001) { throw 'Module template translation was incorrect.' }
+    [void]$targetMarker.Delete()
     $group=$marker.Group()
     $child=$group.Shapes.Item(1)
     $rejected=$false
     try { [void][Ayk.WireFlow.VisioAddIn.MarkerCoordinates]::Read($child,$page) } catch { $rejected=$true }
     if (!$rejected) { throw 'A nested marker was incorrectly accepted.' }
     [void]$group.Delete()
-    Write-Output 'PASS: top-level marker coordinates and nested-marker guard.'
+    Write-Output 'PASS: top-level marker coordinates, module template translation and nested-marker guard.'
     if ($MouseEvents) {
         Write-Output 'Registering the mouse event sink.'
         $sink = New-Object Ayk.WireFlow.VisioAddIn.PageMouseSink

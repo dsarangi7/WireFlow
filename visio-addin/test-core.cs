@@ -51,6 +51,17 @@ public static class TestCore {
         mouse.Button=2; Check(!(bool)sink.VisEventProc(709,null,0,0,mouse,null) && captured==1,"right click does not capture or suppress default");
         mouse.Button=1; mouse.Window.Page=new object(); Check(!(bool)sink.VisEventProc(709,null,0,0,mouse,null) && captured==1,"click on another page remains untouched");
         Check(!(bool)sink.VisEventProc(710,null,0,0,mouse,null),"mouse move is not treated as a port click");
+        var templatePlan=new DraftPlan { Modules=3 };
+        templatePlan.Set("M1.S",9,9); templatePlan.Set("M1.N",9.5,9); templatePlan.Set("M1.NEG",10.5,9); templatePlan.Set("M1.POS",11,9);
+        bool sameCentre=false; try { ModuleTemplate.CopyPorts(templatePlan,new Point(10,10),new Point(10,10),2); } catch(InvalidOperationException) { sameCentre=true; }
+        Check(sameCentre && templatePlan.Terminals.Count==4,"duplicate template positions are rejected without partially marking the next module");
+        ModuleTemplate.CopyPorts(templatePlan,new Point(10,10),new Point(20,20),2);
+        Check(templatePlan.Terminals["M2.S"].X==19 && templatePlan.Terminals["M2.S"].Y==19 && templatePlan.Terminals["M2.POS"].X==21 && templatePlan.Terminals["M2.POS"].Y==19,"template translates measured ports from the M1 centre to the next module centre");
+        bool repeat=false; try { ModuleTemplate.CopyPorts(templatePlan,new Point(10,10),new Point(30,30),2); } catch(InvalidOperationException) { repeat=true; }
+        Check(repeat && templatePlan.Terminals["M2.S"].X==19,"an already marked module cannot be silently overwritten");
+        var missingTemplate=new DraftPlan { Modules=2 }; missingTemplate.Set("M1.S",9,9);
+        bool missingPort=false; try { ModuleTemplate.CopyPorts(missingTemplate,new Point(10,10),new Point(20,20),2); } catch(InvalidOperationException) { missingPort=true; }
+        Check(missingPort && missingTemplate.Terminals.Count==1,"all reference ports are required before any copied ports are recorded");
         var markerPage=new FakeMarkerPage { PageSheet=new FakeId { ID=0 } };
         var marker=new FakeMarker { ContainingPage=markerPage, ContainingShape=new FakeId { ID=0 } };
         marker.CellsU["PinX"].ResultIU=1.25; marker.CellsU["PinY"].ResultIU=2.5;

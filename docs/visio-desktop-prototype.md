@@ -37,6 +37,17 @@ During marking, **Undo last terminal mark** returns to the previous terminal and
 blocks drawing until that terminal has been recorded again. After drawing, use
 Visio's Undo for the entire generated draft before creating a replacement.
 Starting a new chain while marks exist asks before clearing the current session.
+As an optional marking shortcut, after recording all four M1 ports the engineer
+can select a top-level marker at the M1 centre, then select a marker at each
+subsequent module centre in electrical order. The prototype translates M1's four
+measured offsets to the next centre in page coordinates. Use it only for modules
+with identical orientation and scale; it does not detect mirrored or rotated
+modules. Every estimated port must be checked against the actual drawing. The
+reference centre is held only in the current session, so it must be selected
+again after loading saved marks. It does not change the configured chain order.
+The translation is covered by unit checks and a blank Visio document; the
+supplied rack's embedded picture has not been validated as a port-coordinate
+ground truth by the prototype, and interactive verification remains necessary.
 After terminal marking, the engineer may select a proposed connection and use
 top-level marker shapes to add or remove ordered route waypoints. A connection
 with waypoints is drawn as one editable Visio polyline through those points;
