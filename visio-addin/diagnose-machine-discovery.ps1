@@ -29,13 +29,8 @@ try {
     Set-Item -LiteralPath $progKey -Value 'Ayk.WireFlow.VisioAddIn.WireFlowAddIn'
     New-Item -Path (Join-Path $progKey 'CLSID') | Out-Null
     Set-Item -LiteralPath (Join-Path $progKey 'CLSID') -Value '{E1CE7134-5A5D-4B05-BC55-93BF487456CB}'
-    New-Item -Path $key -ErrorAction Stop | Out-Null
-    $created = $true
-    New-ItemProperty -LiteralPath $key -Name FriendlyName -Value 'AYK WireFlow Prototype' | Out-Null
-    New-ItemProperty -LiteralPath $key -Name Description -Value 'Temporary discovery diagnostic' | Out-Null
-    New-ItemProperty -LiteralPath $key -Name LoadBehavior -PropertyType DWord -Value 3 | Out-Null
-    New-ItemProperty -LiteralPath $key -Name CommandLineSafe -PropertyType DWord -Value 0 | Out-Null
-    Write-Host 'Temporary registration is active. Leave this window open and tell Codex: READY.'
+    Write-Host 'Temporary COM class registration is active; the Visio add-in entry stays per-user.'
+    Write-Host 'Leave this window open and tell Codex: READY.'
     Write-Host 'After Codex finishes checking Visio, press Enter here to remove the entry.'
     Read-Host 'Press Enter only after the check' | Out-Null
 }
