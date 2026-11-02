@@ -1,5 +1,8 @@
 /* Declared counts and click identities are separate from the planner's grid.
    In particular, junction boxes can sit above the calibrated module grid. */
+function pictureZoomOffset(scroll, anchor, oldZoom, newZoom) {
+  return (scroll + anchor) * (newZoom / oldZoom) - anchor;
+}
 function markingPlanErrors(banks) {
   if (!Array.isArray(banks) || !banks.length || banks.length > 8) return ['Enter between 1 and 8 banks.'];
   const errors = [];
@@ -328,7 +331,8 @@ async function tabSimpleWiring(el, project, ctx) {
         <div class="btn-row"><button class="btn btn-ghost btn-sm" id="marking-undo" ${!records.length || st.saving ? 'disabled' : ''}>Undo last component mark</button>${st.saveFailed ? '<button class="btn btn-ghost" id="marking-retry">Retry saving</button>' : ''}</div>
         <div class="btn-row"><button class="btn btn-ghost btn-sm" id="simple-ports" ${!cal || !cal.ok || !rackModuleCells(rack).length || (st.plan && issues.length) ? 'disabled' : ''}>${st.ports ? 'Mark module ports again' : 'Mark four module ports'}</button>
           <button class="btn btn-ghost btn-sm" id="simple-device-ports" ${!cal || !cal.ok || !rackDeviceCells(rack, 'ssc').length || (st.plan && issues.length) ? 'disabled' : ''}>Mark SSC and junction-box ports</button>
-          <label>Picture zoom <select id="simple-zoom"><option value="1" ${st.zoom === 1 ? 'selected' : ''}>100%</option><option value="2" ${st.zoom === 2 ? 'selected' : ''}>200%</option><option value="4" ${st.zoom === 4 ? 'selected' : ''}>400%</option></select></label></div>
+          <button class="btn btn-ghost btn-sm" id="simple-zoom-out" type="button" aria-label="Zoom out">−</button><span id="simple-zoom-label">${Math.round(st.zoom * 100)}%</span><button class="btn btn-ghost btn-sm" id="simple-zoom-in" type="button" aria-label="Zoom in">+</button><button class="btn btn-ghost btn-sm" id="simple-zoom-fit" type="button">Fit drawing</button></div>
+        <p class="muted small">Use the mouse wheel to zoom toward the pointer. Drag with the middle mouse button to pan; left-click to mark.</p>
         ${prompt ? `<div class="port-instruction" role="status" aria-live="polite"><div class="port-instruction-progress">${prompt.title} · STEP ${prompt.current} OF ${prompt.total}</div><strong>${prompt.instruction}</strong><span>${st.message ? esc(st.message) : prompt.current === 1 ? 'Select the marked component on the drawing below.' : 'Click the port centre on the drawing below.'}</span><button class="btn btn-ghost btn-sm" id="simple-cancel-ports">Cancel marking</button></div>` : next ? `<div class="port-instruction" role="status" aria-live="polite"><div class="port-instruction-progress">BANK ${next.bank} · COMPONENT ${records.length + 1} OF ${steps.length}</div><strong>Click ${esc(next.label)} on the drawing.</strong><span>${st.message ? esc(st.message) : next.kind === 'module' ? 'Click this module in chain order. This click determines its number and SSC assignment.' : next.kind === 'acdp' ? 'Identification only. No ACDP wiring will be generated.' : 'Click the component centre.'}</span>${next.kind === 'jb' ? `<label>Junction box <select id="marking-jb"><option value="">Choose a junction box</option>${next.jbIds.map(id => `<option value="${id}" ${next.defaultJb === id ? 'selected' : ''}>${id}${records.some(r => r.jbId === id) ? ' (already marked; share)' : ''}</option>`).join('')}</select></label>` : ''}</div>` : `<p class="muted small">${st.plan ? 'Component marking complete. Mark the module ports, then each SSC and its junction-box terminals.' : 'Start ordered marking to receive one command at a time.'}</p>`}
         ${issues.length ? '<ul class="marking-warnings">' + issues.map(issue => '<li>' + esc(issue) + '</li>').join('') + '</ul>' : ''}
         <div id="simple-picture-scroll" style="border:1px solid var(--border);border-radius:8px;overflow:auto;max-height:70vh"><div id="simple-picture" style="width:${st.zoom * 100}%;cursor:crosshair">${svg}</div></div>
@@ -372,7 +376,26 @@ async function tabSimpleWiring(el, project, ctx) {
       st.cal = fvCalib({ imgW: image.naturalWidth, imgH: image.naturalHeight, cols, rows });
       st.plan = null; st.calibrating = 1; st.click = null; st.generated = false; st.ports = null; st.portStep = 0; st.devicePorts = {}; st.deviceStep = 0; st.message = ''; render();
     };
-    el.querySelector('#simple-zoom').onchange = event => { st.zoom = Number(event.target.value); render(); };
+    const picture = el.querySelector('#simple-picture');
+    const zoomAt = (factor, clientX, clientY) => {
+      const bounds = newScroll.getBoundingClientRect();
+      const x = clientX - bounds.left - newScroll.clientLeft, y = clientY - bounds.top - newScroll.clientTop;
+      const next = Math.max(1, Math.min(12, st.zoom * factor));
+      const left = pictureZoomOffset(newScroll.scrollLeft, x, st.zoom, next), top = pictureZoomOffset(newScroll.scrollTop, y, st.zoom, next);
+      st.zoom = next; picture.style.width = (next * 100) + '%';
+      newScroll.scrollLeft = left; newScroll.scrollTop = top;
+      el.querySelector('#simple-zoom-label').textContent = Math.round(next * 100) + '%';
+    };
+    const zoomCentre = factor => { const r = newScroll.getBoundingClientRect(); zoomAt(factor, r.left + newScroll.clientWidth / 2, r.top + newScroll.clientHeight / 2); };
+    el.querySelector('#simple-zoom-in').onclick = () => zoomCentre(1.3);
+    el.querySelector('#simple-zoom-out').onclick = () => zoomCentre(1 / 1.3);
+    el.querySelector('#simple-zoom-fit').onclick = () => zoomCentre(1 / st.zoom);
+    newScroll.addEventListener('wheel', event => { event.preventDefault(); zoomAt(event.deltaY < 0 ? 1.15 : 1 / 1.15, event.clientX, event.clientY); }, { passive: false });
+    let pan = null;
+    newScroll.addEventListener('pointerdown', event => { if (event.button !== 1) return; event.preventDefault(); pan = { x: event.clientX, y: event.clientY, left: newScroll.scrollLeft, top: newScroll.scrollTop }; newScroll.setPointerCapture(event.pointerId); });
+    newScroll.addEventListener('pointermove', event => { if (!pan) return; newScroll.scrollLeft = pan.left - (event.clientX - pan.x); newScroll.scrollTop = pan.top - (event.clientY - pan.y); });
+    newScroll.addEventListener('pointerup', event => { if (event.button === 1) pan = null; });
+    newScroll.addEventListener('pointercancel', () => { pan = null; });
     el.querySelector('#simple-ports').onclick = () => { if (!st.portStep) st.previousPorts = st.ports; st.portStep = 1; st.deviceStep = 0; st.pendingPorts = {}; st.ports = null; st.generated = false; st.message = ''; render(); };
     el.querySelector('#simple-device-ports').onclick = () => { if (st.portStep) st.ports = st.previousPorts; st.deviceStep = 1; st.portStep = 0; st.pendingDevice = {}; st.generated = false; st.message = ''; render(); };
     el.querySelector('#simple-cancel-ports')?.addEventListener('click', () => { if (st.portStep) st.ports = st.previousPorts; st.portStep = 0; st.deviceStep = 0; st.message = 'Port marking cancelled.'; render(); });

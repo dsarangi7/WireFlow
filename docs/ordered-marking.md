@@ -52,3 +52,11 @@ modules within each bank currently share the declared count per SSC. This change
 does not implement rail routing, bend radii or crossing checks. Lines remain
 direct draft previews; physical terminal sets that are not marked are omitted
 and reported in the existing generation warning.
+# Vector drawing navigation
+
+Import an SVG rack drawing to preserve vector detail while zooming. On the
+marking canvas, use the wheel to zoom around the pointer, the middle mouse
+button to pan, or the plus, minus and Fit drawing controls. Left-click remains
+the marking action. Raster and VSDX embedded bitmap imports remain raster;
+zooming cannot add detail to those images. This navigation does not identify
+ports automatically or change wiring rules.

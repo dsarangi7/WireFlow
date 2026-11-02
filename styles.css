@@ -395,3 +395,4 @@ table.data tr:hover td { background: #f8fafc; }
   .print-title-brand { display: flex; align-items: center; gap: 2mm; }
   .print-title-brand img { width: 7mm; height: 7mm; object-fit: contain; }
 }
+#simple-picture > svg { display: block; width: 100%; height: auto; }

@@ -19,6 +19,10 @@ logo in the title block. Cable routes are still straight-line previews. See
 [the guided workspace documentation](docs/guided-workspace.md) for the workflow
 and the limits of the grid and draft cable routing.
 
+SVG rack drawings remain vector images in the marking canvas. Use the mouse
+wheel or zoom buttons to zoom, the middle mouse button to pan, and left-click
+to mark component and port positions. See [ordered marking](docs/ordered-marking.md).
+
 ## Features
 
 - **Visio desktop prototype** — early 64-bit COM add-in source for marking

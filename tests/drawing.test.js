@@ -497,9 +497,10 @@ ok('print title block embeds the AYK logo and drawing details',
 
 const simpleSrc = fs.readFileSync(path.join(ROOT, 'js', 'simple-wiring.js'), 'utf8');
 const portFactory = new Function('slotCell', 'fvSlotCenter', 'fvDist', 'SSC_PALETTE',
-  simpleSrc + '\nreturn { modulePortsValid, pictureModuleWiring, pictureVisioModel, portMarkingPrompt, markingPlanErrors, markingSteps, markingIssues, markingRecord, markingLayout, pictureDeviceLabels, pictureDeviceLabelsSvg };');
+  simpleSrc + '\nreturn { pictureZoomOffset, modulePortsValid, pictureModuleWiring, pictureVisioModel, portMarkingPrompt, markingPlanErrors, markingSteps, markingIssues, markingRecord, markingLayout, pictureDeviceLabels, pictureDeviceLabelsSvg };');
 const portsApi = portFactory(E.slotCell, (cal, c, r) => ({ x: cal.x0 + c * cal.pitchX, y: cal.y0 + r * cal.pitchY }),
   (a, b) => Math.hypot(a.x - b.x, a.y - b.y), E.SSC_PALETTE);
+eq('zoom keeps the picture point beneath the pointer stationary', portsApi.pictureZoomOffset(100, 50, 1, 2), 250);
 const orderedBanks = [{ msms: 1, sscs: 2, modules: 3, junctionBoxes: 2, acdps: 1 }, { msms: 2, sscs: 1, modules: 2, junctionBoxes: 1, acdps: 2 }];
 const orderedSteps = portsApi.markingSteps(orderedBanks);
 const sixtyModules = portsApi.markingSteps([{ msms: 1, sscs: 5, modules: 12, junctionBoxes: 5, acdps: 2 }]);
