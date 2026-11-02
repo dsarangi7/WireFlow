@@ -9,6 +9,7 @@ rectangle and contains no transforms. Diagnostic only; not electrical or route v
 import json
 import math
 import re
+import statistics
 import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -44,7 +45,9 @@ def compare(data, svg_path, rectangle, tolerance):
     # One-to-one greedy closest pairing. This is deliberately reported as an
     # approximation and does not compare intermediate route geometry.
     pairs = []
+    nearest = {color: [] for color in ("red", "green")}
     for i, got in enumerate(candidates):
+        errors = []
         for j, ref in enumerate(refs):
             if got['color'] != ref['color']:
                 continue
@@ -52,8 +55,11 @@ def compare(data, svg_path, rectangle, tolerance):
             direct = max(distance(got['begin'], ref['begin']), distance(got['end'], ref['end']))
             reverse = max(distance(got['begin'], ref['end']), distance(got['end'], ref['begin']))
             error = min(direct, reverse)
+            errors.append(error)
             if error <= tolerance:
                 pairs.append((error, i, j))
+        if errors:
+            nearest[got["color"]].append(min(errors))
     used_got, used_ref = set(), set()
     for error, i, j in sorted(pairs):
         if i not in used_got and j not in used_ref:
@@ -61,7 +67,8 @@ def compare(data, svg_path, rectangle, tolerance):
     return {'generated_polylines': len(candidates), 'reference_candidates': len(refs),
             'matched_endpoint_pairs': len(used_got), 'unmatched_generated': len(candidates)-len(used_got),
             'unmatched_reference': len(refs)-len(used_ref), 'tolerance_inches': tolerance,
-            'limitations': 'Endpoint/color candidates only; greedy pairing; no route, component, polarity or electrical verification.'}
+            'nearest_endpoint_error_inches': {color: {'count': len(values), 'median': statistics.median(values), 'max': max(values)} if values else None for color, values in nearest.items()},
+            'limitations': 'Endpoint/color candidates only; greedy pairing; nearest errors may reuse references; no route, component, polarity or electrical verification.'}
 
 
 def main():
