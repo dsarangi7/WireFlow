@@ -74,5 +74,7 @@ picture-pixel points (`{x,y}`, Y down). The preview keeps its existing terminal
 endpoints and draws the supplied points between them. Invalid supplied routes
 are omitted rather than silently replaced by a direct line. With no route data,
 existing direct previews remain unchanged. Distances are preview geometry, not
-approved harness lengths. There is currently no editor or automatic route planner
-for this field, and supplying waypoints does not approve a physical route.
+approved harness lengths. After generating a draft, expand “Adjust a draft SSC route”, select the SSC and
+connection, and click intermediate points in order from the SSC. Undo or cancel
+the edit, or save the draft route; saving with no points restores a direct preview.
+There is no automatic route planner, and waypoints do not approve a physical route.
