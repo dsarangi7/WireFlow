@@ -1544,6 +1544,12 @@ let vsdxTests = Promise.resolve();
   ok('Visio ellipse passes through upper control point', /^A 1 0.5 0 0 1 -1 0$/.test(ellipseUp), ellipseUp);
   ok('Visio ellipse selects opposite sweep for lower control point', /^A 1 0.5 0 0 0 -1 0$/.test(ellipseDown), ellipseDown);
   ok('Visio ellipse rejects collinear points', IM.vsdxEllipticalArc(0,0,2,0,1,0,0,1) === null, 'degenerate fallback');
+  const arcXml = (bow) => IM.vsdxXml(`<Section><Row T="MoveTo"><Cell N="X" V="0"/><Cell N="Y" V="0"/></Row><Row T="ArcTo"><Cell N="X" V="2"/><Cell N="A" V="${bow}"/></Row></Section>`).children[0];
+  const arcPositive = IM.geomPath(arcXml(1), 2, 2), arcNegative = IM.geomPath(arcXml(-1), 2, 2);
+  ok('positive circular bow uses the right side of the chord', /^M 0 0 A 1 1 0 0 1 2 0$/.test(arcPositive), arcPositive);
+  ok('negative circular bow uses the opposite side', /^M 0 0 A 1 1 0 0 0 2 0$/.test(arcNegative), arcNegative);
+  const missingCoord = IM.vsdxXml('<Section><Row T="MoveTo"><Cell N="X" V="2"/><Cell N="Y" V="3"/></Row><Row T="LineTo"><Cell N="X" V="4"/></Row></Section>').children[0];
+  ok('missing geometry coordinate defaults to zero', IM.geomPath(missingCoord, 1, 1) === 'M 2 3 L 4 0', 'missing Y');
 
   /* ---- tiny synthetic EMF: red pen line + solid red triangle ---- */
   function rec(type, payloadDwords, extra) {

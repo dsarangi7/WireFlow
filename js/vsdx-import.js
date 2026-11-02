@@ -480,7 +480,7 @@ function geomPath(geom, W, H) {
   for (const row of vsdxKids(geom, 'Row')) {
     const T = row.attrs.T || '';
     const c = vsdxCells(row);
-    const X = vsdxNum(c.X, cx), Y = vsdxNum(c.Y, cy);
+    const X = vsdxNum(c.X, 0), Y = vsdxNum(c.Y, 0);
     if (T === 'MoveTo') { d.push(`M ${X} ${Y}`); cx = X; cy = Y; continue; }
     if (T === 'RelMoveTo') { cx += X; cy += Y; d.push(`M ${cx} ${cy}`); continue; }
     if (T === 'RelLineTo') { cx += X; cy += Y; d.push(`L ${cx} ${cy}`); continue; }
@@ -506,11 +506,20 @@ function geomPath(geom, W, H) {
       continue;
     }
     if (T === 'InfiniteLine' || T === 'NURBSTo' || T === 'SplineStart' || T === 'PolylineTo') continue;
+    if (T === 'ArcTo') {
+      const bow = Number(c.A), dx = X - cx, dy = Y - cy, chord = Math.hypot(dx, dy);
+      // Positive Visio bow lies to the right of the directed chord in Y-up space.
+      const mx = (cx + X) / 2 + dy / chord * bow;
+      const my = (cy + Y) / 2 - dx / chord * bow;
+      const arc = chord > 0 && Number.isFinite(bow) && bow !== 0
+        ? vsdxEllipticalArc(cx, cy, X, Y, mx, my, 0, 1) : null;
+      d.push(arc || `L ${X} ${Y}`); cx = X; cy = Y; continue;
+    }
     if (T === 'EllipticalArcTo') {
       const arc = vsdxEllipticalArc(cx, cy, X, Y, Number(c.A), Number(c.B), Number(c.C), Number(c.D));
       d.push(arc || `L ${X} ${Y}`); cx = X; cy = Y; continue;
     }
-    if (T === 'ArcTo' || T === 'CubicBezTo' || T === 'QuadBezTo' || T === 'RelCubBezTo') {
+    if (T === 'CubicBezTo' || T === 'QuadBezTo' || T === 'RelCubBezTo') {
       d.push(`L ${X} ${Y}`); cx = X; cy = Y; continue;   /* endpoint approximation */
     }
     if (c.X !== undefined) { d.push(`L ${X} ${Y}`); cx = X; cy = Y; }
