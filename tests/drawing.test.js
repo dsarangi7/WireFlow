@@ -497,7 +497,7 @@ ok('print title block embeds the AYK logo and drawing details',
 
 const simpleSrc = fs.readFileSync(path.join(ROOT, 'js', 'simple-wiring.js'), 'utf8');
 const portFactory = new Function('slotCell', 'fvSlotCenter', 'fvDist', 'SSC_PALETTE',
-  simpleSrc + '\nreturn { pictureZoomOffset, modulePortsValid, pictureDevicePortsComplete, pictureModuleWiring, pictureVisioModel, portMarkingPrompt, markingPlanErrors, markingSteps, markingIssues, markingRecord, markingLayout, pictureDeviceLabels, pictureDeviceLabelsSvg };');
+  simpleSrc + '\nreturn { pictureZoomOffset, modulePortsValid, pictureCopyDraftRoutePoints, pictureDevicePortsComplete, pictureModuleWiring, pictureVisioModel, portMarkingPrompt, markingPlanErrors, markingSteps, markingIssues, markingRecord, markingLayout, pictureDeviceLabels, pictureDeviceLabelsSvg };');
 const portsApi = portFactory(E.slotCell, (cal, c, r) => ({ x: cal.x0 + c * cal.pitchX, y: cal.y0 + r * cal.pitchY }),
   (a, b) => Math.hypot(a.x - b.x, a.y - b.y), E.SSC_PALETTE);
 eq('zoom keeps the picture point beneath the pointer stationary', portsApi.pictureZoomOffset(100, 50, 1, 2), 250);
@@ -604,6 +604,11 @@ ok('the bus positive link with an unknown endpoint is never invented', !partialD
 const nonfiniteDevice = { '1,1': { ...devicePorts['1,1'], commS: { x: NaN, y: 5 } } };
 eq('non-finite SSC endpoint omits only its own connection', portsApi.pictureModuleWiring(completeGroups, measuredCal, ports, nonfiniteDevice).filter(s => s.kind === 'sscp' || s.kind === 'sscc').length, 5);
 const routeDevice = { '1,1': { ...devicePorts['1,1'], draftRoutes: { busPos: [{ x: 360, y: 101 }, { x: 360, y: 50 }] } } };
+const routeCopy = portsApi.pictureCopyDraftRoutePoints(routeDevice['1,1'], 'busPos');
+routeCopy[0].x = 999;
+ok('editing a route copies saved points rather than mutating them', routeDevice['1,1'].draftRoutes.busPos[0].x === 360);
+eq('a missing draft route opens empty', portsApi.pictureCopyDraftRoutePoints(routeDevice['1,1'], 'busNeg').length, 0);
+ok('a malformed saved route is reported instead of copied', portsApi.pictureCopyDraftRoutePoints({ draftRoutes: { busPos: [{ x: NaN, y: 0 }] } }, 'busPos') === null);
 const routedWires = portsApi.pictureModuleWiring(completeGroups, measuredCal, ports, routeDevice);
 const routedBus = routedWires.find(s => s.kind === 'sscp' && s.pts[0] === routeDevice['1,1'].busPos);
 eq('explicit draft route preserves terminals and waypoints', JSON.stringify(routedBus.pts), JSON.stringify([devicePorts['1,1'].busPos, { x: 360, y: 101 }, { x: 360, y: 50 }, devicePorts['1,1'].jbPos]));

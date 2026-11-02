@@ -76,5 +76,6 @@ are omitted rather than silently replaced by a direct line. With no route data,
 existing direct previews remain unchanged. Distances are preview geometry, not
 approved harness lengths. After generating a draft, expand “Adjust a draft SSC route”, select the SSC and
 connection, and click intermediate points in order from the SSC. Undo or cancel
-the edit, or save the draft route; saving with no points restores a direct preview.
+the edit, or save the draft route. Reopening a route loads its saved points;
+use Clear points and save to restore a direct preview.
 There is no automatic route planner, and waypoints do not approve a physical route.

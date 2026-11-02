@@ -143,6 +143,17 @@ function portMarkingPrompt(portStep, deviceStep) {
   return null;
 }
 
+/* Copy saved waypoints so an unsaved edit cannot mutate the project. */
+function pictureCopyDraftRoutePoints(device, key) {
+  const routes = device && device.draftRoutes;
+  if (routes === undefined) return [];
+  if (!routes || typeof routes !== 'object' || Array.isArray(routes)) return null;
+  if (!Object.prototype.hasOwnProperty.call(routes, key)) return [];
+  const points = routes[key];
+  if (!Array.isArray(points) || !points.every(p => p && Number.isFinite(p.x) && Number.isFinite(p.y))) return null;
+  return points.map(p => ({ x: p.x, y: p.y }));
+}
+
 function pictureDevicePortsComplete(ports) {
   return !!ports && ['commS', 'commN', 'pwrNeg', 'pwrPos', 'busNeg', 'busPos', 'jbNeg', 'jbPos']
     .every(name => ports[name] && Number.isFinite(ports[name].x) && Number.isFinite(ports[name].y));
@@ -364,7 +375,7 @@ async function tabSimpleWiring(el, project, ctx) {
         <div class="btn-row"><button class="btn btn-primary" id="simple-generate" ${!cal || !cal.ok || !modulePortsValid(st.ports) || st.deviceStep || st.portStep || issues.length || st.saving || st.saveFailed ? 'disabled' : ''}>Generate wiring</button>${st.generated ? `<button class="btn btn-ghost" id="simple-visio">Download editable draft (Visio)</button><button class="btn btn-ghost" id="simple-svg">Download draft wiring drawing (SVG)</button><button class="btn btn-ghost" id="simple-export">Print draft PDF</button>` : ''}</div>
         ${st.generated ? '<p class="muted small">You can change markings here and generate again. Visio edits are separate and do not update this saved project.</p>' : ''}
         ${st.generated && !st.routeEdit ? `<details><summary>Adjust a draft SSC route</summary><p class="muted small">Choose a connection, then click its intermediate points in order on the picture. These straight segments are a draft and require engineering review.</p><div class="btn-row"><label>SSC <select id="route-ssc">${layoutGroups(project).filter(group => pictureDevicePortsComplete(st.devicePorts[group.slot])).map(group => `<option value="${esc(group.slot)}">${esc(group.label)}</option>`).join('')}</select></label><label>Connection <select id="route-key"><option value="stringPos">SSC string + to module</option><option value="stringNeg">SSC string − to module</option><option value="commS">SSC communication S to module</option><option value="commN">SSC communication N to module</option><option value="busPos">SSC bus + to junction box</option><option value="busNeg">SSC bus − to junction box</option></select></label><button class="btn btn-ghost btn-sm" id="route-start">Edit route</button></div></details>` : ''}
-        ${st.routeEdit ? `<div class="port-instruction" role="status"><strong>Click each route bend on the picture, in order from the SSC.</strong><span>${st.routeEdit.points.length} intermediate points selected. Save with no points to return to a straight preview.</span><div class="btn-row"><button class="btn btn-ghost btn-sm" id="route-undo" ${st.routeEdit.points.length ? '' : 'disabled'}>Undo point</button><button class="btn btn-primary btn-sm" id="route-save">Save draft route</button><button class="btn btn-ghost btn-sm" id="route-cancel">Cancel</button></div></div>` : ''}
+        ${st.routeEdit ? `<div class="port-instruction" role="status"><strong>Click each route bend on the picture, in order from the SSC.</strong><span>${st.routeEdit.points.length} intermediate points selected. Save with no points to return to a straight preview.</span><div class="btn-row"><button class="btn btn-ghost btn-sm" id="route-undo" ${st.routeEdit.points.length ? '' : 'disabled'}>Undo point</button><button class="btn btn-ghost btn-sm" id="route-clear" ${st.routeEdit.points.length ? '' : 'disabled'}>Clear points</button><button class="btn btn-primary btn-sm" id="route-save">Save draft route</button><button class="btn btn-ghost btn-sm" id="route-cancel">Cancel</button></div></div>` : ''}
         <p id="simple-message" role="status">${esc(st.message)}</p>
         ${st.generated ? `<p class="${failed.length ? 'warn' : 'muted'}">${failed.length ? failed.length + ' checks need attention before release.' : 'All ' + checks.length + ' checks pass.'}</p>${failed.length ? '<ul>' + failed.map(check => '<li>' + esc(check.id + ': ' + check.detail) + '</li>').join('') + '</ul>' : ''}` : ''}
       </div>`;
@@ -426,9 +437,12 @@ async function tabSimpleWiring(el, project, ctx) {
     el.querySelector('#route-start')?.addEventListener('click', () => {
       const slot = el.querySelector('#route-ssc').value, key = el.querySelector('#route-key').value;
       if (!slot || !pictureDevicePortsComplete(st.devicePorts[slot])) { st.message = 'Mark this SSC and junction-box ports before editing a route.'; render(); return; }
-      st.routeEdit = { slot, key, points: [] }; st.message = ''; render();
+      const saved = pictureCopyDraftRoutePoints(st.devicePorts[slot], key);
+      st.routeEdit = { slot, key, points: saved || [] };
+      st.message = saved === null ? 'The saved draft route is invalid. Select replacement points or cancel.' : ''; render();
     });
     el.querySelector('#route-undo')?.addEventListener('click', () => { st.routeEdit.points.pop(); render(); });
+    el.querySelector('#route-clear')?.addEventListener('click', () => { st.routeEdit.points = []; render(); });
     el.querySelector('#route-cancel')?.addEventListener('click', () => { st.routeEdit = null; st.message = 'Draft route edit cancelled.'; render(); });
     el.querySelector('#route-save')?.addEventListener('click', async () => {
       const edit = st.routeEdit, oldConfig = project.config, oldPorts = st.devicePorts;
@@ -528,7 +542,7 @@ async function tabSimpleWiring(el, project, ctx) {
       download((project.name || 'wiring') + '-rack-wiring.svg', svgOut, 'image/svg+xml');
     });
     if (st.routeEdit) el.querySelectorAll('button,input,select').forEach(control => {
-      if (!['route-undo', 'route-save', 'route-cancel', 'simple-zoom-in', 'simple-zoom-out', 'simple-zoom-fit'].includes(control.id)) control.disabled = true;
+      if (!['route-undo', 'route-clear', 'route-save', 'route-cancel', 'simple-zoom-in', 'simple-zoom-out', 'simple-zoom-fit'].includes(control.id)) control.disabled = true;
     });
     if (st.saving) el.querySelectorAll('button,input,select').forEach(control => { control.disabled = true; });
   }
