@@ -66,3 +66,13 @@ For draft previews, each SSC or junction-box link is drawn only when both of its
 own endpoints are known; missing or invalid endpoints omit that link rather than
 hiding other complete links. The existing draft warning still applies: review all
 connections and routes, since direct preview lines are not approved cable routes.
+
+For future draft routing integration, a saved SSC port record may carry a
+`draftRoutes` object. Its optional keys are `stringPos`, `stringNeg`, `commS`,
+`commN`, `busPos` and `busNeg`; each value is an ordered list of intermediate
+picture-pixel points (`{x,y}`, Y down). The preview keeps its existing terminal
+endpoints and draws the supplied points between them. Invalid supplied routes
+are omitted rather than silently replaced by a direct line. With no route data,
+existing direct previews remain unchanged. Distances are preview geometry, not
+approved harness lengths. There is currently no editor or automatic route planner
+for this field, and supplying waypoints does not approve a physical route.

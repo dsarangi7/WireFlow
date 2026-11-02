@@ -603,6 +603,17 @@ ok('all fully specified SSC links survive a missing JB port', partialDeviceWires
 ok('the bus positive link with an unknown endpoint is never invented', !partialDeviceWires.some(s => s.pts[0] === devicePorts['1,1'].busPos));
 const nonfiniteDevice = { '1,1': { ...devicePorts['1,1'], commS: { x: NaN, y: 5 } } };
 eq('non-finite SSC endpoint omits only its own connection', portsApi.pictureModuleWiring(completeGroups, measuredCal, ports, nonfiniteDevice).filter(s => s.kind === 'sscp' || s.kind === 'sscc').length, 5);
+const routeDevice = { '1,1': { ...devicePorts['1,1'], draftRoutes: { busPos: [{ x: 360, y: 101 }, { x: 360, y: 50 }] } } };
+const routedWires = portsApi.pictureModuleWiring(completeGroups, measuredCal, ports, routeDevice);
+const routedBus = routedWires.find(s => s.kind === 'sscp' && s.pts[0] === routeDevice['1,1'].busPos);
+eq('explicit draft route preserves terminals and waypoints', JSON.stringify(routedBus.pts), JSON.stringify([devicePorts['1,1'].busPos, { x: 360, y: 101 }, { x: 360, y: 50 }, devicePorts['1,1'].jbPos]));
+eq('explicit draft route length follows its segments', routedBus.lenMm, 111);
+const invalidRoute = { '1,1': { ...devicePorts['1,1'], draftRoutes: { busPos: [{ x: NaN, y: 0 }] } } };
+const invalidWires = portsApi.pictureModuleWiring(completeGroups, measuredCal, ports, invalidRoute);
+ok('invalid explicit route is omitted rather than replaced with a direct line', !invalidWires.some(s => s.kind === 'sscp' && s.pts[0] === invalidRoute['1,1'].busPos));
+eq('invalid route leaves other SSC connections intact', invalidWires.filter(s => s.kind === 'sscp' || s.kind === 'sscc').length, 5);
+const invalidRoutesObject = { '1,1': { ...devicePorts['1,1'], draftRoutes: [] } };
+eq('invalid route map never silently uses straight device links', portsApi.pictureModuleWiring(completeGroups, measuredCal, ports, invalidRoutesObject).filter(s => s.kind === 'sscp' || s.kind === 'sscc').length, 0);
 
 const verdictBody = fnBody(appSrc, 'vsdxImportVerdict');
 ok('fnBody extracted vsdxImportVerdict()', !!verdictBody,
