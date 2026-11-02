@@ -450,6 +450,30 @@ function vsdxPin(cells, key, size, half) {
 }
 
 /* ---------- geometry -------------------------------------- */
+/* Reconstruct an ellipse from its endpoints, on-arc control point, axis angle
+ * and major/minor ratio. Work in unit-circle coordinates to select the arc
+ * that actually passes through the supplied control point. */
+function vsdxEllipticalArc(x0, y0, x1, y1, ax, ay, angle, ratio) {
+  if (![x0,y0,x1,y1,ax,ay,angle,ratio].every(Number.isFinite) || ratio <= 0 || ratio > 1000) return null;
+  const cos = Math.cos(angle), sin = Math.sin(angle);
+  const map = (x, y) => ({x: cos*x + sin*y, y: (-sin*x + cos*y)*ratio});
+  const p = map(x0,y0), q = map(ax,ay), r = map(x1,y1);
+  const d = 2*(p.x*(q.y-r.y)+q.x*(r.y-p.y)+r.x*(p.y-q.y));
+  const scale = Math.max(1, Math.hypot(p.x-q.x,p.y-q.y), Math.hypot(p.x-r.x,p.y-r.y));
+  if (Math.abs(d) < 1e-12*scale*scale) return null;
+  const pp=p.x*p.x+p.y*p.y, qq=q.x*q.x+q.y*q.y, rr=r.x*r.x+r.y*r.y;
+  const ox=(pp*(q.y-r.y)+qq*(r.y-p.y)+rr*(p.y-q.y))/d;
+  const oy=(pp*(r.x-q.x)+qq*(p.x-r.x)+rr*(q.x-p.x))/d;
+  const radius=Math.hypot(p.x-ox,p.y-oy);
+  if (!Number.isFinite(radius) || radius < 1e-12) return null;
+  const norm = t => (t % (2*Math.PI) + 2*Math.PI) % (2*Math.PI);
+  const start=Math.atan2(p.y-oy,p.x-ox), mid=Math.atan2(q.y-oy,q.x-ox), end=Math.atan2(r.y-oy,r.x-ox);
+  const forward=norm(end-start), midForward=norm(mid-start);
+  const sweep=midForward <= forward + 1e-10 ? 1 : 0;
+  const span=sweep ? forward : 2*Math.PI-forward;
+  return `A ${radius} ${radius/ratio} ${angle*180/Math.PI} ${span > Math.PI ? 1 : 0} ${sweep} ${x1} ${y1}`;
+}
+
 function geomPath(geom, W, H) {
   const d = [];
   let cx = 0, cy = 0;
@@ -482,7 +506,11 @@ function geomPath(geom, W, H) {
       continue;
     }
     if (T === 'InfiniteLine' || T === 'NURBSTo' || T === 'SplineStart' || T === 'PolylineTo') continue;
-    if (T === 'ArcTo' || T === 'EllipticalArcTo' || T === 'CubicBezTo' || T === 'QuadBezTo' || T === 'RelCubBezTo') {
+    if (T === 'EllipticalArcTo') {
+      const arc = vsdxEllipticalArc(cx, cy, X, Y, Number(c.A), Number(c.B), Number(c.C), Number(c.D));
+      d.push(arc || `L ${X} ${Y}`); cx = X; cy = Y; continue;
+    }
+    if (T === 'ArcTo' || T === 'CubicBezTo' || T === 'QuadBezTo' || T === 'RelCubBezTo') {
       d.push(`L ${X} ${Y}`); cx = X; cy = Y; continue;   /* endpoint approximation */
     }
     if (c.X !== undefined) { d.push(`L ${X} ${Y}`); cx = X; cy = Y; }

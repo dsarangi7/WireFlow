@@ -1535,10 +1535,15 @@ let vsdxTests = Promise.resolve();
   const impSrc = fs.readFileSync(path.join(path.dirname(ENGINE), 'vsdx-import.js'), 'utf8');
   const fvSrc = fs.readFileSync(path.join(path.dirname(ENGINE), 'frontview.js'), 'utf8');
   const zipSrc2 = fs.readFileSync(path.join(path.dirname(ENGINE), 'zip.js'), 'utf8');
-  const names = ['emfBounds', 'emfDraw', 'vsdxOpen', 'vsdxZipRead', 'vsdxXml', 'vsdxCells', 'geomPath', 'vsdxNum', 'vsdxWrap', 'ZipWriter',
+  const names = ['emfBounds', 'emfDraw', 'vsdxOpen', 'vsdxZipRead', 'vsdxXml', 'vsdxCells', 'geomPath', 'vsdxEllipticalArc', 'vsdxNum', 'vsdxWrap', 'ZipWriter',
     'fvCalib', 'fvTerminals', 'fvWiring', 'fvSvg', 'fvSummary', 'fvPxToSheet', 'vsdxLayerLabel'];
   const IMPL = new Function(emfSrc + '\n' + zipSrc2 + '\n' + impSrc + '\n' + fvSrc + '\nreturn {' + names.join(',') + '};')();
   const IM = Object.assign(IMPL, {});
+  const ellipseUp = IM.vsdxEllipticalArc(1, 0, -1, 0, 0, 0.5, 0, 2);
+  const ellipseDown = IM.vsdxEllipticalArc(1, 0, -1, 0, 0, -0.5, 0, 2);
+  ok('Visio ellipse passes through upper control point', /^A 1 0.5 0 0 1 -1 0$/.test(ellipseUp), ellipseUp);
+  ok('Visio ellipse selects opposite sweep for lower control point', /^A 1 0.5 0 0 0 -1 0$/.test(ellipseDown), ellipseDown);
+  ok('Visio ellipse rejects collinear points', IM.vsdxEllipticalArc(0,0,2,0,1,0,0,1) === null, 'degenerate fallback');
 
   /* ---- tiny synthetic EMF: red pen line + solid red triangle ---- */
   function rec(type, payloadDwords, extra) {
