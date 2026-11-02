@@ -1615,7 +1615,7 @@ let vsdxTests = Promise.resolve();
 <PageContents xmlns="http://schemas.microsoft.com/office/visio/2012/main">
 <Shapes><Shape ID="1" Type="Shape">
 <Cell N="PinX" V="2"/><Cell N="PinY" V="1.5"/><Cell N="Width" V="4"/><Cell N="Height" V="2"/>
-<Cell N="LocPinX" V="2"/><Cell N="LocPinY" V="1"/><Cell N="Angle" V="0"/>
+<Cell N="LocPinX" V="2"/><Cell N="LocPinY" V="1"/><Cell N="Angle" V="1.5707963267948966"/>
 <Cell N="LayerMember" V="0"/>
 <Cell N="LineColor" V="#ff0000"/><Cell N="LineWeight" V="0.01"/>
 <Cell N="FillForegnd" V="#00ff00"/><Cell N="FillPattern" V="1"/>
@@ -1627,10 +1627,11 @@ let vsdxTests = Promise.resolve();
 <Row T="LineTo" IX="5"><Cell N="X" V="0"/><Cell N="Y" V="0"/></Row>
 </Section>
 <Section N="Character"><Row IX="0"><Cell N="Size" V="0.15"/><Cell N="Color" V="#0000cc"/></Row></Section>
+<Section N="TextXForm"><Cell N="TxtAngle" V="0.7853981633974483"/></Section>
 <Text>Hello Rack</Text>
 </Shape><Shape ID="2" Type="Foreign">
 <Cell N="PinX" V="6"/><Cell N="PinY" V="4"/><Cell N="Width" V="2"/><Cell N="Height" V="1"/>
-<Cell N="LocPinX" V="1"/><Cell N="LocPinY" V="0.5"/><Cell N="Angle" V="0"/>
+<Cell N="LocPinX" V="1"/><Cell N="LocPinY" V="0.5"/><Cell N="Angle" V="1.5707963267948966"/>
 <Cell N="LayerMember" V="0"/>
 <ForeignData ForeignType="Bitmap"><Rel r:id="rId1"/></ForeignData>
 </Shape></Shapes></PageContents>`;
@@ -1665,6 +1666,8 @@ let vsdxTests = Promise.resolve();
       doc.pages[0].layers.map((l) => l.name).join('|'));
 
     const r = await doc.renderPage(0, null);
+    ok('VSDX radian rotations become SVG degrees', /translate\(2 1\.5\) rotate\(90\)/.test(r.svg) && /translate\(6 4\) rotate\(90\)/.test(r.svg), 'quarter turn');
+    ok('VSDX text rotation uses degrees', /rotate\(45\.000\)/.test(r.svg), '45 degree text');
     ok('VSDX shape geometry is rebuilt as SVG paths',
       /M 0 0 L 4 0 L 4 2 L 0 2 L 0 0/.test(r.svg) && /stroke="#ff0000"/.test(r.svg) && /fill="#00ff00"/.test(r.svg),
       'rect path with red stroke + green fill');
@@ -1677,8 +1680,8 @@ let vsdxTests = Promise.resolve();
       r.stats.shapes === 2 && r.stats.texts === 1 && r.stats.foreign === 1, JSON.stringify(r.stats));
     ok('VSDX embedded bitmap is reported with its page geometry',
       r.foreigns && r.foreigns.length === 1 &&
-      Math.abs(r.foreigns[0].x - 5) < 1e-9 && Math.abs(r.foreigns[0].y - 3.5) < 1e-9 &&
-      r.foreigns[0].w === 2 && r.foreigns[0].h === 1 && /data:image\/png/.test(r.foreigns[0].href),
+      Math.abs(r.foreigns[0].x - 5.5) < 1e-9 && Math.abs(r.foreigns[0].y - 3) < 1e-9 &&
+      Math.abs(r.foreigns[0].w - 1) < 1e-9 && Math.abs(r.foreigns[0].h - 2) < 1e-9 && /data:image\/png/.test(r.foreigns[0].href),
       `foreigns=${JSON.stringify(r.foreigns && r.foreigns.map((f) => [f.x, f.y, f.w, f.h]))}`);
     /* the page group flips y, so the bitmap must be pre-flipped inside the
        shape or the rack picture renders upside down (regression) */

@@ -253,7 +253,7 @@ async function vsdxOpen(buf, opts) {
         const fy = cells.FlipY === '1' ? -1 : 1;
         const sw = vsdxNum(cells.Width), shh = vsdxNum(cells.Height);
         const lx = vsdxPin(cells, 'LocPinX', sw / 2), ly = vsdxPin(cells, 'LocPinY', shh / 2);
-        const t = `translate(${vsdxNum(cells.PinX)} ${vsdxNum(cells.PinY)}) rotate(${vsdxNum(cells.Angle)}) `
+        const t = `translate(${vsdxNum(cells.PinX)} ${vsdxNum(cells.PinY)}) rotate(${vsdxNum(cells.Angle) * 180 / Math.PI}) `
           + `scale(${fx} ${fy}) translate(${-lx} ${-ly})`;
 
         /* --- foreign object (CAD rack / logo) --- */
@@ -266,7 +266,7 @@ async function vsdxOpen(buf, opts) {
             foreign++;
             /* page-inch geometry for "use as wiring base": centre + size of
                the picture on the page (rotation-aware bounding box). */
-            const ang = vsdxNum(cells.Angle) * Math.PI / 180;
+            const ang = vsdxNum(cells.Angle);
             const hw = (Math.abs(W / 2 * Math.cos(ang)) + Math.abs(H / 2 * Math.sin(ang)));
             const hh = (Math.abs(W / 2 * Math.sin(ang)) + Math.abs(H / 2 * Math.cos(ang)));
             foreigns.push({
@@ -404,7 +404,7 @@ function textOf(sh, cells) {
   const x = tf.TxtPinX !== undefined ? vsdxNum(tf.TxtPinX) - vsdxNum(tf.TxtLocPinX) : w / 2;
   const bottom = tf.TxtPinY !== undefined ? vsdxNum(tf.TxtPinY) - vsdxNum(tf.TxtLocPinY) : (h - th) / 2;
   const y = bottom + th - size * 0.22;
-  const ang = vsdxNum(tf.TxtAngle, 0);
+  const ang = vsdxNum(tf.TxtAngle, 0) * 180 / Math.PI;
   /* Visio wraps text inside the text block; a single <text> would run off
      the page (the notes block is 3 sentences long), so wrap greedily. */
   const blockW = Math.max(0.3, (tf.TxtWidth !== undefined ? vsdxNum(tf.TxtWidth) : w) || w);
