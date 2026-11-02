@@ -60,3 +60,9 @@ button to pan, or the plus, minus and Fit drawing controls. Left-click remains
 the marking action. Raster and VSDX embedded bitmap imports remain raster;
 zooming cannot add detail to those images. This navigation does not identify
 ports automatically or change wiring rules.
+
+An incomplete saved SSC or junction-box port set is not counted as fully marked.
+For draft previews, each SSC or junction-box link is drawn only when both of its
+own endpoints are known; missing or invalid endpoints omit that link rather than
+hiding other complete links. The existing draft warning still applies: review all
+connections and routes, since direct preview lines are not approved cable routes.

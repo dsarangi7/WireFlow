@@ -497,7 +497,7 @@ ok('print title block embeds the AYK logo and drawing details',
 
 const simpleSrc = fs.readFileSync(path.join(ROOT, 'js', 'simple-wiring.js'), 'utf8');
 const portFactory = new Function('slotCell', 'fvSlotCenter', 'fvDist', 'SSC_PALETTE',
-  simpleSrc + '\nreturn { pictureZoomOffset, modulePortsValid, pictureModuleWiring, pictureVisioModel, portMarkingPrompt, markingPlanErrors, markingSteps, markingIssues, markingRecord, markingLayout, pictureDeviceLabels, pictureDeviceLabelsSvg };');
+  simpleSrc + '\nreturn { pictureZoomOffset, modulePortsValid, pictureDevicePortsComplete, pictureModuleWiring, pictureVisioModel, portMarkingPrompt, markingPlanErrors, markingSteps, markingIssues, markingRecord, markingLayout, pictureDeviceLabels, pictureDeviceLabelsSvg };');
 const portsApi = portFactory(E.slotCell, (cal, c, r) => ({ x: cal.x0 + c * cal.pitchX, y: cal.y0 + r * cal.pitchY }),
   (a, b) => Math.hypot(a.x - b.x, a.y - b.y), E.SSC_PALETTE);
 eq('zoom keeps the picture point beneath the pointer stationary', portsApi.pictureZoomOffset(100, 50, 1, 2), 250);
@@ -595,8 +595,14 @@ eq('measured SSC and junction-box ports connect using the six approved endpoint 
 ]));
 const incompleteDevice = { '1,1': { ...devicePorts['1,1'] } };
 delete incompleteDevice['1,1'].jbPos;
-eq('SSC links are omitted if any SSC or junction-box terminal is not marked',
-  portsApi.pictureModuleWiring(completeGroups, measuredCal, ports, incompleteDevice).filter(s => s.kind === 'sscp' || s.kind === 'sscc').length, 0);
+ok('complete SSC and JB port set is recognized', portsApi.pictureDevicePortsComplete(devicePorts['1,1']));
+ok('partial SSC and JB port set is not reported complete', !portsApi.pictureDevicePortsComplete(incompleteDevice['1,1']));
+const partialDeviceWires = portsApi.pictureModuleWiring(completeGroups, measuredCal, ports, incompleteDevice).filter(s => s.kind === 'sscp' || s.kind === 'sscc');
+eq('only the incomplete junction-box link is omitted', partialDeviceWires.length, 5);
+ok('all fully specified SSC links survive a missing JB port', partialDeviceWires.some(s => s.pts[0] === devicePorts['1,1'].pwrPos) && partialDeviceWires.some(s => s.pts[0] === devicePorts['1,1'].commS));
+ok('the bus positive link with an unknown endpoint is never invented', !partialDeviceWires.some(s => s.pts[0] === devicePorts['1,1'].busPos));
+const nonfiniteDevice = { '1,1': { ...devicePorts['1,1'], commS: { x: NaN, y: 5 } } };
+eq('non-finite SSC endpoint omits only its own connection', portsApi.pictureModuleWiring(completeGroups, measuredCal, ports, nonfiniteDevice).filter(s => s.kind === 'sscp' || s.kind === 'sscc').length, 5);
 
 const verdictBody = fnBody(appSrc, 'vsdxImportVerdict');
 ok('fnBody extracted vsdxImportVerdict()', !!verdictBody,

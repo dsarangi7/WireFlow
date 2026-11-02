@@ -143,6 +143,11 @@ function portMarkingPrompt(portStep, deviceStep) {
   return null;
 }
 
+function pictureDevicePortsComplete(ports) {
+  return !!ports && ['commS', 'commN', 'pwrNeg', 'pwrPos', 'busNeg', 'busPos', 'jbNeg', 'jbPos']
+    .every(name => ports[name] && Number.isFinite(ports[name].x) && Number.isFinite(ports[name].y));
+}
+
 /* Render only connections whose physical terminal locations were marked.
    Use the same S→N, −→+ and bus-polarity ordering as the wiring engine. */
 function pictureModuleWiring(groups, cal, ports, devicePorts) {
@@ -166,8 +171,7 @@ function pictureModuleWiring(groups, cal, ports, devicePorts) {
       });
     });
     const d = devicePorts && devicePorts[group.slot];
-    const names = ['commS', 'commN', 'pwrNeg', 'pwrPos', 'busNeg', 'busPos', 'jbNeg', 'jbPos'];
-    if (slots.length && d && names.every(name => d[name] && Number.isFinite(d[name].x) && Number.isFinite(d[name].y))) {
+    if (slots.length && d) {
       const connections = [
         ['sscp', d.pwrPos, at(slots[0], 'pwrPos')],
         ['sscp', d.pwrNeg, at(slots[slots.length - 1], 'pwrNeg')],
@@ -176,7 +180,10 @@ function pictureModuleWiring(groups, cal, ports, devicePorts) {
         ['sscp', d.busPos, d.jbPos],
         ['sscp', d.busNeg, d.jbNeg],
       ];
-      connections.forEach(([kind, a, b]) => segments.push({ ...tag, kind, pts: [a, b], lenMm: fvDist(a, b) * cal.mmPerPx }));
+      const validPoint = p => p && Number.isFinite(p.x) && Number.isFinite(p.y);
+      connections.forEach(([kind, a, b]) => {
+        if (validPoint(a) && validPoint(b)) segments.push({ ...tag, kind, pts: [a, b], lenMm: fvDist(a, b) * cal.mmPerPx });
+      });
     }
   });
   return segments;
@@ -294,7 +301,7 @@ async function tabSimpleWiring(el, project, ctx) {
     const prompt = portMarkingPrompt(st.portStep, st.deviceStep);
     if (prompt && st.deviceStep && st.plan && !issues.length) {
       const groups = markingLayout(st.plan).sscs;
-      const group = st.deviceStep === 1 ? groups.find(s => !st.devicePorts[s.slot]) : groups.find(s => s.slot === st.deviceSlot);
+      const group = st.deviceStep === 1 ? groups.find(s => !pictureDevicePortsComplete(st.devicePorts[s.slot])) : groups.find(s => s.slot === st.deviceSlot);
       if (group) {
         prompt.title = group.label + ' / ' + group.jb;
         prompt.instruction = prompt.instruction.replace('the centre of the SSC you are marking', 'the centre of ' + group.label).replace('the junction-box', group.jb).replace('the SSC', group.label);
@@ -338,7 +345,7 @@ async function tabSimpleWiring(el, project, ctx) {
         <div id="simple-picture-scroll" style="border:1px solid var(--border);border-radius:8px;overflow:auto;max-height:70vh"><div id="simple-picture" style="width:${st.zoom * 100}%;cursor:crosshair">${svg}</div></div>
       </div>
       <div class="card" style="margin-top:16px"><h3>3 · Generate wiring</h3>
-        <p class="muted small">${rack ? Object.keys(st.devicePorts).filter(slot => rackIsModule(rack, slot) === false && rackDeviceCells(rack, 'ssc').includes(slot)).length : 0} of ${rack ? rackDeviceCells(rack, 'ssc').length : 0} SSCs have their ports marked. Unmarked SSC and junction-box links are omitted. Check assignments and routes; lines are direct previews, not approved cable routes.</p>
+        <p class="muted small">${rack ? Object.keys(st.devicePorts).filter(slot => rackIsModule(rack, slot) === false && rackDeviceCells(rack, 'ssc').includes(slot) && pictureDevicePortsComplete(st.devicePorts[slot])).length : 0} of ${rack ? rackDeviceCells(rack, 'ssc').length : 0} SSCs have their ports marked. Unmarked SSC and junction-box links are omitted. Check assignments and routes; lines are direct previews, not approved cable routes.</p>
         <div class="btn-row"><button class="btn btn-primary" id="simple-generate" ${!cal || !cal.ok || !modulePortsValid(st.ports) || st.deviceStep || st.portStep || issues.length || st.saving || st.saveFailed ? 'disabled' : ''}>Generate wiring</button>${st.generated ? `<button class="btn btn-ghost" id="simple-visio">Download editable draft (Visio)</button><button class="btn btn-ghost" id="simple-svg">Download draft wiring drawing (SVG)</button><button class="btn btn-ghost" id="simple-export">Print draft PDF</button>` : ''}</div>
         ${st.generated ? '<p class="muted small">You can change markings here and generate again. Visio edits are separate and do not update this saved project.</p>' : ''}
         <p id="simple-message" role="status">${esc(st.message)}</p>
@@ -414,7 +421,7 @@ async function tabSimpleWiring(el, project, ctx) {
       const c = Math.round((p.x - st.cal.x0) / st.cal.pitchX), r = Math.round((p.y - st.cal.y0) / st.cal.pitchY);
       if (st.deviceStep === 1) {
         const id = c + ',' + r;
-        const pendingSsc = st.plan && !markingIssues(st.plan).length ? markingLayout(st.plan).sscs.find(s => !st.devicePorts[s.slot]) : null;
+        const pendingSsc = st.plan && !markingIssues(st.plan).length ? markingLayout(st.plan).sscs.find(s => !pictureDevicePortsComplete(st.devicePorts[s.slot])) : null;
         if (!rackDeviceCells(st.rack, 'ssc').includes(id) || (pendingSsc && id !== pendingSsc.slot)) { st.message = pendingSsc ? 'Choose ' + pendingSsc.label + ' first.' : 'Choose the centre of a marked SSC.'; render(); return; }
         st.deviceSlot = id; st.pendingDevice = {}; st.deviceStep = 2; st.message = ''; render(); return;
       }
