@@ -79,3 +79,8 @@ connection, and click intermediate points in order from the SSC. Undo or cancel
 the edit, or save the draft route. Reopening a route loads its saved points;
 use Clear points and save to restore a direct preview.
 There is no automatic route planner, and waypoints do not approve a physical route.
+
+After generating a draft, **Download draft A3 sheet (SVG)** creates a standalone
+420 × 297 mm SVG with the rack picture, currently generated draft connections,
+title block, AYK logo and an engineering-review notice. This draft sheet does
+not reproduce the complete reference title block or imply approved routing.

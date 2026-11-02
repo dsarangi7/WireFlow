@@ -44,7 +44,7 @@ function loadEngine() {
     'DEFAULT_RULES', 'SHEET_LAYERS', 'SHEET_W', 'SHEET_H', 'SHEET_UNIT_MM',
     'emptyProject', 'generateNetlist', 'runValidations', 'buildSchedule',
     'scheduleCSV', 'harnessCatalogue', 'sheetLayer', 'sheetTextWidth', 'sheetAscii',
-    'buildSheetLayout', 'renderDiagramSVG', 'dxfExport', 'scrExport', 'specJson',
+    'buildSheetLayout', 'renderDiagramSVG', 'sheetSvgPrimitive', 'sheetEsc', 'dxfExport', 'scrExport', 'specJson',
     'rackParseDxf', 'rackFitDxf', 'rackDefaultFit',
     'RACK_CELL_KINDS', 'slotKey', 'slotCell', 'defaultRack', 'rackEnsure', 'rackCell',
     'rackIsModule', 'rackModuleCells', 'rackDeviceCells', 'rackPoint', 'rackSpan',
@@ -496,10 +496,10 @@ ok('print title block embeds the AYK logo and drawing details',
   printedHtml.includes('data:image/png;base64,logo-data') && printedHtml.includes('AYK POWER LTD.') && printedHtml.includes('DWG-1 · B'));
 
 const simpleSrc = fs.readFileSync(path.join(ROOT, 'js', 'simple-wiring.js'), 'utf8');
-const portFactory = new Function('slotCell', 'fvSlotCenter', 'fvDist', 'SSC_PALETTE',
-  simpleSrc + '\nreturn { pictureZoomOffset, modulePortsValid, pictureCopyDraftRoutePoints, pictureDevicePortsComplete, pictureModuleWiring, pictureVisioModel, portMarkingPrompt, markingPlanErrors, markingSteps, markingIssues, markingRecord, markingLayout, pictureDeviceLabels, pictureDeviceLabelsSvg };');
+const portFactory = new Function('slotCell', 'fvSlotCenter', 'fvDist', 'SSC_PALETTE', 'sheetSvgPrimitive', 'sheetEsc',
+  simpleSrc + '\nreturn { pictureZoomOffset, modulePortsValid, pictureCopyDraftRoutePoints, pictureDevicePortsComplete, pictureModuleWiring, pictureVisioModel, pictureSheetSvg, portMarkingPrompt, markingPlanErrors, markingSteps, markingIssues, markingRecord, markingLayout, pictureDeviceLabels, pictureDeviceLabelsSvg };');
 const portsApi = portFactory(E.slotCell, (cal, c, r) => ({ x: cal.x0 + c * cal.pitchX, y: cal.y0 + r * cal.pitchY }),
-  (a, b) => Math.hypot(a.x - b.x, a.y - b.y), E.SSC_PALETTE);
+  (a, b) => Math.hypot(a.x - b.x, a.y - b.y), E.SSC_PALETTE, E.sheetSvgPrimitive, E.sheetEsc);
 eq('zoom keeps the picture point beneath the pointer stationary', portsApi.pictureZoomOffset(100, 50, 1, 2), 250);
 const orderedBanks = [{ msms: 1, sscs: 2, modules: 3, junctionBoxes: 2, acdps: 1 }, { msms: 2, sscs: 1, modules: 2, junctionBoxes: 1, acdps: 2 }];
 const orderedSteps = portsApi.markingSteps(orderedBanks);
@@ -1041,6 +1041,9 @@ function vsdxParts(bytes) {
 {
   const input = { name: 'Measured Rack', drawing_no: 'DWG-1', revision: 'A', underlay: { kind: 'image', src: 'data:image/png;base64,iVBORw0KGgo=' }, config: { rules: E.DEFAULT_RULES } };
   const model = portsApi.pictureVisioModel(input, measuredCal, fullWires);
+  const svgSheet = portsApi.pictureSheetSvg(input, measuredCal, fullWires, 'UExBQ0VIT0xERVI=');
+  ok('draft SVG sheet has A3 dimensions and embedded rack and logo', svgSheet.includes('width="420mm" height="297mm"') && svgSheet.includes('data:image/png;base64,UExBQ0VIT0xERVI=') && svgSheet.includes(input.underlay.src));
+  ok('draft SVG sheet shows engineering review notice and wiring', svgSheet.includes('DRAFT - ENGINEERING REVIEW REQUIRED') && svgSheet.includes('<line ') && svgSheet.includes('stroke="#dc2626"') && svgSheet.includes('stroke="#16a34a"'));
   const lines = model.primitives.filter(p => p.type === 'line');
   const scale = model.underlay.w / measuredCal.imgW;
   const firstWire = fullWires.find(s => s.kind === 'power');

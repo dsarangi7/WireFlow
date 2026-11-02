@@ -246,6 +246,21 @@ function pictureVisioModel(project, cal, segments) {
   return { primitives, underlay: { kind: 'image', src: project.underlay.src, ...rect }, draftPicture: true };
 }
 
+/* Draft A3 SVG sheet using the same picture and primitives as the Visio draft.
+ * This is a presentation of existing draft wiring, not a route or approval. */
+function pictureSheetSvg(project, cal, segments, logoBase64) {
+  const model = pictureVisioModel(project, cal, segments);
+  const im = model.underlay;
+  const parts = ['<svg xmlns="http://www.w3.org/2000/svg" width="420mm" height="297mm" viewBox="0 0 1680 1188" role="img" aria-label="Draft wiring sheet">',
+    '<rect x="0" y="0" width="1680" height="1188" fill="#ffffff"/>',
+    '<image href="' + sheetEsc(im.src) + '" x="' + im.x + '" y="' + im.y + '" width="' + im.w + '" height="' + im.h + '" preserveAspectRatio="none"/>'];
+  for (const primitive of model.primitives) parts.push(sheetSvgPrimitive(primitive));
+  if (logoBase64 && /^[A-Za-z0-9+/=]+$/.test(logoBase64)) {
+    parts.push('<image x="1595" y="995" width="30" height="30" href="data:image/png;base64,' + logoBase64 + '"/>');
+  }
+  return parts.join('') + '</svg>';
+}
+
 /* Picture-first rack input for the existing deterministic wiring engine. */
 async function tabSimpleWiring(el, project, ctx) {
   if (!project.underlay || project.underlay.kind !== 'image' || !project.underlay.src) {
@@ -372,7 +387,7 @@ async function tabSimpleWiring(el, project, ctx) {
       </div>
       <div class="card" style="margin-top:16px"><h3>3 · Generate wiring</h3>
         <p class="muted small">${rack ? Object.keys(st.devicePorts).filter(slot => rackIsModule(rack, slot) === false && rackDeviceCells(rack, 'ssc').includes(slot) && pictureDevicePortsComplete(st.devicePorts[slot])).length : 0} of ${rack ? rackDeviceCells(rack, 'ssc').length : 0} SSCs have their ports marked. Links with missing terminals or invalid draft routes are omitted. Check assignments and routes; lines are direct previews, not approved cable routes.</p>
-        <div class="btn-row"><button class="btn btn-primary" id="simple-generate" ${!cal || !cal.ok || !modulePortsValid(st.ports) || st.deviceStep || st.portStep || issues.length || st.saving || st.saveFailed ? 'disabled' : ''}>Generate wiring</button>${st.generated ? `<button class="btn btn-ghost" id="simple-visio">Download editable draft (Visio)</button><button class="btn btn-ghost" id="simple-svg">Download draft wiring drawing (SVG)</button><button class="btn btn-ghost" id="simple-export">Print draft PDF</button>` : ''}</div>
+        <div class="btn-row"><button class="btn btn-primary" id="simple-generate" ${!cal || !cal.ok || !modulePortsValid(st.ports) || st.deviceStep || st.portStep || issues.length || st.saving || st.saveFailed ? 'disabled' : ''}>Generate wiring</button>${st.generated ? `<button class="btn btn-ghost" id="simple-visio">Download editable draft (Visio)</button><button class="btn btn-ghost" id="simple-svg">Download draft wiring drawing (SVG)</button><button class="btn btn-ghost" id="simple-sheet-svg">Download draft A3 sheet (SVG)</button><button class="btn btn-ghost" id="simple-export">Print draft PDF</button>` : ''}</div>
         ${st.generated ? '<p class="muted small">You can change markings here and generate again. Visio edits are separate and do not update this saved project.</p>' : ''}
         ${st.generated && !st.routeEdit ? `<details><summary>Adjust a draft SSC route</summary><p class="muted small">Choose a connection, then click its intermediate points in order on the picture. These straight segments are a draft and require engineering review.</p><div class="btn-row"><label>SSC <select id="route-ssc">${layoutGroups(project).filter(group => pictureDevicePortsComplete(st.devicePorts[group.slot])).map(group => `<option value="${esc(group.slot)}">${esc(group.label)}</option>`).join('')}</select></label><label>Connection <select id="route-key"><option value="stringPos">SSC string + to module</option><option value="stringNeg">SSC string − to module</option><option value="commS">SSC communication S to module</option><option value="commN">SSC communication N to module</option><option value="busPos">SSC bus + to junction box</option><option value="busNeg">SSC bus − to junction box</option></select></label><button class="btn btn-ghost btn-sm" id="route-start">Edit route</button></div></details>` : ''}
         ${st.routeEdit ? `<div class="port-instruction" role="status"><strong>Click each route bend on the picture, in order from the SSC.</strong><span>${st.routeEdit.points.length} intermediate points selected. Save with no points to return to a straight preview.</span><div class="btn-row"><button class="btn btn-ghost btn-sm" id="route-undo" ${st.routeEdit.points.length ? '' : 'disabled'}>Undo point</button><button class="btn btn-ghost btn-sm" id="route-clear" ${st.routeEdit.points.length ? '' : 'disabled'}>Clear points</button><button class="btn btn-primary btn-sm" id="route-save">Save draft route</button><button class="btn btn-ghost btn-sm" id="route-cancel">Cancel</button></div></div>` : ''}
@@ -535,6 +550,13 @@ async function tabSimpleWiring(el, project, ctx) {
         const conns = await ctx.getNetlist();
         download((project.name || 'wiring') + '-draft.vsdx', vsdxExport(conns, project, model), 'application/vnd.ms-visio.drawing.main+xml');
       } catch (error) { toast('Visio export failed: ' + error.message, 'error'); }
+    });
+    el.querySelector('#simple-sheet-svg')?.addEventListener('click', () => {
+      try {
+        const wiring = pictureModuleWiring(layoutGroups(project), st.cal, st.ports, st.devicePorts);
+        const sheet = pictureSheetSvg(project, st.cal, wiring, VSDX_LOGO_B64);
+        download((project.name || 'wiring') + '-draft-sheet.svg', sheet, 'image/svg+xml');
+      } catch (error) { toast('Could not create the draft sheet: ' + error.message, 'error'); }
     });
     el.querySelector('#simple-svg')?.addEventListener('click', () => {
       const wiring = pictureModuleWiring(layoutGroups(project), st.cal, st.ports, st.devicePorts);

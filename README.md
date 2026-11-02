@@ -15,7 +15,9 @@ battery modules and SSC/ACDP/MSM positions on the imported picture, and
 mark the actual module, SSC and junction-box ports to generate a wiring preview
 using the existing endpoint rules. It reports rule failures and exports a draft
 SVG, print/PDF, or Visio file with individually editable wire shapes and an AYK
-logo in the title block. Cable routes are still straight-line previews. See
+logo in the title block. Draft SVG exports include a rack-only drawing and an
+A3 sheet with a title block. Cable routes are draft previews; manually supplied
+route points do not constitute approved physical routing. See
 [the guided workspace documentation](docs/guided-workspace.md) for the workflow
 and the limits of the grid and draft cable routing.
 
