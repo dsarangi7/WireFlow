@@ -1561,6 +1561,8 @@ let vsdxTests = Promise.resolve();
     'fvCalib', 'fvTerminals', 'fvWiring', 'fvSvg', 'fvSummary', 'fvPxToSheet', 'vsdxLayerLabel'];
   const IMPL = new Function(emfSrc + '\n' + zipSrc2 + '\n' + impSrc + '\n' + fvSrc + '\nreturn {' + names.join(',') + '};')();
   const IM = Object.assign(IMPL, {});
+  const routedSvg = IM.fvSvg(measuredCal, { src: 'data:image/png;base64,STUB' }, [routedBus], { noGrid: true });
+  ok('SVG output retains the saved SSC route points in order', routedSvg.includes('points="350.0,101.0 360.0,101.0 360.0,50.0 410.0,50.0"'), 'four points preserved');
   const ellipseUp = IM.vsdxEllipticalArc(1, 0, -1, 0, 0, 0.5, 0, 2);
   const ellipseDown = IM.vsdxEllipticalArc(1, 0, -1, 0, 0, -0.5, 0, 2);
   ok('Visio ellipse passes through upper control point', /^A 1 0.5 0 0 1 -1 0$/.test(ellipseUp), ellipseUp);
