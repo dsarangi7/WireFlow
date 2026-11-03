@@ -104,11 +104,18 @@ for (let i=0;i<groups.length;i++) {
 let rack=api.fvSvg(cal,{src:image},wires,{noGrid:true,sscLabels:true});
 // Sample-only SSC IDs follow the reference's right-to-left S1...S5 ordering.
 // Device centres are visual candidates, not proven recognition or placement.
-const banks=[{msms:1,sscs:5,modules:12,junctionBoxes:5,acdps:0}];
+const banks=[{msms:1,sscs:5,modules:12,junctionBoxes:5,acdps:2}];
 const plan={banks,records:api.markingSteps(banks).map(step=>{
-  if(step.kind!=='ssc') return {};
-  const number=Number(step.label.slice(3)), candidate=ssc[5-number];
-  return {point:{x:candidate.x+45,y:candidate.y+25}};
+  if(step.kind==='ssc') {
+    const number=Number(step.label.slice(3)), candidate=ssc[5-number];
+    return {point:{x:candidate.x+35,y:candidate.y+11}};
+  }
+  // These label offsets were measured on the finished sample; they are not
+  // general MSM/ACDP detection and must be reviewed for other drawings.
+  if(step.kind==='msm') return {jbId:'MSM',point:{x:ssc[4].x+40,y:ssc[4].y-80}};
+  if(step.kind==='acdp' && step.label==='ACDP1') return {point:{x:ssc[4].x+40,y:ssc[4].y-26}};
+  if(step.kind==='acdp' && step.label==='ACDP2') return {point:{x:ssc[1].x+36,y:ssc[1].y-28}};
+  return {};
 })};
 rack=rack.replace('</svg>',api.pictureDeviceLabelsSvg(plan,cal)+'<rect width="1155" height="25" fill="white"/><text x="577" y="18" text-anchor="middle" font-size="14" fill="#a00000">EXPERIMENTAL CANDIDATES AND INFERRED ROUTES — DO NOT BUILD</text></svg>');
 const logo=fs.readFileSync(path.join(root,'js/vsdx.js'),'utf8').match(/const VSDX_LOGO_B64 = '([^']+)'/)[1];

@@ -11,7 +11,7 @@ INPUT = pathlib.Path('G:/WiringTool')
 
 class ReferenceCandidateEndpoints(unittest.TestCase):
     def test_generated_svg_has_confirmed_endpoints(self):
-        inputs = [pathlib.Path(os.environ.get('WIREFLOW_CANDIDATE_SVG', INPUT / 'sample-ssc-labelled-verified/EXPERIMENTAL-rack-DO-NOT-BUILD.svg')),
+        inputs = [pathlib.Path(os.environ.get('WIREFLOW_CANDIDATE_SVG', INPUT / 'sample-equipment-labelled/EXPERIMENTAL-rack-DO-NOT-BUILD.svg')),
                   pathlib.Path(os.environ.get('WIREFLOW_CANDIDATE_MODULES', INPUT / 'rack-module-port-candidates.json')),
                   pathlib.Path(os.environ.get('WIREFLOW_CANDIDATE_DEVICES', INPUT / 'rack-device-port-candidates.json'))]
         if not all(p.is_file() for p in inputs):
@@ -25,14 +25,15 @@ class ReferenceCandidateEndpoints(unittest.TestCase):
             return next(p['point'] for p in entity['ports'] if p['name'] == name)
         svg = ET.parse(inputs[0])
         texts = [''.join(e.itertext()).strip() for e in svg.iter() if e.tag.endswith('text')]
-        for number in range(1, 6):
-            self.assertEqual(texts.count('SSC' + str(number)), 1)
+        labels = ['SSC' + str(number) for number in range(1, 6)] + ['MSM', 'ACDP1', 'ACDP2']
+        for label in labels:
+            self.assertEqual(texts.count(label), 1)
         sheet_path = os.environ.get('WIREFLOW_CANDIDATE_SHEET')
         if sheet_path:
             sheet = ET.parse(sheet_path)
             sheet_texts = [''.join(e.itertext()).strip() for e in sheet.iter() if e.tag.endswith('text')]
-            for number in range(1, 6):
-                self.assertEqual(sheet_texts.count('SSC' + str(number)), 1)
+            for label in labels:
+                self.assertEqual(sheet_texts.count(label), 1)
         wires = [e for e in svg.iter() if e.tag.endswith('polyline') and e.get('stroke') == '#e02020']
         paths = [[tuple(map(float, point.split(','))) for point in w.get('points').split()] for w in wires]
         green_wires = [e for e in svg.iter() if e.tag.endswith('polyline') and e.get('stroke') == '#00a651']
