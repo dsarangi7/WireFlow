@@ -497,14 +497,23 @@ ok('print title block embeds the AYK logo and drawing details',
 
 const simpleSrc = fs.readFileSync(path.join(ROOT, 'js', 'simple-wiring.js'), 'utf8');
 const portFactory = new Function('slotCell', 'fvSlotCenter', 'fvDist', 'SSC_PALETTE', 'sheetSvgPrimitive', 'sheetEsc', 'fvSvg',
-  simpleSrc + '\nreturn { PICTURE_DEVICE_PORT_STEPS, studioExportIssues, pictureZoomOffset, pictureRefineWiringSvg, pictureWiringSvg, modulePortsValid, pictureModulePortsReady, pictureCopyDraftRoutePoints, pictureDevicePortsComplete, picturePowerCrossings, pictureSuggestedModuleRoute, pictureSuggestBottomCurves, pictureSuggestRoutesForGroups, pictureMethodRulesValid, pictureApplyMethod, pictureModuleRoutesValid, pictureModuleWiring, pictureVisioModel, pictureSheetSvg, portMarkingPrompt, markingModuleCounts, markingPlanErrors, markingSteps, markingIssues, markingRecord, markingLayout, pictureDeviceLabels, pictureDeviceLabelsSvg };');
+  simpleSrc + '\nreturn { PICTURE_DEVICE_PORT_STEPS, studioExportIssues, pictureZoomOffset, pictureRefineWiringSvg, pictureWiringSvg, modulePortsValid, pictureFindPortCandidates, pictureModulePortsReady, pictureCopyDraftRoutePoints, pictureDevicePortsComplete, picturePowerCrossings, pictureSuggestedModuleRoute, pictureSuggestBottomCurves, pictureSuggestRoutesForGroups, pictureMethodRulesValid, pictureApplyMethod, pictureModuleRoutesValid, pictureModuleWiring, pictureVisioModel, pictureSheetSvg, portMarkingPrompt, markingModuleCounts, markingPlanErrors, markingSteps, markingIssues, markingRecord, markingLayout, pictureDeviceLabels, pictureDeviceLabelsSvg };');
 const portsApi = portFactory(E.slotCell, (cal, c, r) => ({ x: cal.x0 + c * cal.pitchX, y: cal.y0 + r * cal.pitchY }),
   (a, b) => Math.hypot(a.x - b.x, a.y - b.y), E.SSC_PALETTE, E.sheetSvgPrimitive, E.sheetEsc, () => '<svg></svg>');
+{
+  const gray = new Uint8Array(10000).fill(255), offsets = {commS:{x:-20,y:0},commN:{x:-10,y:0},pwrNeg:{x:10,y:0},pwrPos:{x:20,y:0}};
+  const cal = {ok:true,x0:50,y0:50,pitchX:40,pitchY:40};
+  const blank = portsApi.pictureFindPortCandidates(gray,100,100,['0,0'],cal,offsets);
+  eq('blank image does not invent terminal candidates', blank.missing.length, 4);
+  eq('terminal candidate search rejects invalid images', portsApi.pictureFindPortCandidates(gray,99,100,['0,0'],cal,offsets), null);
+}
 {
   const groups = [{ slot:'ssc', order:['0,0','0,1','1,1'] }];
   const wires = ['power','comm'].flatMap(kind => [{ group:0, kind, pts:[{x:0,y:0},{x:0,y:10}] }, { group:0, kind, pts:[{x:0,y:10},{x:100,y:10}] }]);
   const result = portsApi.pictureSuggestBottomCurves(groups, wires, {});
   ok('bottom-column transition gets separate downward power and comm curves', result && result.count === 1 && result.routes['ssc|2|power'].points[0].y > result.routes['ssc|2|comm'].points[0].y);
+  const custom = { 'ssc|2|power': { style:'straight', points:[] } };
+  eq('automatic bottom suggestion preserves an explicitly edited route', portsApi.pictureSuggestBottomCurves(groups, wires, custom).routes['ssc|2|power'].style, 'straight');
   eq('bottom curves fail closed when a communication link is missing', portsApi.pictureSuggestBottomCurves(groups, wires.filter(w => w.kind === 'power'), {}), null);
 }
 {

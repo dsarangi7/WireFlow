@@ -30,6 +30,19 @@ Exports are blocked while SSC terminals are missing, supported checks fail,
 power routes cross or touch, or the picture convention differs from the netlist.
 The experimental 111-rack picture convention currently cannot be exported.
 The draft PDF command opens the browser print dialog from the workspace.
+**Detect marked component ports** uses visual templates extracted from the
+supplied 111 rack to search near marked modules, SSCs and junction boxes.
+It uses the calibrated grid to set the analysis scale and returns coordinates
+in the original drawing space. A manually marked reference module is no longer
+required. Blue circles are unconfirmed candidates; they are not saved or used
+as wiring endpoints. Detection remains incomplete and needs engineering review.
+After refining multiple spatial match peaks, the strict-threshold held-out
+source-image check found 134 of 204 module ports, 14 of 18 SSC ports and 5 of
+6 junction-box ports. No returned match was more than 3 source pixels from
+earlier measured candidates. Those comparison candidates are not approved
+ground truth. This is not a full-sheet browser test or cross-project validation.
+Run `tests-manual/evaluate-port-templates.js` with a grayscale source buffer
+and the earlier measured candidate files to reproduce the comparison report.
 After generating a draft, **Mark components and ports → Advanced: adjust a
 draft route** offers rounded-L and C-shaped suggestions for module links and
 manual curve control points for SSC routes. These are editable visual drafts;

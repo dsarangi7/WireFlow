@@ -1,0 +1,101 @@
+[
+  {
+    "name": "111.svg",
+    "viewBox": "0 0 1296 918.137",
+    "width": "18in",
+    "height": "12.7519in",
+    "geometry": {
+      "path": 90243,
+      "polyline": 90182,
+      "polygon": 5199,
+      "g": 2013,
+      "ud": 493,
+      "title": 154,
+      "userDefs": 140,
+      "rect": 90,
+      "tspan": 77,
+      "desc": 76
+    }
+  },
+  {
+    "name": "111.vsdx",
+    "pages": [
+      {
+        "name": "Page-1",
+        "id": "33"
+      },
+      {
+        "name": "Note",
+        "id": "24"
+      }
+    ]
+  },
+  {
+    "name": "DWG2437-00 S10177 Wiring Diagram.svg",
+    "viewBox": "0 0 10224 7200",
+    "width": "142in",
+    "height": "100in",
+    "geometry": {
+      "path": 108443,
+      "polyline": 108116,
+      "polygon": 5616,
+      "g": 3708,
+      "title": 534,
+      "ud": 394,
+      "rect": 187,
+      "desc": 180,
+      "textBlock": 180,
+      "textRect": 180
+    }
+  },
+  {
+    "name": "DWG2437-00 S10177 Wiring Diagram.vsdx",
+    "pages": [
+      {
+        "name": "Rack1",
+        "id": "76"
+      },
+      {
+        "name": "Rack2",
+        "id": "83"
+      },
+      {
+        "name": "Rack3",
+        "id": "84"
+      },
+      {
+        "name": "Rack4",
+        "id": "97"
+      },
+      {
+        "name": "Rack5",
+        "id": "69"
+      },
+      {
+        "name": "Rack6",
+        "id": "91"
+      },
+      {
+        "name": "Rack7",
+        "id": "88"
+      },
+      {
+        "name": "Rack8",
+        "id": "94"
+      }
+    ]
+  },
+  {
+    "name": "DWG2512-01 S10164 Wiring Diagram.vsdx",
+    "pages": [
+      {
+        "name": "Page-1",
+        "id": "33"
+      },
+      {
+        "name": "Note",
+        "id": "24"
+      }
+    ]
+  }
+]
