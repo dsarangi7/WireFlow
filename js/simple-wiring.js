@@ -409,9 +409,10 @@ function pictureApplyMethod(groups,wires,routes,rules) {
 }
 
 function pictureModuleWiring(groups, cal, ports, devicePorts, modulePortPoints, powerConvention, moduleRoutes) {
-  // This opt-in convention is confirmed for the supplied sample rack only.
-  // It does not change the shared netlist or engineering rule engine.
-  const referencePower = powerConvention === 'reference-sample';
+  // Universal AYK sequence confirmed by the user: SSC+ to highest module+,
+  // higher module- to next lower module+, and M1- to SSC-.
+  // Retain the old argument for saved-session and script compatibility.
+  const referencePower = true;
   const hasPoints = modulePortPoints !== undefined && modulePortPoints !== null;
   if (!cal || !cal.ok || !pictureModuleRoutesValid(moduleRoutes) || (hasPoints && (typeof modulePortPoints !== 'object' || Array.isArray(modulePortPoints))) || (!hasPoints && !modulePortsValid(ports))) return [];
   const validPoint = p => p && Number.isFinite(p.x) && Number.isFinite(p.y);
@@ -568,13 +569,13 @@ async function tabSimpleWiring(el, project, ctx) {
     modulePortPoints: saved.modulePortPoints === undefined ? null : saved.modulePortPoints,
     moduleDraftRoutes: saved.moduleDraftRoutes == null ? {} : JSON.parse(JSON.stringify(saved.moduleDraftRoutes)),
     routeMethodRules: pictureMethodRulesValid(saved.routeMethodRules) ? JSON.parse(JSON.stringify(saved.routeMethodRules)) : [],
-    powerConvention: saved.powerConvention === 'reference-sample' ? 'reference-sample' : 'legacy',
+    powerConvention: 'ayk-series',
     portStep: 0, portRef: null, pendingPorts: {}, previousPorts: null, zoom: 1,
     devicePorts: JSON.parse(JSON.stringify(saved.devicePorts || {})), deviceStep: 0, deviceSlot: '', pendingDevice: {},
     plan: saved.marking ? JSON.parse(JSON.stringify(saved.marking)) : null,
     banks: saved.marking ? JSON.parse(JSON.stringify(saved.marking.banks)).map((bank, i, all) => ({ ...bank, moduleCounts: markingModuleCounts(bank).slice(), sscNumbers: markingSscNumbers(bank, all.slice(0, i).reduce((sum, b) => sum + b.sscs, 0)).slice() })) : [{ msms: 1, sscs: 5, sscNumbers: [null, null, null, null, null], moduleCounts: [null, null, null, null, null], junctionBoxes: 5, acdps: 2 }],
     saving: false, saveFailed: false, routeEdit: null, panelCollapsed: false, redoMarks: [], configError: '', portCandidates: null,
-    generated: !!(existingRack && saved.cal && fvCalib(saved.cal).ok && project.config.layout && pictureModulePortsReady(rackModuleCells(existingRack), saved.modulePorts, saved.modulePortPoints)), message: '',
+    generated: !!(saved.powerConvention === 'ayk-series' && existingRack && saved.cal && fvCalib(saved.cal).ok && project.config.layout && pictureModulePortsReady(rackModuleCells(existingRack), saved.modulePorts, saved.modulePortPoints)), message: '',
   };
   function rebuildMarks() {
     st.rack.cells.forEach(cell => { cell.kind = 'empty'; cell.label = ''; });
@@ -640,7 +641,7 @@ async function tabSimpleWiring(el, project, ctx) {
     const powerAudit = st.generated ? picturePowerCrossings(pictureModuleWiring(layoutGroups(project), cal, st.ports, st.devicePorts, st.modulePortPoints, st.powerConvention, st.moduleDraftRoutes)) : { valid: true, pairs: [] };
     const powerBlocked = !pictureModuleRoutesValid(st.moduleDraftRoutes) || !powerAudit.valid || powerAudit.pairs.length > 0;
     const deviceReady = !!rack && rackDeviceCells(rack, 'ssc').length > 0 && rackDeviceCells(rack, 'ssc').every(slot => pictureDevicePortsComplete(st.devicePorts[slot]));
-    const exportIssues = studioExportIssues({ generated: st.generated, deviceReady, failedChecks: failed.length, powerBlocked, experimental: st.powerConvention === 'reference-sample' });
+    const exportIssues = studioExportIssues({ generated: st.generated, deviceReady, failedChecks: failed.length, powerBlocked, experimental: false });
     const prompt = portMarkingPrompt(st.portStep, st.deviceStep);
     if (prompt && st.deviceStep && st.plan && !issues.length) {
       const groups = markingLayout(st.plan).sscs;
@@ -695,8 +696,7 @@ async function tabSimpleWiring(el, project, ctx) {
         </div><div id="simple-picture-scroll" style="border:1px solid var(--border);border-radius:8px;overflow:auto;max-height:70vh"><div id="simple-picture" style="width:${st.zoom * 100}%;cursor:crosshair">${svg}</div></div></div>
       </div>
       <div class="card" style="margin-top:16px"><h3>Generate wiring</h3>
-        <label>Picture power connections <select id="simple-power-convention"><option value="legacy" ${st.powerConvention === 'legacy' ? 'selected' : ''}>Existing project rules</option><option value="reference-sample" ${st.powerConvention === 'reference-sample' ? 'selected' : ''}>Confirmed 111 rack reference (experimental)</option></select></label>
-        ${st.powerConvention === 'reference-sample' ? '<p class="warn" role="status">This changes the picture draft only for the confirmed sample rack. The netlist, validations and cable schedule still use existing rules; do not use them to approve this draft. Review all routes.</p>' : ''}
+        <p class="muted small">AYK series sequence: SSC + → highest module +; higher module − → next lower module +; M1 − → SSC −. Regenerate saved drawings to apply this sequence.</p>
         <p class="muted small">${rack ? Object.keys(st.devicePorts).filter(slot => rackIsModule(rack, slot) === false && rackDeviceCells(rack, 'ssc').includes(slot) && pictureDevicePortsComplete(st.devicePorts[slot])).length : 0} of ${rack ? rackDeviceCells(rack, 'ssc').length : 0} SSCs have their ports marked. Links with missing terminals or invalid draft routes are omitted. Check assignments and routes; lines are direct previews, not approved cable routes.</p>
         ${st.modulePortPoints !== null && !moduleReady ? '<p class="warn" role="status">Some individual module ports are missing or invalid. Complete them, or mark module ports again to replace these positions.</p>' : ''}
         ${st.generated && powerBlocked ? '<p class="warn" role="alert">Power cables cross or touch in this drawing. Correct the routes before exporting. This check does not verify physical clearance.</p>' : ''}
@@ -1049,17 +1049,12 @@ async function tabSimpleWiring(el, project, ctx) {
       if (result.error) { st.message = result.error; render(); return; }
       st.portCandidates = null; st.redoMarks = []; st.plan.records.push(result.record); rebuildMarks(); st.generated = false; st.message = ''; await persist();
     };
-    el.querySelector('#simple-power-convention').onchange = async event => {
-      st.powerConvention = event.target.value === 'reference-sample' ? 'reference-sample' : 'legacy';
-      st.generated = false;
-      st.message = 'Power connection choice saved. Generate again and review all routes.';
-      await persist();
-    };
     el.querySelector('#simple-generate').onclick = async () => {
       const missing = markingIssues(st.plan);
       if (missing.length || !pictureModulePortsReady(st.rack ? rackModuleCells(st.rack) : [], st.ports, st.modulePortPoints) || st.saveFailed) { st.message = missing.join(' ') || 'Complete module-port positions and save before generating wiring.'; render(); return; }
       const config = JSON.parse(JSON.stringify(project.config || {}));
       config.numbering = { rack: st.rack, cal: st.cal, marking: st.plan, modulePorts: st.ports, modulePortPoints: st.modulePortPoints, devicePorts: st.devicePorts, moduleDraftRoutes: st.moduleDraftRoutes, routeMethodRules: st.routeMethodRules, powerConvention: st.powerConvention };
+      if (config.flow) { delete config.flow.deliveredAt; delete config.flow.printedAt; }
       config.layout = markingLayout(st.plan);
       config.rules = Object.assign({}, config.rules, { modulesPerString: Math.max(...st.plan.banks.flatMap(markingModuleCounts)) });
       const candidate = { ...project, config };

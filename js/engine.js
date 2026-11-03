@@ -154,24 +154,23 @@ function generateNetlist(project) {
   for (let s = 0; s < S; s++) {
     const sid = `S${s + 1}`;
     const N = counts[s];
-    // R04: SSC String plus -> M1 plus (M2S power)
-    push({ network: 'power', cls: 'M2S-PWR', from: `${sid}-SSC:P+`, to: `${sid}:M1:P+`, routedLen: rules.m2sPowerLen });
-    // R05: SSC String minus -> M24 minus (M2S power)
-    push({ network: 'power', cls: 'M2S-PWR', from: `${sid}-SSC:P-`, to: `${sid}:M${N}:P-`, routedLen: rules.m2sPowerLen });
+    // User-confirmed series sequence: SSC+ -> highest module+, M1- -> SSC-.
+    push({ network: 'power', cls: 'M2S-PWR', from: `${sid}-SSC:P+`, to: `${sid}:M${N}:P+`, routedLen: rules.m2sPowerLen });
+    push({ network: 'power', cls: 'M2S-PWR', from: `${sid}:M1:P-`, to: `${sid}-SSC:P-`, routedLen: rules.m2sPowerLen });
     // R06: SSC S -> M1 N ; SSC N -> M24 S (M2S communication)
     push({ network: 'comm', cls: 'M2S-COMM', from: `${sid}-SSC:S`, to: `${sid}:M1:N`, routedLen: rules.m2sCommLen });
     push({ network: 'comm', cls: 'M2S-COMM', from: `${sid}-SSC:N`, to: `${sid}:M${N}:S`, routedLen: rules.m2sCommLen });
     // R11: SSC Bus +/- -> junction box (one positive and one negative per SSC)
     push({ network: 'power', cls: 'SSC-JB', from: `${sid}-SSC:BUS+`, to: `${sid}-JB:BUS+`, routedLen: rules.busPowerLen });
     push({ network: 'power', cls: 'SSC-JB', from: `${sid}-SSC:BUS-`, to: `${sid}-JB:BUS-`, routedLen: rules.busPowerLen });
-    // R02: Mx negative -> Mx+1 positive
+    // R02: higher-numbered module negative -> next lower module positive.
     for (let m = 1; m < N; m++) {
       const declared = isGapBetween(exceptions, s, m, m + 1);
       const hop = numberingHopFor(cfg.numbering, rules, s, m);
       const gap = declared || (hop && hop.kind !== 'adjacent');
       push({
         network: 'power', cls: 'M2M-PWR',
-        from: `${sid}:M${m}:P-`, to: `${sid}:M${m + 1}:P+`,
+        from: `${sid}:M${m + 1}:P-`, to: `${sid}:M${m}:P+`,
         routedLen: gap ? rules.longPower : rules.powerJumper,
         exception: gap ? (hop
           ? (hop.kind === 'column' ? 'column transition (derived from rack numbering)' : 'in-rack gap (derived from rack numbering)')
@@ -306,20 +305,24 @@ function runValidations(project, conns) {
     const Ns = counts[s];
     for (let m = 1; m <= Ns; m++) {
       const pin = pIn[`S${s + 1}:M${m}:P+`] || 0;
-      // interior modules feed the next module's plus; the last module's minus receives from SSC minus (R05)
-      const pout = m < Ns ? (pOut[`S${s + 1}:M${m}:P-`] || 0) : (pIn[`S${s + 1}:M${Ns}:P-`] || 0);
+      const pout = pOut[`S${s + 1}:M${m}:P-`] || 0;
       if (pin !== 1 || pout !== 1) v02bad.push(`S${s + 1}:M${m}`);
     }
   }
   add('V02', v02bad.length === 0, v02bad.length ? `Degree mismatch: ${v02bad.join(', ')}` : 'All modules have exactly one power in and one power out');
 
-  // V03 polarity sequence: Mx- -> Mx+1+ exists for every adjacent pair
+  // V03 verifies both SSC endpoints and every descending series hop.
   let v03missing = [];
   for (let s = 0; s < S; s++) for (let m = 1; m < counts[s]; m++) {
-    const ok = conns.some(c => c.network === 'power' && c.cls === 'M2M-PWR' && c.from === `S${s + 1}:M${m}:P-` && c.to === `S${s + 1}:M${m + 1}:P+`);
-    if (!ok) v03missing.push(`S${s + 1}:M${m}→M${m + 1}`);
+    const ok = conns.some(c => c.network === 'power' && c.cls === 'M2M-PWR' && c.from === `S${s + 1}:M${m + 1}:P-` && c.to === `S${s + 1}:M${m}:P+`);
+    if (!ok) v03missing.push(`S${s + 1}:M${m + 1}→M${m}`);
   }
-  add('V03', v03missing.length === 0, v03missing.length ? `Missing links: ${v03missing.slice(0, 4).join(', ')}${v03missing.length > 4 ? '…' : ''}` : 'SSC+ → M1+ … last module − → SSC− verified');
+  for (let s = 0; s < S; s++) {
+    const sid = `S${s + 1}`;
+    if (!conns.some(c=>c.network==='power' && c.from===`${sid}-SSC:P+` && c.to===`${sid}:M${counts[s]}:P+`)) v03missing.push(`${sid}:SSC+ endpoint`);
+    if (!conns.some(c=>c.network==='power' && c.from===`${sid}:M1:P-` && c.to===`${sid}-SSC:P-`)) v03missing.push(`${sid}:SSC- endpoint`);
+  }
+  add('V03', v03missing.length === 0, v03missing.length ? `Missing links: ${v03missing.slice(0, 4).join(', ')}${v03missing.length > 4 ? '…' : ''}` : 'SSC+ → highest module+ … M1− → SSC− verified');
   function num(ref) { const m = ref.match(/M(\d+)/); return m ? +m[1] : 0; }
 
   // V04 communication predecessor/successor

@@ -132,8 +132,8 @@ function fvWiring(order, cal, opts) {
     const first = fvTerminals(cal, mods[0].c, mods[0].r);
     const last = fvTerminals(cal, mods[mods.length - 1].c, mods[mods.length - 1].r);
     /* power risers via the right rail */
-    push('sscp', [anchor, { x: railX, y: anchor.y }, { x: railX, y: first.pwrPos.y }, first.pwrPos]);
-    push('sscp', [last.pwrNeg, { x: railX, y: last.pwrNeg.y }, { x: railX, y: anchor.y + cal.pitchY * 0.18 }, { x: anchor.x, y: anchor.y + cal.pitchY * 0.18 }, anchor]);
+    push('sscp', [anchor, { x: railX, y: anchor.y }, { x: railX, y: last.pwrPos.y }, last.pwrPos]);
+    push('sscp', [first.pwrNeg, { x: railX, y: first.pwrNeg.y }, { x: railX, y: anchor.y + cal.pitchY * 0.18 }, { x: anchor.x, y: anchor.y + cal.pitchY * 0.18 }, anchor]);
     /* comm risers, offset slightly so the two rails do not overlap */
     push('sscc', [anchor, { x: railX + cal.pitchX * 0.06, y: anchor.y }, { x: railX + cal.pitchX * 0.06, y: first.commN.y }, first.commN]);
     push('sscc', [last.commS, { x: railX + cal.pitchX * 0.06, y: last.commS.y }, { x: railX + cal.pitchX * 0.06, y: anchor.y - cal.pitchY * 0.18 }, { x: anchor.x, y: anchor.y - cal.pitchY * 0.18 }, anchor]);
@@ -142,7 +142,7 @@ function fvWiring(order, cal, opts) {
   for (let i = 1; i < mods.length; i++) {
     const a = fvTerminals(cal, mods[i - 1].c, mods[i - 1].r);
     const b = fvTerminals(cal, mods[i].c, mods[i].r);
-    push('power', [a.pwrNeg, b.pwrPos]);
+    push('power', [a.pwrPos, b.pwrNeg]);
     push('comm', [a.commS, b.commN]);
   }
   return segs;

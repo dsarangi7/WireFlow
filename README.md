@@ -37,13 +37,11 @@ rack; they do not reuse terminals or complete rack wiring plans.
 In the picture-first screen, its draft export buttons are blocked when power
 wire centerlines cross or touch; communication/power overlaps are allowed.
 Exports also require complete SSC terminal positions, passing supported checks,
-and agreement between the picture convention and the netlist. The experimental
-111-rack convention cannot currently be exported because its picture and
-netlist differ.
+and agreement between the picture convention and the netlist. The user-confirmed
+series sequence now applies to both; regenerate older sessions and review routes.
 This is a 2D check, not a physical clearance or engineering approval check.
-An opt-in experimental picture connection choice is available for the supplied
-111 rack. It does not update the netlist or schedule; see the workflow limits in
-the guided workspace documentation before using it.
+See [the confirmed power sequence](docs/power-sequence.md) for endpoint rules
+and saved-session migration limits.
 
 SVG rack drawings remain vector images in the marking canvas. Use the mouse
 wheel or zoom buttons to zoom, the middle mouse button to pan, and left-click
@@ -66,7 +64,7 @@ to mark component and port positions. See [ordered marking](docs/ordered-marking
   scores serpentine, straight-raster and optimised (nearest-neighbour + 2-opt) paths against
   the approved harness catalogue and lists the cheapest options; custom mode lets the
   engineer click the order straight onto the imported rack drawing
-- **Rule-driven netlists** — normal string power sequence (SSC+ → M1+ … M24− → SSC−)
+- **Rule-driven netlists** — confirmed series power sequence (SSC+ → highest module+ … M1− → SSC−)
   and communication daisy-chain (S/N) generated from the approved connection templates
 - **Golden-sheet drawings** — A3 engineering sheet with frame, zone ticks, title block,
   legend, notes, FOR REVIEW stamp; one shared layout core feeds SVG, DXF, SCR and VSDX
@@ -162,7 +160,7 @@ and the front-view wiring (calibration, terminal anchors, hop geometry, px→she
 | Rule | Encoding |
 |------|----------|
 | R02 / R03 | Adjacent power Mx− → Mx+1+ · communication Mx S → Mx+1 N |
-| R04–R06 | SSC endpoints: String+ → M1+, String− → M24−, S → M1 N, N → M24 S |
+| R04–R06 | SSC power: String+ → highest module+, M1− → String−. Communication: S → M1 N, N → highest module S |
 | R07 / R08 | Standard jumpers 100 mm AB power · 450 mm communication |
 | R09 / R10 | Longer local jumpers 445 mm power · 650 mm communication |
 | R11 | Two bus power cables per SSC to the junction box |

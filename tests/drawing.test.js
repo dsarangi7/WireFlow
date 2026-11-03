@@ -295,8 +295,8 @@ eq('sequence numbers are 1..n contiguous', conns[conns.length - 1].seq, 104);
 // per string: 2 M2S-PWR + 2 SSC-JB + (N-1) M2M-PWR = N+3 power; 2 M2S-COMM + (N-1) M2M-COMM = N+1 comm
 eq('power/comm split (N+3 / N+1 per string)', conns.filter(c => c.network === 'power').length + '/' + conns.filter(c => c.network === 'comm').length, '54/50');
 eq('every connection has a harness', conns.filter(c => !c.harness).length, 0);
-eq('R04 first connection SSC+ -> M1+', conns[0].from + '>' + conns[0].to, 'S1-SSC:P+>S1:M1:P+');
-eq('R05 SSC- -> M24- present', conns.some(c => c.from === 'S1-SSC:P-' && c.to === 'S1:M24:P-'), true);
+eq('R04 SSC+ connects to highest-numbered module+', conns[0].from + '>' + conns[0].to, 'S1-SSC:P+>S1:M24:P+');
+eq('R05 M1- connects to SSC-', conns.some(c => c.from === 'S1:M1:P-' && c.to === 'S1-SSC:P-'), true);
 eq('R11 two SSC-JB bus cables per string', conns.filter(c => c.cls === 'SSC-JB').length, 4);
 eq('R12 power deduction applied (800-130=670 -> PW-M2S-800)',
   conns[0].routedLen + '/' + conns[0].harness, '670/PW-M2S-800');
@@ -307,6 +307,18 @@ const validations = E.runValidations(project, conns);
 eq('runValidations check count', validations.length, 12);
 eq('runValidations failures', validations.filter(v => v.status === 'fail').length, 0);
 eq('validation ids V01..V12', validations.map(v => v.id).join(','), 'V01,V02,V03,V04,V05,V06,V07,V08,V09,V10,V11,V12');
+{
+  const hops=conns.filter(c=>c.network==='power' && c.cls==='M2M-PWR');
+  ok('every series power hop descends by exactly one module', hops.every(c=>Number(/:M(\d+)/.exec(c.from)[1])===Number(/:M(\d+)/.exec(c.to)[1])+1));
+  const badHop=conns.map(c=>({...c}));
+  const hop=badHop.find(c=>c.network==='power' && c.cls==='M2M-PWR');
+  [hop.from,hop.to]=[hop.to,hop.from];
+  eq('polarity validation rejects a reversed series hop', E.runValidations(project,badHop).find(v=>v.id==='V03').status,'fail');
+  const badEnd=conns.map(c=>({...c})); badEnd[0].to='S1:M1:P+';
+  eq('polarity validation rejects the former SSC positive endpoint', E.runValidations(project,badEnd).find(v=>v.id==='V03').status,'fail');
+  const badReturn=conns.map(c=>({...c})); badReturn[1].from='S1:M24:P-';
+  eq('polarity validation rejects the former SSC negative endpoint', E.runValidations(project,badReturn).find(v=>v.id==='V03').status,'fail');
+}
 
 /* ---- release gate: an unconfigured project must never reach "release allowed" ----
  * The gate has to produce the full, ordered V01-V12 table (the UI renders it as a
@@ -645,8 +657,8 @@ const ports = { commS: { x: -30, y: 15 }, commN: { x: -20, y: 16 }, pwrNeg: { x:
 const measuredCal = { ok: true, imgW: 1000, imgH: 700, x0: 100, y0: 200, pitchX: 120, pitchY: 60, mmPerPx: 1 };
 const measuredGroups = [{ label: 'SSC-1', order: ['0,0', '0,1'] }];
 const measured = portsApi.pictureModuleWiring(measuredGroups, measuredCal, ports);
-eq('measured module power wire uses negative then next positive port',
-  JSON.stringify(measured.find(s => s.kind === 'power').pts), JSON.stringify([{ x: 120, y: 217 }, { x: 130, y: 278 }]));
+eq('measured module power wire joins lower positive and higher negative ports',
+  JSON.stringify(measured.find(s => s.kind === 'power').pts), JSON.stringify([{ x: 130, y: 218 }, { x: 120, y: 277 }]));
 eq('measured module communication wire uses S then next N port',
   JSON.stringify(measured.find(s => s.kind === 'comm').pts), JSON.stringify([{ x: 70, y: 215 }, { x: 80, y: 276 }]));
 eq('module-only drawing never invents SSC terminal connections', measured.filter(s => s.kind === 'sscp' || s.kind === 'sscc').length, 0);
@@ -656,10 +668,10 @@ const individualPorts = {
   '0,1': { commS: {x:12,y:71}, commN: {x:22,y:71}, pwrNeg: {x:32,y:71}, pwrPos: {x:42,y:71} },
 };
 const exactWires = portsApi.pictureModuleWiring(measuredGroups, measuredCal, null, null, individualPorts);
-eq('individual module power endpoints use each module position', JSON.stringify(exactWires.find(s => s.kind === 'power').pts), JSON.stringify([{x:30,y:11},{x:42,y:71}]));
+eq('individual module power endpoints use each module position', JSON.stringify(exactWires.find(s => s.kind === 'power').pts), JSON.stringify([{x:40,y:11},{x:32,y:71}]));
 eq('individual module communication endpoints use each module position', JSON.stringify(exactWires.find(s => s.kind === 'comm').pts), JSON.stringify([{x:10,y:11},{x:22,y:71}]));
 ok('complete individual positions can be used without representative ports', portsApi.pictureModulePortsReady(['0,0','0,1'], null, individualPorts));
-const missingIndividual = { '0,0': individualPorts['0,0'], '0,1': { ...individualPorts['0,1'], pwrPos: null } };
+const missingIndividual = { '0,0': individualPorts['0,0'], '0,1': { ...individualPorts['0,1'], pwrNeg: null } };
 ok('incomplete individual positions block generation even with shared offsets', !portsApi.pictureModulePortsReady(['0,0','0,1'], ports, missingIndividual));
 const partialIndividualWires = portsApi.pictureModuleWiring(measuredGroups, measuredCal, ports, null, missingIndividual);
 ok('unknown individual endpoint never falls back to a representative offset', !partialIndividualWires.some(s => s.kind === 'power') && partialIndividualWires.some(s => s.kind === 'comm'));
@@ -711,14 +723,15 @@ const bottomL=portsApi.pictureModuleWiring(completeGroups, measuredCal, ports, d
 ok('module C and rounded L drafts retain terminals with distinct routes', bottomCurve.pts.length>2 && bottomL.pts.length>2 && JSON.stringify(bottomCurve.pts[0])===JSON.stringify(bottomL.pts[0]) && JSON.stringify(bottomCurve.pts[bottomCurve.pts.length-1])===JSON.stringify(bottomL.pts[bottomL.pts.length-1]) && JSON.stringify(bottomCurve.pts)!==JSON.stringify(bottomL.pts));
 eq('invalid module route fails closed rather than drawing a straight line', portsApi.pictureModuleWiring(completeGroups, measuredCal, ports, devicePorts, null, 'legacy', {[bottomKey]:{style:'curved',points:[{x:NaN,y:2}]}}).length, 0);
 const referenceWires = portsApi.pictureModuleWiring(completeGroups, measuredCal, ports, devicePorts, null, 'reference-sample');
+eq('saved picture convention flags cannot diverge from the universal power sequence', JSON.stringify(referenceWires), JSON.stringify(fullWires));
 eq('sample convention connects lower positive to higher negative', JSON.stringify(referenceWires.find(s => s.kind === 'power').pts), JSON.stringify([{x:130,y:218},{x:120,y:277}]));
 const referenceSsc = referenceWires.filter(s => s.kind === 'sscp');
 eq('sample convention connects SSC positive to last module positive', JSON.stringify(referenceSsc[0].pts), JSON.stringify([devicePorts['1,1'].pwrPos,{x:130,y:278}]));
 eq('sample convention connects SSC negative to first module negative', JSON.stringify(referenceSsc[1].pts), JSON.stringify([devicePorts['1,1'].pwrNeg,{x:120,y:217}]));
 const actualDeviceWires = fullWires.filter(s => s.kind === 'sscp' || s.kind === 'sscc').map(s => [s.kind, s.pts]);
 eq('measured SSC and junction-box ports connect using the six approved endpoint rules', JSON.stringify(actualDeviceWires), JSON.stringify([
-  ['sscp', [devicePorts['1,1'].pwrPos, { x: 130, y: 218 }]],
-  ['sscp', [devicePorts['1,1'].pwrNeg, { x: 120, y: 277 }]],
+  ['sscp', [devicePorts['1,1'].pwrPos, { x: 130, y: 278 }]],
+  ['sscp', [devicePorts['1,1'].pwrNeg, { x: 120, y: 217 }]],
   ['sscc', [devicePorts['1,1'].commS, { x: 80, y: 216 }]],
   ['sscc', [devicePorts['1,1'].commN, { x: 70, y: 275 }]],
   ['sscp', [devicePorts['1,1'].busPos, devicePorts['1,1'].jbPos]],
@@ -1626,11 +1639,11 @@ ok('an incomplete custom order falls back to the cheapest automatic plan',
     cnt('M2S-PWR') === 4 && cnt('M2S-COMM') === 4 && cnt('SSC-JB') === 4,
     `M2S-PWR=${cnt('M2S-PWR')} M2S-COMM=${cnt('M2S-COMM')} SSC-JB=${cnt('SSC-JB')}`);
   ok('variable netlist: the second chain starts at its own M1',
-    connsVar.some(c => c.from === 'S1-SSC:P+' && c.to === 'S1:M1:P+') &&
-    connsVar.some(c => c.from === 'S2-SSC:P+' && c.to === 'S2:M1:P+'), 'two chain anchors');
+    connsVar.some(c => c.from === 'S1-SSC:P+' && c.to === 'S1:M6:P+') &&
+    connsVar.some(c => c.from === 'S2-SSC:P+' && c.to === 'S2:M6:P+'), 'two highest-module chain anchors');
   ok('variable netlist: the last module of EACH chain closes on its SSC minus (R05)',
-    connsVar.some(c => c.from === 'S1-SSC:P-' && c.to === 'S1:M6:P-') &&
-    connsVar.some(c => c.from === 'S2-SSC:P-' && c.to === 'S2:M6:P-'), 'both chains closed');
+    connsVar.some(c => c.from === 'S1:M1:P-' && c.to === 'S1-SSC:P-') &&
+    connsVar.some(c => c.from === 'S2:M1:P-' && c.to === 'S2-SSC:P-'), 'both chains closed through M1');
 
   const valsVar = E.runValidations(projVar, connsVar);
   const v01 = valsVar.find(v => v.id === 'V01');

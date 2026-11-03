@@ -28,7 +28,8 @@ appear in a collapsible panel next to the drawing. Drawing output
 requires engineering review; this feature does not approve electrical rules.
 Exports are blocked while SSC terminals are missing, supported checks fail,
 power routes cross or touch, or the picture convention differs from the netlist.
-The experimental 111-rack picture convention currently cannot be exported.
+The confirmed AYK series sequence now applies to both netlist and picture;
+older saved drawings must generate again. See [power sequence](power-sequence.md).
 The draft PDF command opens the browser print dialog from the workspace.
 **Detect marked component ports** uses visual templates extracted from the
 supplied 111 rack to search near marked modules, SSCs and junction boxes.
