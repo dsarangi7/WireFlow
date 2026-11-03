@@ -44,3 +44,19 @@ SSC/JB visual candidate experiment (2026-11-03): `reference-device-candidates.py
 Input-derived candidate draft experiment: `tests-manual/reference-candidate-draft.js` reads the 111 rack PNG and fixture-specific module/device candidate JSON produced from that image; it does not read the finished reference at runtime. It assumes the sample's five left-to-right 8+4 module groups and nearby SSC/JB alignment, applies the user's confirmed terminal naming and existing WireFlow connection formulas, and supplies provisional rail waypoints and sampled top curves informed by the example. The output uses real `pictureModuleWiring`, `fvSvg`, and `pictureSheetSvg` functions and is marked EXPERIMENTAL / DO NOT BUILD. It generated 60 module labels and 140 proposed links. The two-pixel raster comparison to the separately generated reference overlay found approximately 50.5% red and 88.3% green draft-colored pixels near the reference; this is a stroke-width-sensitive visualization metric, not correctness or approval. Visual inspection still shows diagonal crossings, inconsistent power endpoint matching, missing reference title-block content and no general automatic routing. These sample-specific assumptions and inferred routes must be reviewed and cannot be treated as engineering rules or production detection.
 
 The fixture candidate-draft script now supplies each detected module’s own absolute port positions to `pictureModuleWiring` instead of averaging them. It still uses sample-specific detections, inferred device grouping and provisional route heuristics; the output is not an approved or complete match. Production preview, exports and print can retain an explicit per-module point map, but the browser does not yet automatically generate one. An incomplete explicit map blocks generation/printing instead of silently reverting to common offsets.
+
+For a reproducible end-to-end experiment on the exact supplied `111.vsdx`, run:
+
+```powershell
+python tests-manual/run-reference-candidate.py "C:\Users\admin\Downloads\IO\111.vsdx" "G:\WiringTool\sample-output"
+```
+
+This Windows-only diagnostic requires Pillow with EMF support, OpenCV, numpy and
+Node.js. It verifies the source and embedded-picture hashes before using the
+fixture-specific templates, extracts the picture, detects candidate components
+and ports, and generates two clearly marked experimental SVGs. It refuses to
+overwrite existing outputs or process a different source file. It does not read
+the finished reference at runtime. Candidate labeling, spatial grouping and
+rail points are not approved engineering rules; power ordering, crossings,
+physical clearance and the complete reference-sheet contents remain unresolved.
+The web application does not yet run this pipeline automatically.
