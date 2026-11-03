@@ -396,3 +396,12 @@ table.data tr:hover td { background: #f8fafc; }
   .print-title-brand img { width: 7mm; height: 7mm; object-fit: contain; }
 }
 #simple-picture > svg { display: block; width: 100%; height: auto; }
+.marking-workbench { display: grid; grid-template-columns: minmax(250px, 320px) minmax(0, 1fr); gap: 16px; align-items: start; }
+.marking-tools { min-width: 0; max-height: 70vh; overflow: auto; padding: 16px; border: 1px solid var(--border); border-radius: var(--radius); background: linear-gradient(145deg, var(--surface), var(--surface-2)); box-shadow: var(--shadow); }
+.marking-tools .btn-row { gap: 8px; }
+.marking-tools details { margin-top: 16px; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
+.marking-tools summary { cursor: pointer; font-weight: 700; color: var(--text); }
+.route-presets { display: grid; gap: 8px; margin-top: 12px; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius); background: linear-gradient(135deg, var(--surface), var(--surface-2)); }
+.route-presets label { display: grid; gap: 4px; }
+.route-presets .btn-primary { box-shadow: 0 4px 12px rgba(232, 100, 22, .22), inset 0 1px 0 rgba(255, 255, 255, .3); }
+@media (max-width: 900px) { .marking-workbench { grid-template-columns: 1fr; } .marking-tools { max-height: none; } }

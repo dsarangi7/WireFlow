@@ -226,12 +226,50 @@ function pictureCurvePoints(a, b, controls) {
   return out;
 }
 
-function pictureModuleWiring(groups, cal, ports, devicePorts, modulePortPoints, powerConvention) {
+function pictureRoundedPoints(a, b, bends) {
+  if (!bends.length) return [a,b];
+  const source=[a,...bends,b], out=[a];
+  bends.forEach((corner,i)=>{
+    const previous=source[i], next=source[i+2];
+    const before={x:corner.x+(previous.x-corner.x)*.25,y:corner.y+(previous.y-corner.y)*.25};
+    const after={x:corner.x+(next.x-corner.x)*.25,y:corner.y+(next.y-corner.y)*.25};
+    out.push(before);
+    for(let n=1;n<=4;n++){const t=n/4,u=1-t;out.push({x:u*u*before.x+2*u*t*corner.x+t*t*after.x,y:u*u*before.y+2*u*t*corner.y+t*t*after.y});}
+  });
+  out.push(b); return out;
+}
+function pictureModuleRoutesValid(routes) {
+  return routes === undefined || routes === null || (!!routes && typeof routes === 'object' && !Array.isArray(routes) && Object.values(routes).every(route => route && ['straight','rounded','curved'].includes(route.style) && Array.isArray(route.points) && route.points.every(p => p && Number.isFinite(p.x) && Number.isFinite(p.y))));
+}
+function pictureModuleRouteKey(slot, index, kind) { return slot + '|' + index + '|' + kind; }
+function pictureSuggestedModuleRoute(a, b, template) {
+  if (![a,b].every(p=>p && Number.isFinite(p.x) && Number.isFinite(p.y))) return null;
+  const span = Math.hypot(b.x-a.x,b.y-a.y);
+  if (!(span > 0)) return null;
+  if (template === 'straight') return {style:'straight',points:[]};
+  if (template === 'l-horizontal') return {style:'rounded',points:[{x:b.x,y:a.y}]};
+  if (template === 'l-vertical') return {style:'rounded',points:[{x:a.x,y:b.y}]};
+  if (template === 'c-above' || template === 'c-below') {
+    return {style:'curved',points:[{x:(a.x+b.x)/2,y:(a.y+b.y)/2+(template==='c-below'?1:-1)*span*.6}]};
+  }
+  return null;
+}
+const PICTURE_ROUTE_TEMPLATES = ['straight','l-horizontal','l-vertical','c-above','c-below'];
+function pictureLastRouteTemplate() {
+  try { const value = localStorage.getItem('ayk-wireflow-last-module-route'); return PICTURE_ROUTE_TEMPLATES.includes(value) ? value : ''; }
+  catch (_) { return ''; }
+}
+function pictureRememberRouteTemplate(value) {
+  if (!PICTURE_ROUTE_TEMPLATES.includes(value)) return;
+  try { localStorage.setItem('ayk-wireflow-last-module-route', value); } catch (_) { /* device storage is optional */ }
+}
+
+function pictureModuleWiring(groups, cal, ports, devicePorts, modulePortPoints, powerConvention, moduleRoutes) {
   // This opt-in convention is confirmed for the supplied sample rack only.
   // It does not change the shared netlist or engineering rule engine.
   const referencePower = powerConvention === 'reference-sample';
   const hasPoints = modulePortPoints !== undefined && modulePortPoints !== null;
-  if (!cal || !cal.ok || (hasPoints && (typeof modulePortPoints !== 'object' || Array.isArray(modulePortPoints))) || (!hasPoints && !modulePortsValid(ports))) return [];
+  if (!cal || !cal.ok || !pictureModuleRoutesValid(moduleRoutes) || (hasPoints && (typeof modulePortPoints !== 'object' || Array.isArray(modulePortPoints))) || (!hasPoints && !modulePortsValid(ports))) return [];
   const validPoint = p => p && Number.isFinite(p.x) && Number.isFinite(p.y);
   const segments = [];
   (groups || []).forEach((group, gi) => {
@@ -253,7 +291,12 @@ function pictureModuleWiring(groups, cal, ports, devicePorts, modulePortPoints, 
       const previous = slots[i - 1];
       [['power', referencePower ? 'pwrPos' : 'pwrNeg', referencePower ? 'pwrNeg' : 'pwrPos'], ['comm', 'commS', 'commN']].forEach(([kind, from, to]) => {
         const a = at(previous, from), b = at(slot, to);
-        if (validPoint(a) && validPoint(b)) segments.push({ ...tag, kind, pts: [a, b], lenMm: fvDist(a, b) * cal.mmPerPx });
+        if (validPoint(a) && validPoint(b)) {
+          const key=pictureModuleRouteKey(group.slot, i, kind), route=moduleRoutes && moduleRoutes[key];
+          const pts=!route ? [a,b] : route.style==='curved' ? pictureCurvePoints(a,b,route.points) : route.style==='rounded' ? pictureRoundedPoints(a,b,route.points) : [a,...route.points,b];
+          const lenMm=pts.slice(1).reduce((sum,p,k)=>sum+fvDist(pts[k],p),0)*cal.mmPerPx;
+          segments.push({ ...tag, kind, pts, lenMm });
+        }
       });
     });
     const d = devicePorts && devicePorts[group.slot];
@@ -374,6 +417,7 @@ async function tabSimpleWiring(el, project, ctx) {
     click: null, calibrating: 0,
     ports: modulePortsValid(saved.modulePorts) ? saved.modulePorts : null,
     modulePortPoints: saved.modulePortPoints === undefined ? null : saved.modulePortPoints,
+    moduleDraftRoutes: saved.moduleDraftRoutes == null ? {} : JSON.parse(JSON.stringify(saved.moduleDraftRoutes)),
     powerConvention: saved.powerConvention === 'reference-sample' ? 'reference-sample' : 'legacy',
     portStep: 0, portRef: null, pendingPorts: {}, previousPorts: null, zoom: 1,
     devicePorts: JSON.parse(JSON.stringify(saved.devicePorts || {})), deviceStep: 0, deviceSlot: '', pendingDevice: {},
@@ -394,7 +438,7 @@ async function tabSimpleWiring(el, project, ctx) {
   async function persist() {
     st.saving = true; render();
     const config = JSON.parse(JSON.stringify(project.config || {}));
-    config.numbering = Object.assign({}, config.numbering, { mode: 'layout', rack: st.rack, cal: st.cal, marking: st.plan, modulePorts: st.ports, modulePortPoints: st.modulePortPoints, devicePorts: st.devicePorts, powerConvention: st.powerConvention });
+    config.numbering = Object.assign({}, config.numbering, { mode: 'layout', rack: st.rack, cal: st.cal, marking: st.plan, modulePorts: st.ports, modulePortPoints: st.modulePortPoints, devicePorts: st.devicePorts, moduleDraftRoutes: st.moduleDraftRoutes, powerConvention: st.powerConvention });
     delete config.layout;
     st.saveFailed = !await ctx.saveProject({ config });
     st.saving = false;
@@ -424,12 +468,14 @@ async function tabSimpleWiring(el, project, ctx) {
       }).join('') + records.filter(record => record.jbId).map(record => `<g pointer-events="none"><circle cx="${record.point.x}" cy="${record.point.y}" r="7" fill="#365fb6"/><text x="${record.point.x + 10}" y="${record.point.y}" font-size="13" fill="#203954">${esc(record.jbId)}</text></g>`).join('');
       const groups = st.generated ? layoutGroups(project) : [];
       const previewPorts = JSON.parse(JSON.stringify(st.devicePorts));
-      if (st.routeEdit && previewPorts[st.routeEdit.slot]) {
+      if (st.routeEdit && st.routeEdit.type !== 'module' && previewPorts[st.routeEdit.slot]) {
         const device = previewPorts[st.routeEdit.slot];
         device.draftRoutes = Object.assign({}, device.draftRoutes, { [st.routeEdit.key]: st.routeEdit.points });
         device.draftCurveRoutes = Object.assign({}, device.draftCurveRoutes, { [st.routeEdit.key]: st.routeEdit.curved });
       }
-      const wiring = st.generated ? pictureModuleWiring(groups, cal, st.ports, previewPorts, st.modulePortPoints, st.powerConvention) : [];
+      const previewModuleRoutes = Object.assign({}, st.moduleDraftRoutes);
+      if (st.routeEdit && st.routeEdit.type === 'module') previewModuleRoutes[st.routeEdit.routeKey] = {style:st.routeEdit.style,points:st.routeEdit.points};
+      const wiring = st.generated ? pictureModuleWiring(groups, cal, st.ports, previewPorts, st.modulePortPoints, st.powerConvention, previewModuleRoutes) : [];
       const portMarks = st.portRef && st.portStep >= 2 ? Object.entries(st.pendingPorts).map(([name, offset]) =>
         `<circle cx="${st.portRef.x + offset.x}" cy="${st.portRef.y + offset.y}" r="${Math.max(3, Math.min(cal.pitchX, cal.pitchY) * .045)}" fill="${name.startsWith('comm') ? '#00a651' : '#e02020'}" stroke="white" stroke-width="1" pointer-events="none"/>`).join('') : '';
       const deviceMarks = st.deviceStep >= 2 ? Object.entries(st.pendingDevice).map(([name, point]) =>
@@ -440,8 +486,8 @@ async function tabSimpleWiring(el, project, ctx) {
     }
     const checks = st.generated ? runValidations(project, generateNetlist(project)).concat(layoutValidate(project)) : [];
     const failed = checks.filter(check => check.status !== 'pass');
-    const powerAudit = st.generated ? picturePowerCrossings(pictureModuleWiring(layoutGroups(project), cal, st.ports, st.devicePorts, st.modulePortPoints, st.powerConvention)) : { valid: true, pairs: [] };
-    const powerBlocked = !powerAudit.valid || powerAudit.pairs.length > 0;
+    const powerAudit = st.generated ? picturePowerCrossings(pictureModuleWiring(layoutGroups(project), cal, st.ports, st.devicePorts, st.modulePortPoints, st.powerConvention, st.moduleDraftRoutes)) : { valid: true, pairs: [] };
+    const powerBlocked = !pictureModuleRoutesValid(st.moduleDraftRoutes) || !powerAudit.valid || powerAudit.pairs.length > 0;
     const prompt = portMarkingPrompt(st.portStep, st.deviceStep);
     if (prompt && st.deviceStep && st.plan && !issues.length) {
       const groups = markingLayout(st.plan).sscs;
@@ -473,7 +519,7 @@ async function tabSimpleWiring(el, project, ctx) {
         </div>
         <p class="muted small">${st.calibrating === 1 ? 'Click the centre of the top-left grid position on the picture.' : st.calibrating === 2 ? 'Now click the centre of the bottom-right grid position.' : (cal && cal.ok ? 'Grid aligned. Start ordered marking using the declared counts above.' : 'After setting the grid, click its top-left and bottom-right position on the picture.')}</p>
       </div>
-      <div class="card"><h3>2 · Mark components and ports on the drawing</h3>
+      <div class="card"><h3>2 · Mark components and ports on the drawing</h3><div class="marking-workbench"><div class="marking-tools">
         <p class="muted small">${rack ? rackModuleCells(rack).length : 0} modules · ${rack ? rackDeviceCells(rack, 'ssc').length : 0} SSCs marked. ${st.plan ? records.length + ' / ' + steps.length + ' ordered steps saved.' : 'Declare the counts and start ordered marking above.'}</p>
         ${st.plan ? '<div class="marking-progress">' + st.plan.banks.map((bank, bi) => {
           const mine = steps.slice(0, records.length).map((step, i) => ({ step, record: records[i] })).filter(item => item.step.bank === bi + 1);
@@ -488,7 +534,9 @@ async function tabSimpleWiring(el, project, ctx) {
         <p class="muted small">Use the mouse wheel to zoom toward the pointer. Drag with the middle mouse button to pan; left-click to mark.</p>
         ${prompt ? `<div class="port-instruction" role="status" aria-live="polite"><div class="port-instruction-progress">${prompt.title} · STEP ${prompt.current} OF ${prompt.total}</div><strong>${prompt.instruction}</strong><span>${st.message ? esc(st.message) : prompt.current === 1 ? 'Select the marked component on the drawing below.' : 'Click the port centre on the drawing below.'}</span><button class="btn btn-ghost btn-sm" id="simple-cancel-ports">Cancel marking</button></div>` : next ? `<div class="port-instruction" role="status" aria-live="polite"><div class="port-instruction-progress">BANK ${next.bank} · COMPONENT ${records.length + 1} OF ${steps.length}</div><strong>Click ${esc(next.label)} on the drawing.</strong><span>${st.message ? esc(st.message) : next.kind === 'module' ? 'Click this module in chain order. This click determines its number and SSC assignment.' : next.kind === 'acdp' ? 'Identification only. No ACDP wiring will be generated.' : 'Click the component centre.'}</span>${next.kind === 'jb' ? `<label>Junction box <select id="marking-jb"><option value="">Choose a junction box</option>${next.jbIds.map(id => `<option value="${id}" ${next.defaultJb === id ? 'selected' : ''}>${id}${records.some(r => r.jbId === id) ? ' (already marked; share)' : ''}</option>`).join('')}</select></label>` : ''}</div>` : `<p class="muted small">${st.plan ? 'Component marking complete. Mark the module ports, then each SSC and its junction-box terminals.' : 'Start ordered marking to receive one command at a time.'}</p>`}
         ${issues.length ? '<ul class="marking-warnings">' + issues.map(issue => '<li>' + esc(issue) + '</li>').join('') + '</ul>' : ''}
-        <div id="simple-picture-scroll" style="border:1px solid var(--border);border-radius:8px;overflow:auto;max-height:70vh"><div id="simple-picture" style="width:${st.zoom * 100}%;cursor:crosshair">${svg}</div></div>
+        ${st.generated && !st.routeEdit ? `<details><summary>Advanced: adjust a draft route</summary><p class="muted small">Choose a connection, then click its intermediate points in order on the picture. Choose straight bends or a smooth curve. Curves use approximate control points and require engineering review.</p><div class="btn-row"><label>SSC <select id="route-ssc">${layoutGroups(project).map(group => `<option value="${esc(group.slot)}">${esc(group.label)}</option>`).join('')}</select></label><label>Connection <select id="route-key"><option value="stringPos">SSC string + to module</option><option value="stringNeg">SSC string − to module</option><option value="commS">SSC communication S to module</option><option value="commN">SSC communication N to module</option><option value="busPos">SSC bus + to junction box</option><option value="busNeg">SSC bus − to junction box</option><option value="modulePower">Module-to-module power</option><option value="moduleComm">Module-to-module communication</option></select></label><label>From module <input id="route-module" type="number" min="1" max="47" value="1" style="width:75px"></label><label>Route style <select id="route-style"><option value="saved">Keep saved style</option><option value="straight">Straight bends</option><option value="curved">C-style curve</option><option value="rounded">Rounded L-style bends</option></select></label><button class="btn btn-ghost btn-sm" id="route-start">Edit route</button></div><div class="route-presets"><label>One-click shape <select id="route-template"><option value="">Choose a shape</option>${[['straight','Straight'],['l-horizontal','L: horizontal then vertical'],['l-vertical','L: vertical then horizontal'],['c-above','C: curve above'],['c-below','C: curve below']].map(([value,label]) => `<option value="${value}" ${pictureLastRouteTemplate() === value ? 'selected' : ''}>${label}${pictureLastRouteTemplate() === value ? ' (last used on this device)' : ''}</option>`).join('')}</select></label><button class="btn btn-primary btn-sm" id="route-apply-template">Apply shape</button><p class="muted small">For a module-to-module link. Shapes are draft suggestions; check routing and clearance.</p></div></details>` : ''}
+        ${st.routeEdit ? `<div class="port-instruction" role="status"><strong>${st.routeEdit.curved ? "Click curve control points" : "Click route bends"} on the picture, in order from ${st.routeEdit.type === "module" ? "the first module" : "the SSC"}.</strong><span>${st.routeEdit.points.length} intermediate points selected. Save with no points to return to a straight preview.</span><div class="btn-row"><button class="btn btn-ghost btn-sm" id="route-undo" ${st.routeEdit.points.length ? '' : 'disabled'}>Undo point</button><button class="btn btn-ghost btn-sm" id="route-clear" ${st.routeEdit.points.length ? '' : 'disabled'}>Clear points</button><button class="btn btn-primary btn-sm" id="route-save">Save draft route</button><button class="btn btn-ghost btn-sm" id="route-cancel">Cancel</button></div></div>` : ''}
+        </div><div id="simple-picture-scroll" style="border:1px solid var(--border);border-radius:8px;overflow:auto;max-height:70vh"><div id="simple-picture" style="width:${st.zoom * 100}%;cursor:crosshair">${svg}</div></div></div>
       </div>
       <div class="card" style="margin-top:16px"><h3>3 · Generate wiring</h3>
         <label>Picture power connections <select id="simple-power-convention"><option value="legacy" ${st.powerConvention === 'legacy' ? 'selected' : ''}>Existing project rules</option><option value="reference-sample" ${st.powerConvention === 'reference-sample' ? 'selected' : ''}>Confirmed 111 rack reference (experimental)</option></select></label>
@@ -498,8 +546,6 @@ async function tabSimpleWiring(el, project, ctx) {
         ${st.generated && powerBlocked ? '<p class="warn" role="alert">Power cables cross or touch in this drawing. Correct the routes before exporting. This check does not verify physical clearance.</p>' : ''}
         <div class="btn-row"><button class="btn btn-primary" id="simple-generate" ${!cal || !cal.ok || !moduleReady || st.deviceStep || st.portStep || issues.length || st.saving || st.saveFailed ? 'disabled' : ''}>Generate wiring</button>${st.generated ? `<button class="btn btn-ghost" id="simple-visio" ${powerBlocked || st.powerConvention === 'reference-sample' ? 'disabled' : ''}>Download editable draft (Visio)</button><button class="btn btn-ghost" id="simple-svg" ${powerBlocked ? 'disabled' : ''}>Download draft wiring drawing (SVG)</button><button class="btn btn-ghost" id="simple-sheet-svg" ${powerBlocked ? 'disabled' : ''}>Download draft A3 sheet (SVG)</button><button class="btn btn-ghost" id="simple-export" ${powerBlocked || st.powerConvention === 'reference-sample' ? 'disabled' : ''}>Print draft PDF</button>` : ''}</div>
         ${st.generated ? '<p class="muted small">You can change markings here and generate again. Visio edits are separate and do not update this saved project.</p>' : ''}
-        ${st.generated && !st.routeEdit ? `<details><summary>Adjust a draft SSC route</summary><p class="muted small">Choose a connection, then click its intermediate points in order on the picture. Choose straight bends or a smooth curve. Curves use approximate control points and require engineering review.</p><div class="btn-row"><label>SSC <select id="route-ssc">${layoutGroups(project).filter(group => pictureDevicePortsComplete(st.devicePorts[group.slot])).map(group => `<option value="${esc(group.slot)}">${esc(group.label)}</option>`).join('')}</select></label><label>Connection <select id="route-key"><option value="stringPos">SSC string + to module</option><option value="stringNeg">SSC string − to module</option><option value="commS">SSC communication S to module</option><option value="commN">SSC communication N to module</option><option value="busPos">SSC bus + to junction box</option><option value="busNeg">SSC bus − to junction box</option></select></label><label>Route style <select id="route-style"><option value="saved">Keep saved style</option><option value="straight">Straight bends</option><option value="curved">Smooth curve</option></select></label><button class="btn btn-ghost btn-sm" id="route-start">Edit route</button></div></details>` : ''}
-        ${st.routeEdit ? `<div class="port-instruction" role="status"><strong>${st.routeEdit.curved ? "Click curve control points" : "Click route bends"} on the picture, in order from the SSC.</strong><span>${st.routeEdit.points.length} intermediate points selected. Save with no points to return to a straight preview.</span><div class="btn-row"><button class="btn btn-ghost btn-sm" id="route-undo" ${st.routeEdit.points.length ? '' : 'disabled'}>Undo point</button><button class="btn btn-ghost btn-sm" id="route-clear" ${st.routeEdit.points.length ? '' : 'disabled'}>Clear points</button><button class="btn btn-primary btn-sm" id="route-save">Save draft route</button><button class="btn btn-ghost btn-sm" id="route-cancel">Cancel</button></div></div>` : ''}
         <p id="simple-message" role="status">${esc(st.message)}</p>
         ${st.generated ? `<p class="${failed.length ? 'warn' : 'muted'}">${failed.length ? failed.length + ' checks need attention before release.' : 'All ' + checks.length + ' checks pass.'}</p>${failed.length ? '<ul>' + failed.map(check => '<li>' + esc(check.id + ': ' + check.detail) + '</li>').join('') + '</ul>' : ''}` : ''}
       </div>`;
@@ -535,12 +581,12 @@ async function tabSimpleWiring(el, project, ctx) {
       const needed = markingSteps(st.banks).filter(step => step.kind !== 'jb').length;
       if (needed > st.rack.cols * st.rack.rows) { st.message = 'The declared components need ' + needed + ' grid positions, but this grid has only ' + (st.rack.cols * st.rack.rows) + '. Increase the grid before marking.'; render(); return; }
       st.plan = { version: 1, banks: JSON.parse(JSON.stringify(st.banks)), records: [] };
-      rebuildMarks(); st.ports = null; st.modulePortPoints = null; st.devicePorts = {}; st.portStep = 0; st.deviceStep = 0; st.generated = false; st.message = '';
+      rebuildMarks(); st.ports = null; st.modulePortPoints = null; st.moduleDraftRoutes = {}; st.devicePorts = {}; st.portStep = 0; st.deviceStep = 0; st.generated = false; st.message = '';
       await persist();
     };
     el.querySelector('#marking-undo').onclick = async () => {
       st.plan.records.pop(); rebuildMarks(); st.generated = false; st.portStep = 0; st.deviceStep = 0;
-      st.devicePorts = {}; st.modulePortPoints = null; st.message = 'Last component mark removed. Repeat the highlighted step. SSC ports must be marked again after changing components.'; await persist();
+      st.devicePorts = {}; st.modulePortPoints = null; st.moduleDraftRoutes = {}; st.message = 'Last component mark removed. Repeat the highlighted step. SSC ports must be marked again after changing components.'; await persist();
     };
     el.querySelector('#marking-retry')?.addEventListener('click', persist);
     el.querySelector('#simple-grid').onclick = () => {
@@ -551,7 +597,7 @@ async function tabSimpleWiring(el, project, ctx) {
       for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) cells.push({ c, r, kind: 'empty', label: '' });
       st.rack = rackEnsure({ cols, rows, pitchX: px, pitchY: py, cells });
       st.cal = fvCalib({ imgW: image.naturalWidth, imgH: image.naturalHeight, cols, rows });
-      st.plan = null; st.calibrating = 1; st.click = null; st.generated = false; st.ports = null; st.modulePortPoints = null; st.portStep = 0; st.devicePorts = {}; st.deviceStep = 0; st.message = ''; render();
+      st.plan = null; st.calibrating = 1; st.click = null; st.generated = false; st.ports = null; st.modulePortPoints = null; st.moduleDraftRoutes = {}; st.portStep = 0; st.devicePorts = {}; st.deviceStep = 0; st.message = ''; render();
     };
     const picture = el.querySelector('#simple-picture');
     const zoomAt = (factor, clientX, clientY) => {
@@ -578,17 +624,58 @@ async function tabSimpleWiring(el, project, ctx) {
     el.querySelector('#simple-cancel-ports')?.addEventListener('click', () => { if (st.portStep) st.ports = st.previousPorts; st.portStep = 0; st.deviceStep = 0; st.message = 'Port marking cancelled.'; render(); });
     el.querySelector('#route-start')?.addEventListener('click', () => {
       const slot = el.querySelector('#route-ssc').value, key = el.querySelector('#route-key').value;
-      if (!slot || !pictureDevicePortsComplete(st.devicePorts[slot])) { st.message = 'Mark this SSC and junction-box ports before editing a route.'; render(); return; }
-      const saved = pictureCopyDraftRoutePoints(st.devicePorts[slot], key);
       const style = el.querySelector('#route-style').value;
+      if (key === 'modulePower' || key === 'moduleComm') {
+        const group = layoutGroups(project).find(item => item.slot === slot), index = Number(el.querySelector('#route-module').value);
+        if (!group || !Number.isInteger(index) || index < 1 || index >= group.order.length) { st.message = 'Choose a module number with a next module in this SSC.'; render(); return; }
+        if (!pictureModuleRoutesValid(st.moduleDraftRoutes)) { st.message = 'Saved module routes are invalid; they cannot be edited or exported.'; render(); return; }
+        const routeKey = pictureModuleRouteKey(slot, index, key === 'modulePower' ? 'power' : 'comm');
+        const savedRoute = st.moduleDraftRoutes[routeKey];
+        const chosen = style === 'saved' ? (savedRoute ? savedRoute.style : 'straight') : style;
+        st.routeEdit = { type:'module', slot, routeKey, style:chosen, curved:chosen==='curved', points:savedRoute ? savedRoute.points.map(p=>({...p})) : [] };
+        st.message = ''; render(); return;
+      }
+      if (!slot || !pictureDevicePortsComplete(st.devicePorts[slot])) { st.message = 'Mark this SSC and junction-box ports before editing a route.'; render(); return; }
+      if (style === 'rounded') { st.message = 'Rounded L-style bends are available for module-to-module links. Choose smooth curve or straight bends for an SSC route.'; render(); return; }
+      const saved = pictureCopyDraftRoutePoints(st.devicePorts[slot], key);
       const curved = style === 'saved' ? !!(st.devicePorts[slot].draftCurveRoutes && st.devicePorts[slot].draftCurveRoutes[key] === true) : style === 'curved';
       st.routeEdit = { slot, key, points: saved || [], curved };
       st.message = saved === null ? 'The saved draft route is invalid. Select replacement points or cancel.' : ''; render();
+    });
+    el.querySelector('#route-apply-template')?.addEventListener('click', async () => {
+      const slot=el.querySelector('#route-ssc').value, selection=el.querySelector('#route-key').value;
+      const index=Number(el.querySelector('#route-module').value), template=el.querySelector('#route-template').value;
+      const groups=layoutGroups(project), gi=groups.findIndex(item=>item.slot===slot), group=groups[gi];
+      if (!['modulePower','moduleComm'].includes(selection) || !group || !Number.isInteger(index) || index<1 || index>=group.order.length) { st.message='Choose a module-to-module connection and a module with a next module.'; render(); return; }
+      if (!pictureModuleRoutesValid(st.moduleDraftRoutes)) { st.message='Saved module routes are invalid; they cannot be changed or exported.'; render(); return; }
+      const kind=selection==='modulePower'?'power':'comm';
+      const wires=pictureModuleWiring(groups,st.cal,st.ports,st.devicePorts,st.modulePortPoints,st.powerConvention,st.moduleDraftRoutes);
+      const links=wires.filter(w=>w.group===gi && w.kind===kind);
+      const link=links.length===group.order.length-1 ? links[index-1] : null;
+      const route=link && pictureSuggestedModuleRoute(link.pts[0],link.pts[link.pts.length-1],template);
+      if (!route) { st.message='Choose a shape for a link with valid, distinct terminals.'; render(); return; }
+      const next=Object.assign({},st.moduleDraftRoutes), routeKey=pictureModuleRouteKey(slot,index,kind);
+      if (route.points.length) next[routeKey]=route; else delete next[routeKey];
+      const oldConfig=project.config, config=JSON.parse(JSON.stringify(project.config || {}));
+      config.numbering=Object.assign({},config.numbering,{moduleDraftRoutes:next});
+      st.saving=true; render(); const ok=await ctx.saveProject({config}); st.saving=false;
+      if(!ok){project.config=oldConfig;st.message='Could not save this shape. Try again.';render();return;}
+      st.moduleDraftRoutes=next; pictureRememberRouteTemplate(template);
+      st.message='Draft shape applied. Check the route and physical clearance.'; render();
     });
     el.querySelector('#route-undo')?.addEventListener('click', () => { st.routeEdit.points.pop(); render(); });
     el.querySelector('#route-clear')?.addEventListener('click', () => { st.routeEdit.points = []; render(); });
     el.querySelector('#route-cancel')?.addEventListener('click', () => { st.routeEdit = null; st.message = 'Draft route edit cancelled.'; render(); });
     el.querySelector('#route-save')?.addEventListener('click', async () => {
+      if (st.routeEdit.type === 'module') {
+        const edit=st.routeEdit, next=Object.assign({},st.moduleDraftRoutes);
+        if(edit.points.length) next[edit.routeKey]={style:edit.style,points:edit.points.map(p=>({...p}))}; else delete next[edit.routeKey];
+        const oldConfig=project.config, config=JSON.parse(JSON.stringify(project.config || {}));
+        config.numbering=Object.assign({},config.numbering,{moduleDraftRoutes:next});
+        st.saving=true; render(); const ok=await ctx.saveProject({config}); st.saving=false;
+        if(!ok){project.config=oldConfig;st.message='Could not save the draft route. Try again.';render();return;}
+        st.moduleDraftRoutes=next;st.routeEdit=null;st.message='Draft module route saved. Review its path and clearance.';render();return;
+      }
       const edit = st.routeEdit, oldConfig = project.config, oldPorts = st.devicePorts;
       const nextPorts = JSON.parse(JSON.stringify(st.devicePorts));
       const device = nextPorts[edit.slot]; device.draftRoutes = Object.assign({}, device.draftRoutes);
@@ -639,7 +726,7 @@ async function tabSimpleWiring(el, project, ctx) {
         const name = ['commS', 'commN', 'pwrNeg', 'pwrPos'][st.portStep - 2];
         st.pendingPorts[name] = { x: p.x - st.portRef.x, y: p.y - st.portRef.y };
         st.message = '';
-        if (st.portStep === 5) { st.ports = st.pendingPorts; st.modulePortPoints = null; st.portStep = 0; st.message = 'Four port centres recorded.'; await persist(); return; }
+        if (st.portStep === 5) { st.ports = st.pendingPorts; st.modulePortPoints = null; st.moduleDraftRoutes = {}; st.portStep = 0; st.message = 'Four port centres recorded. Module route adjustments were cleared.'; await persist(); return; }
         else st.portStep++;
         render(); return;
       }
@@ -660,7 +747,7 @@ async function tabSimpleWiring(el, project, ctx) {
       const missing = markingIssues(st.plan);
       if (missing.length || !pictureModulePortsReady(st.rack ? rackModuleCells(st.rack) : [], st.ports, st.modulePortPoints) || st.saveFailed) { st.message = missing.join(' ') || 'Complete module-port positions and save before generating wiring.'; render(); return; }
       const config = JSON.parse(JSON.stringify(project.config || {}));
-      config.numbering = { rack: st.rack, cal: st.cal, marking: st.plan, modulePorts: st.ports, modulePortPoints: st.modulePortPoints, devicePorts: st.devicePorts, powerConvention: st.powerConvention };
+      config.numbering = { rack: st.rack, cal: st.cal, marking: st.plan, modulePorts: st.ports, modulePortPoints: st.modulePortPoints, devicePorts: st.devicePorts, moduleDraftRoutes: st.moduleDraftRoutes, powerConvention: st.powerConvention };
       config.layout = markingLayout(st.plan);
       config.rules = Object.assign({}, config.rules, { modulesPerString: Math.max(...st.plan.banks.flatMap(markingModuleCounts)) });
       const candidate = { ...project, config };
@@ -676,7 +763,7 @@ async function tabSimpleWiring(el, project, ctx) {
     el.querySelector('#simple-visio')?.addEventListener('click', async () => {
       try {
         if (powerBlocked || st.powerConvention === 'reference-sample') throw new Error('This draft cannot be exported to Visio until its connections and netlist agree.');
-        const wiring = pictureModuleWiring(layoutGroups(project), st.cal, st.ports, st.devicePorts, st.modulePortPoints, st.powerConvention);
+        const wiring = pictureModuleWiring(layoutGroups(project), st.cal, st.ports, st.devicePorts, st.modulePortPoints, st.powerConvention, st.moduleDraftRoutes);
         let exportProject = project;
         if (/^data:image\/svg\+xml/i.test(project.underlay.src)) {
           const canvas = document.createElement('canvas');
@@ -692,7 +779,7 @@ async function tabSimpleWiring(el, project, ctx) {
     el.querySelector('#simple-sheet-svg')?.addEventListener('click', () => {
       try {
         if (powerBlocked) throw new Error('Power cables cross or touch. Correct the routes before exporting.');
-        const wiring = pictureModuleWiring(layoutGroups(project), st.cal, st.ports, st.devicePorts, st.modulePortPoints, st.powerConvention);
+        const wiring = pictureModuleWiring(layoutGroups(project), st.cal, st.ports, st.devicePorts, st.modulePortPoints, st.powerConvention, st.moduleDraftRoutes);
         let sheet = pictureSheetSvg(project, st.cal, wiring, VSDX_LOGO_B64);
         if (st.powerConvention === 'reference-sample') sheet = sheet.replace('</svg>', '<text x="80" y="140" font-size="16" fill="#b91c1c">EXPERIMENTAL PICTURE - NETLIST DIFFERS - ENGINEERING REVIEW REQUIRED</text></svg>');
         download((project.name || 'wiring') + '-draft-sheet.svg', sheet, 'image/svg+xml');
@@ -700,7 +787,7 @@ async function tabSimpleWiring(el, project, ctx) {
     });
     el.querySelector('#simple-svg')?.addEventListener('click', () => {
       if (powerBlocked) { toast('Power cables cross or touch. Correct the routes before exporting.', 'error'); return; }
-      const wiring = pictureModuleWiring(layoutGroups(project), st.cal, st.ports, st.devicePorts, st.modulePortPoints, st.powerConvention);
+      const wiring = pictureModuleWiring(layoutGroups(project), st.cal, st.ports, st.devicePorts, st.modulePortPoints, st.powerConvention, st.moduleDraftRoutes);
       const warning = st.powerConvention === 'reference-sample' ? '<text x="10" y="20" font-size="14" fill="#b91c1c" stroke="white" stroke-width="3" paint-order="stroke">EXPERIMENTAL PICTURE - NETLIST DIFFERS - ENGINEERING REVIEW REQUIRED</text>' : '';
       const svgOut = fvSvg(st.cal, { src: project.underlay.src }, wiring, { noGrid: true, sscLabels: true }).replace('</svg>', pictureDeviceLabelsSvg(st.plan, st.cal) + warning + '</svg>');
       download((project.name || 'wiring') + '-rack-wiring.svg', svgOut, 'image/svg+xml');

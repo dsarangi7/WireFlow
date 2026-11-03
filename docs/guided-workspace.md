@@ -41,6 +41,23 @@ manual tool does not automatically follow rack rails, calculate bend radii, or
 guarantee physical clearance. Review the generated route before use; the
 picture-first export guard checks drawn power centerline crossings separately.
 
+For a bottom module-to-module link, open **Advanced: adjust a draft route**,
+choose the SSC, choose module-to-module power or communication, and enter the
+first module number (the link goes to its next numbered module). Choose
+**Rounded L-style bends** or **C-style curve**, then click the bend or control
+points and save. The selected route applies only to that link; clearing points
+restores its straight draft. These are visual approximations and remain subject
+to engineering review and the power-crossing check.
+
+Alternatively choose a **One-click shape** and apply it to the selected module
+link. The last selected shape is remembered in browser storage on this device
+and offered next time, including in another local project. This remembers a
+shape choice only: it does not copy terminal positions, assignments or a full
+rack wiring method, and does not synchronize across devices. Automatic shapes
+are visual suggestions; review the route, crossings and physical clearance.
+The marking tools appear alongside the rack drawing on wider screens and stack
+above it on smaller screens.
+
 The grid assumes straight, evenly spaced rows and columns (maximum 12 by 24).
 The automatic assignment uses the nearest SSC subject to the existing configured
 string capacity; it cannot determine the intended electrical assignment from an

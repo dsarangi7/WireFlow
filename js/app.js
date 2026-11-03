@@ -1644,9 +1644,9 @@ function projectPrintPages(project, conns) {
   const portMap = numbering.modulePortPoints;
   const moduleReady = portMap === null || portMap === undefined ? modulePortsValid(numbering.modulePorts)
     : !!portMap && typeof portMap === 'object' && !Array.isArray(portMap) && moduleSlots.length > 0 && moduleSlots.every(slot => Object.prototype.hasOwnProperty.call(portMap, slot) && modulePortsValid(portMap[slot]));
-  const frontSvg = canDraw && moduleReady
-    ? fvSvg(cal, { src: project.underlay.src }, pictureModuleWiring(groups, cal, numbering.modulePorts, numbering.devicePorts, numbering.modulePortPoints), { noGrid: true, sscLabels: true }).replace('</svg>', pictureDeviceLabelsSvg(numbering.marking, cal) + '</svg>')
-    : '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1680 1188"><rect width="1680" height="1188" fill="#fff"/><text x="840" y="594" text-anchor="middle" font-family="Arial" font-size="28" fill="#687386">Front-view wiring is unavailable until the rack picture is calibrated.</text></svg>';
+  const frontSvg = canDraw && moduleReady && pictureModuleRoutesValid(numbering.moduleDraftRoutes)
+    ? fvSvg(cal, { src: project.underlay.src }, pictureModuleWiring(groups, cal, numbering.modulePorts, numbering.devicePorts, numbering.modulePortPoints, numbering.powerConvention, numbering.moduleDraftRoutes), { noGrid: true, sscLabels: true }).replace('</svg>', pictureDeviceLabelsSvg(numbering.marking, cal) + '</svg>')
+    : '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1680 1188"><rect width="1680" height="1188" fill="#fff"/><text x="840" y="594" text-anchor="middle" font-family="Arial" font-size="28" fill="#687386">Front-view wiring is unavailable: check calibration, ports and draft routes.</text></svg>';
   return buildPrintDocument({
     sheetSvg: renderDiagramSVG(project, conns),
     frontSvg: frontSvg,

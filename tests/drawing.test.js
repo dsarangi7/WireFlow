@@ -481,11 +481,11 @@ eq('print-document builder returns ordered title/svg page records',
 const projectPrintBody = fnBody(appSrc, 'projectPrintPages');
 let printWiringOptions = null;
 let printSvgOptions = null;
-const printProjectPages = new Function('project', 'conns', 'fvCalib', 'layoutGroups', 'modulePortsValid', 'pictureModuleWiring', 'fvSvg', 'buildPrintDocument', 'renderDiagramSVG', 'schedulePrintSvg', 'pictureDeviceLabelsSvg', projectPrintBody);
+const printProjectPages = new Function('project', 'conns', 'fvCalib', 'layoutGroups', 'modulePortsValid', 'pictureModuleWiring', 'fvSvg', 'buildPrintDocument', 'renderDiagramSVG', 'schedulePrintSvg', 'pictureDeviceLabelsSvg', 'pictureModuleRoutesValid', projectPrintBody);
 const overlayPages = printProjectPages({ config: { numbering: { cal: {} } }, underlay: { kind: 'image', src: 'data:image/png;base64,AA' } }, [],
   () => ({ ok: true }), () => ['group'], () => true, (groups, cal, ports) => { printWiringOptions = { groups, cal, ports }; return ['wire']; },
   (cal, image, wires, options) => { printSvgOptions = options; return wires.join(','); },
-  parts => parts, () => '<svg/>', () => '<svg/>', () => '');
+  parts => parts, () => '<svg/>', () => '<svg/>', () => '', () => true);
 eq('printed rack picture includes generated wiring', overlayPages.frontSvg, 'wire');
 ok('printed rack uses calibrated wiring and keeps the source image proportions',
   printWiringOptions.groups[0] === 'group' && printSvgOptions.noGrid === true && printSvgOptions.width === undefined);
@@ -497,7 +497,7 @@ ok('print title block embeds the AYK logo and drawing details',
 
 const simpleSrc = fs.readFileSync(path.join(ROOT, 'js', 'simple-wiring.js'), 'utf8');
 const portFactory = new Function('slotCell', 'fvSlotCenter', 'fvDist', 'SSC_PALETTE', 'sheetSvgPrimitive', 'sheetEsc',
-  simpleSrc + '\nreturn { PICTURE_DEVICE_PORT_STEPS, pictureZoomOffset, modulePortsValid, pictureModulePortsReady, pictureCopyDraftRoutePoints, pictureDevicePortsComplete, picturePowerCrossings, pictureModuleWiring, pictureVisioModel, pictureSheetSvg, portMarkingPrompt, markingModuleCounts, markingPlanErrors, markingSteps, markingIssues, markingRecord, markingLayout, pictureDeviceLabels, pictureDeviceLabelsSvg };');
+  simpleSrc + '\nreturn { PICTURE_DEVICE_PORT_STEPS, pictureZoomOffset, modulePortsValid, pictureModulePortsReady, pictureCopyDraftRoutePoints, pictureDevicePortsComplete, picturePowerCrossings, pictureSuggestedModuleRoute, pictureModuleRoutesValid, pictureModuleWiring, pictureVisioModel, pictureSheetSvg, portMarkingPrompt, markingModuleCounts, markingPlanErrors, markingSteps, markingIssues, markingRecord, markingLayout, pictureDeviceLabels, pictureDeviceLabelsSvg };');
 const portsApi = portFactory(E.slotCell, (cal, c, r) => ({ x: cal.x0 + c * cal.pitchX, y: cal.y0 + r * cal.pitchY }),
   (a, b) => Math.hypot(a.x - b.x, a.y - b.y), E.SSC_PALETTE, E.sheetSvgPrimitive, E.sheetEsc);
 {
@@ -633,11 +633,14 @@ ok('unknown individual endpoint never falls back to a representative offset', !p
 ok('missing individual module entry blocks generation', !portsApi.pictureModulePortsReady(['0,0','0,1'], ports, {'0,0':individualPorts['0,0']}));
 ok('malformed individual map does not fall back to shared offsets', !portsApi.pictureModulePortsReady(['0,0'], ports, false));
 let printedPortMap = null;
-const individualPrint = printProjectPages({ config: { numbering: { cal: {}, modulePortPoints: individualPorts } }, underlay: { kind: 'image', src: 'data:image/png;base64,AA' } }, [],
+let printedRoutes = null;
+const printRoutes = {'1,1|1|power':{style:'rounded',points:[{x:3,y:4}]}};
+const individualPrint = printProjectPages({ config: { numbering: { cal: {}, modulePortPoints: individualPorts, moduleDraftRoutes: printRoutes } }, underlay: { kind: 'image', src: 'data:image/png;base64,AA' } }, [],
   () => ({ ok: true }), () => [{ order: ['0,0','0,1'] }], portsApi.modulePortsValid,
-  (groups, cal, shared, devices, map) => { printedPortMap = map; return ['wire']; },
-  () => '<svg></svg>', parts => parts, () => '<svg/>', () => '<svg/>', () => '');
+  (groups, cal, shared, devices, map, mode, routes) => { printedPortMap = map; printedRoutes = routes; return ['wire']; },
+  () => '<svg></svg>', parts => parts, () => '<svg/>', () => '<svg/>', () => '', () => true);
 ok('print uses complete individual module positions without shared offsets', printedPortMap === individualPorts && individualPrint.frontSvg.includes('<svg>'));
+ok('print preserves module route adjustments', printedRoutes === printRoutes);
 let incompletePrintWired = false;
 const incompletePrint = printProjectPages({ config: { numbering: { cal: {}, modulePorts: ports, modulePortPoints: missingIndividual } }, underlay: { kind: 'image', src: 'data:image/png;base64,AA' } }, [],
   () => ({ ok: true }), () => [{ order: ['0,0','0,1'] }], portsApi.modulePortsValid,
@@ -651,6 +654,15 @@ const devicePorts = { '1,1': {
 } };
 const completeGroups = [{ label: 'SSC-1', slot: '1,1', order: ['0,0', '0,1'] }];
 const fullWires = portsApi.pictureModuleWiring(completeGroups, measuredCal, ports, devicePorts);
+const bottomKey='1,1|1|power';
+const shapeA={x:0,y:0}, shapeB={x:100,y:0};
+ok('one-click C choices bend in opposite directions', portsApi.pictureSuggestedModuleRoute(shapeA,shapeB,'c-above').points[0].y<0 && portsApi.pictureSuggestedModuleRoute(shapeA,shapeB,'c-below').points[0].y>0);
+eq('one-click L shape uses a rounded bend', portsApi.pictureSuggestedModuleRoute(shapeA,{x:100,y:50},'l-horizontal').style, 'rounded');
+ok('one-click shape refuses unknown types and coincident terminals', portsApi.pictureSuggestedModuleRoute(shapeA,shapeB,'unknown')===null && portsApi.pictureSuggestedModuleRoute(shapeA,shapeA,'c-above')===null);
+const bottomCurve=portsApi.pictureModuleWiring(completeGroups, measuredCal, ports, devicePorts, null, 'legacy', {[bottomKey]:{style:'curved',points:[{x:160,y:245}]}}).find(w=>w.kind==='power');
+const bottomL=portsApi.pictureModuleWiring(completeGroups, measuredCal, ports, devicePorts, null, 'legacy', {[bottomKey]:{style:'rounded',points:[{x:160,y:217},{x:160,y:278}]}}).find(w=>w.kind==='power');
+ok('module C and rounded L drafts retain terminals with distinct routes', bottomCurve.pts.length>2 && bottomL.pts.length>2 && JSON.stringify(bottomCurve.pts[0])===JSON.stringify(bottomL.pts[0]) && JSON.stringify(bottomCurve.pts[bottomCurve.pts.length-1])===JSON.stringify(bottomL.pts[bottomL.pts.length-1]) && JSON.stringify(bottomCurve.pts)!==JSON.stringify(bottomL.pts));
+eq('invalid module route fails closed rather than drawing a straight line', portsApi.pictureModuleWiring(completeGroups, measuredCal, ports, devicePorts, null, 'legacy', {[bottomKey]:{style:'curved',points:[{x:NaN,y:2}]}}).length, 0);
 const referenceWires = portsApi.pictureModuleWiring(completeGroups, measuredCal, ports, devicePorts, null, 'reference-sample');
 eq('sample convention connects lower positive to higher negative', JSON.stringify(referenceWires.find(s => s.kind === 'power').pts), JSON.stringify([{x:130,y:218},{x:120,y:277}]));
 const referenceSsc = referenceWires.filter(s => s.kind === 'sscp');
