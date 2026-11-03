@@ -81,7 +81,17 @@ for (let i=0;i<groups.length;i++) {
     const matches=wires.filter(w=>w.group===i && w.kind==='power' && equal(w.pts[0],previous.pwrNeg) && equal(w.pts[w.pts.length-1],next.pwrPos));
     if(matches.length!==1) throw new Error('Cannot uniquely identify the fixture module power link.');
     const wire=matches[0]; wire.pts=[previous.pwrPos,next.pwrNeg];
-    wire.lenMm=Math.hypot(wire.pts[1].x-wire.pts[0].x,wire.pts[1].y-wire.pts[0].y)*cal.mmPerPx;
+    // The reference uses a downward arc for the bottom transition between
+    // module columns. Approximate its observed depth; this is a draft route.
+    if(j===4) wire.pts=[wire.pts[0],...arcPoints(wire.pts[0],{x:(wire.pts[0].x+wire.pts[1].x)/2,y:(wire.pts[0].y+wire.pts[1].y)/2+59.2},wire.pts[1]),wire.pts[1]];
+    wire.lenMm=wire.pts.slice(1).reduce((sum,p,k)=>sum+Math.hypot(p.x-wire.pts[k].x,p.y-wire.pts[k].y),0)*cal.mmPerPx;
+    if(j===4) {
+      const green=wires.filter(w=>w.group===i && w.kind==='comm' && equal(w.pts[0],previous.commS) && equal(w.pts[w.pts.length-1],next.commN));
+      if(green.length!==1) throw new Error('Cannot uniquely identify the fixture bottom communication link.');
+      const g=green[0], a=g.pts[0], b=g.pts[g.pts.length-1];
+      g.pts=[a,...arcPoints(a,{x:(a.x+b.x)/2,y:(a.y+b.y)/2+19.2},b),b];
+      g.lenMm=g.pts.slice(1).reduce((sum,p,k)=>sum+Math.hypot(p.x-g.pts[k].x,p.y-g.pts[k].y),0)*cal.mmPerPx;
+    }
   }
   const pairs=[['pwrPos',order[0],order[order.length-1]],['pwrNeg',order[order.length-1],order[0]]];
   pairs.forEach(([port,oldSlot,newSlot])=>{
