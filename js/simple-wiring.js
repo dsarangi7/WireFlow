@@ -172,6 +172,24 @@ function pictureDevicePortsComplete(ports) {
 
 /* Render only connections whose physical terminal locations were marked.
    Use the same S→N, −→+ and bus-polarity ordering as the wiring engine. */
+/* Screen-space power centreline check: crossings, touches and overlaps are
+ * unsafe to export as a draft. It cannot determine physical cable clearance. */
+function picturePowerCrossings(segments) {
+  const paths = (segments || []).filter(s => s.kind === 'power' || s.kind === 'sscp');
+  const valid = p => p && Number.isFinite(p.x) && Number.isFinite(p.y);
+  if (paths.some(s => !Array.isArray(s.pts) || s.pts.length < 2 || !s.pts.every(valid))) return { valid: false, pairs: [] };
+  const cross = (a,b,c) => (b.x-a.x)*(c.y-a.y)-(b.y-a.y)*(c.x-a.x);
+  const on = (a,b,p) => Math.abs(cross(a,b,p)) < 1e-7 && p.x >= Math.min(a.x,b.x)-1e-7 && p.x <= Math.max(a.x,b.x)+1e-7 && p.y >= Math.min(a.y,b.y)-1e-7 && p.y <= Math.max(a.y,b.y)+1e-7;
+  const intersects = (a,b,c,d) => (cross(a,b,c)*cross(a,b,d)<-1e-9 && cross(c,d,a)*cross(c,d,b)<-1e-9) || on(a,b,c) || on(a,b,d) || on(c,d,a) || on(c,d,b);
+  const pairs = [];
+  for (let i=0;i<paths.length;i++) for (let j=i+1;j<paths.length;j++) {
+    let hit=false;
+    for (let a=1;a<paths[i].pts.length && !hit;a++) for (let b=1;b<paths[j].pts.length && !hit;b++) hit=intersects(paths[i].pts[a-1],paths[i].pts[a],paths[j].pts[b-1],paths[j].pts[b]);
+    if(hit) pairs.push([i,j]);
+  }
+  return { valid: true, pairs };
+}
+
 function pictureModuleWiring(groups, cal, ports, devicePorts, modulePortPoints) {
   const hasPoints = modulePortPoints !== undefined && modulePortPoints !== null;
   if (!cal || !cal.ok || (hasPoints && (typeof modulePortPoints !== 'object' || Array.isArray(modulePortPoints))) || (!hasPoints && !modulePortsValid(ports))) return [];
@@ -378,6 +396,8 @@ async function tabSimpleWiring(el, project, ctx) {
     }
     const checks = st.generated ? runValidations(project, generateNetlist(project)).concat(layoutValidate(project)) : [];
     const failed = checks.filter(check => check.status !== 'pass');
+    const powerAudit = st.generated ? picturePowerCrossings(pictureModuleWiring(layoutGroups(project), cal, st.ports, st.devicePorts, st.modulePortPoints)) : { valid: true, pairs: [] };
+    const powerBlocked = !powerAudit.valid || powerAudit.pairs.length > 0;
     const prompt = portMarkingPrompt(st.portStep, st.deviceStep);
     if (prompt && st.deviceStep && st.plan && !issues.length) {
       const groups = markingLayout(st.plan).sscs;
@@ -427,7 +447,8 @@ async function tabSimpleWiring(el, project, ctx) {
       <div class="card" style="margin-top:16px"><h3>3 · Generate wiring</h3>
         <p class="muted small">${rack ? Object.keys(st.devicePorts).filter(slot => rackIsModule(rack, slot) === false && rackDeviceCells(rack, 'ssc').includes(slot) && pictureDevicePortsComplete(st.devicePorts[slot])).length : 0} of ${rack ? rackDeviceCells(rack, 'ssc').length : 0} SSCs have their ports marked. Links with missing terminals or invalid draft routes are omitted. Check assignments and routes; lines are direct previews, not approved cable routes.</p>
         ${st.modulePortPoints !== null && !moduleReady ? '<p class="warn" role="status">Some individual module ports are missing or invalid. Complete them, or mark module ports again to replace these positions.</p>' : ''}
-        <div class="btn-row"><button class="btn btn-primary" id="simple-generate" ${!cal || !cal.ok || !moduleReady || st.deviceStep || st.portStep || issues.length || st.saving || st.saveFailed ? 'disabled' : ''}>Generate wiring</button>${st.generated ? `<button class="btn btn-ghost" id="simple-visio">Download editable draft (Visio)</button><button class="btn btn-ghost" id="simple-svg">Download draft wiring drawing (SVG)</button><button class="btn btn-ghost" id="simple-sheet-svg">Download draft A3 sheet (SVG)</button><button class="btn btn-ghost" id="simple-export">Print draft PDF</button>` : ''}</div>
+        ${st.generated && powerBlocked ? '<p class="warn" role="alert">Power cables cross or touch in this drawing. Correct the routes before exporting. This check does not verify physical clearance.</p>' : ''}
+        <div class="btn-row"><button class="btn btn-primary" id="simple-generate" ${!cal || !cal.ok || !moduleReady || st.deviceStep || st.portStep || issues.length || st.saving || st.saveFailed ? 'disabled' : ''}>Generate wiring</button>${st.generated ? `<button class="btn btn-ghost" id="simple-visio" ${powerBlocked ? 'disabled' : ''}>Download editable draft (Visio)</button><button class="btn btn-ghost" id="simple-svg" ${powerBlocked ? 'disabled' : ''}>Download draft wiring drawing (SVG)</button><button class="btn btn-ghost" id="simple-sheet-svg" ${powerBlocked ? 'disabled' : ''}>Download draft A3 sheet (SVG)</button><button class="btn btn-ghost" id="simple-export" ${powerBlocked ? 'disabled' : ''}>Print draft PDF</button>` : ''}</div>
         ${st.generated ? '<p class="muted small">You can change markings here and generate again. Visio edits are separate and do not update this saved project.</p>' : ''}
         ${st.generated && !st.routeEdit ? `<details><summary>Adjust a draft SSC route</summary><p class="muted small">Choose a connection, then click its intermediate points in order on the picture. These straight segments are a draft and require engineering review.</p><div class="btn-row"><label>SSC <select id="route-ssc">${layoutGroups(project).filter(group => pictureDevicePortsComplete(st.devicePorts[group.slot])).map(group => `<option value="${esc(group.slot)}">${esc(group.label)}</option>`).join('')}</select></label><label>Connection <select id="route-key"><option value="stringPos">SSC string + to module</option><option value="stringNeg">SSC string − to module</option><option value="commS">SSC communication S to module</option><option value="commN">SSC communication N to module</option><option value="busPos">SSC bus + to junction box</option><option value="busNeg">SSC bus − to junction box</option></select></label><button class="btn btn-ghost btn-sm" id="route-start">Edit route</button></div></details>` : ''}
         ${st.routeEdit ? `<div class="port-instruction" role="status"><strong>Click each route bend on the picture, in order from the SSC.</strong><span>${st.routeEdit.points.length} intermediate points selected. Save with no points to return to a straight preview.</span><div class="btn-row"><button class="btn btn-ghost btn-sm" id="route-undo" ${st.routeEdit.points.length ? '' : 'disabled'}>Undo point</button><button class="btn btn-ghost btn-sm" id="route-clear" ${st.routeEdit.points.length ? '' : 'disabled'}>Clear points</button><button class="btn btn-primary btn-sm" id="route-save">Save draft route</button><button class="btn btn-ghost btn-sm" id="route-cancel">Cancel</button></div></div>` : ''}
@@ -575,9 +596,10 @@ async function tabSimpleWiring(el, project, ctx) {
       await ctx.getValidations(true);
       st.generated = true; st.message = 'Draft generated. Links with missing terminals or invalid draft routes are omitted; review all assignments and routes.'; render();
     };
-    el.querySelector('#simple-export')?.addEventListener('click', () => ctx.switchTab(9));
+    el.querySelector('#simple-export')?.addEventListener('click', () => { if (!powerBlocked) ctx.switchTab(9); });
     el.querySelector('#simple-visio')?.addEventListener('click', async () => {
       try {
+        if (powerBlocked) throw new Error('Power cables cross or touch. Correct the routes before exporting.');
         const wiring = pictureModuleWiring(layoutGroups(project), st.cal, st.ports, st.devicePorts, st.modulePortPoints);
         let exportProject = project;
         if (/^data:image\/svg\+xml/i.test(project.underlay.src)) {
@@ -593,12 +615,14 @@ async function tabSimpleWiring(el, project, ctx) {
     });
     el.querySelector('#simple-sheet-svg')?.addEventListener('click', () => {
       try {
+        if (powerBlocked) throw new Error('Power cables cross or touch. Correct the routes before exporting.');
         const wiring = pictureModuleWiring(layoutGroups(project), st.cal, st.ports, st.devicePorts, st.modulePortPoints);
         const sheet = pictureSheetSvg(project, st.cal, wiring, VSDX_LOGO_B64);
         download((project.name || 'wiring') + '-draft-sheet.svg', sheet, 'image/svg+xml');
       } catch (error) { toast('Could not create the draft sheet: ' + error.message, 'error'); }
     });
     el.querySelector('#simple-svg')?.addEventListener('click', () => {
+      if (powerBlocked) { toast('Power cables cross or touch. Correct the routes before exporting.', 'error'); return; }
       const wiring = pictureModuleWiring(layoutGroups(project), st.cal, st.ports, st.devicePorts, st.modulePortPoints);
       const svgOut = fvSvg(st.cal, { src: project.underlay.src }, wiring, { noGrid: true, sscLabels: true }).replace('</svg>', pictureDeviceLabelsSvg(st.plan, st.cal) + '</svg>');
       download((project.name || 'wiring') + '-rack-wiring.svg', svgOut, 'image/svg+xml');

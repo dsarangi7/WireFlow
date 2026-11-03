@@ -21,6 +21,10 @@ route points do not constitute approved physical routing. See
 [the guided workspace documentation](docs/guided-workspace.md) for the workflow
 and the limits of the grid and draft cable routing.
 
+In the picture-first screen, its draft export buttons are blocked when power
+wire centerlines cross or touch; communication/power overlaps are allowed.
+This is a 2D check, not a physical clearance or engineering approval check.
+
 SVG rack drawings remain vector images in the marking canvas. Use the mouse
 wheel or zoom buttons to zoom, the middle mouse button to pan, and left-click
 to mark component and port positions. See [ordered marking](docs/ordered-marking.md).

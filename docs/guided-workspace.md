@@ -112,3 +112,11 @@ reserved for primary action buttons. Keyboard users receive consistent
 message covering missing import, calibration, chains, failed validations and
 delivery. Step transitions are disabled when `prefers-reduced-motion` is set,
 and the summary layout tightens at 1280px before switching to the mobile stack.
+# Picture-first power crossing check
+
+The Build wiring screen checks distinct power wire centerlines for crossings,
+touches and overlaps before enabling its Visio, SVG, A3 SVG and print buttons.
+Communication-to-power overlaps are allowed. Correct affected routes before
+exporting. This check is limited to that screen's current picture wiring and
+its export buttons; it does not cover other tabs or establish physical cable
+clearance, valid connectivity or approval.

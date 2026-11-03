@@ -497,9 +497,18 @@ ok('print title block embeds the AYK logo and drawing details',
 
 const simpleSrc = fs.readFileSync(path.join(ROOT, 'js', 'simple-wiring.js'), 'utf8');
 const portFactory = new Function('slotCell', 'fvSlotCenter', 'fvDist', 'SSC_PALETTE', 'sheetSvgPrimitive', 'sheetEsc',
-  simpleSrc + '\nreturn { PICTURE_DEVICE_PORT_STEPS, pictureZoomOffset, modulePortsValid, pictureModulePortsReady, pictureCopyDraftRoutePoints, pictureDevicePortsComplete, pictureModuleWiring, pictureVisioModel, pictureSheetSvg, portMarkingPrompt, markingPlanErrors, markingSteps, markingIssues, markingRecord, markingLayout, pictureDeviceLabels, pictureDeviceLabelsSvg };');
+  simpleSrc + '\nreturn { PICTURE_DEVICE_PORT_STEPS, pictureZoomOffset, modulePortsValid, pictureModulePortsReady, pictureCopyDraftRoutePoints, pictureDevicePortsComplete, picturePowerCrossings, pictureModuleWiring, pictureVisioModel, pictureSheetSvg, portMarkingPrompt, markingPlanErrors, markingSteps, markingIssues, markingRecord, markingLayout, pictureDeviceLabels, pictureDeviceLabelsSvg };');
 const portsApi = portFactory(E.slotCell, (cal, c, r) => ({ x: cal.x0 + c * cal.pitchX, y: cal.y0 + r * cal.pitchY }),
   (a, b) => Math.hypot(a.x - b.x, a.y - b.y), E.SSC_PALETTE, E.sheetSvgPrimitive, E.sheetEsc);
+{
+  const wire = (kind, pts) => ({ kind, pts: pts.map(([x,y]) => ({x,y})) });
+  const a = wire('power', [[0,0],[2,2]]), crossing = wire('sscp', [[0,2],[2,0]]);
+  eq('power crossing is detected', portsApi.picturePowerCrossings([a,crossing]).pairs.length, 1);
+  eq('power cable endpoint contact is detected', portsApi.picturePowerCrossings([a,wire('power', [[2,2],[3,1]])]).pairs.length, 1);
+  eq('collinear power overlap is detected', portsApi.picturePowerCrossings([a,wire('power', [[1,1],[3,3]])]).pairs.length, 1);
+  eq('communication crossing is allowed', portsApi.picturePowerCrossings([a,wire('comm', [[0,2],[2,0]])]).pairs.length, 0);
+  eq('invalid power points fail closed', portsApi.picturePowerCrossings([wire('power', [[0,0],[NaN,2]])]).valid, false);
+}
 eq('zoom keeps the picture point beneath the pointer stationary', portsApi.pictureZoomOffset(100, 50, 1, 2), 250);
 const orderedBanks = [{ msms: 1, sscs: 2, modules: 3, junctionBoxes: 2, acdps: 1 }, { msms: 2, sscs: 1, modules: 2, junctionBoxes: 1, acdps: 2 }];
 const orderedSteps = portsApi.markingSteps(orderedBanks);
