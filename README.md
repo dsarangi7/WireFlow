@@ -21,6 +21,8 @@ A3 sheet with a title block. Cable routes are draft previews; manually supplied
 route points do not constitute approved physical routing. See
 [the guided workspace documentation](docs/guided-workspace.md) for the workflow
 and the limits of the grid and draft cable routing.
+SSC draft routes can use engineer-selected straight bends or approximate smooth
+curves; neither mode automatically establishes a safe physical cable route.
 
 In the picture-first screen, its draft export buttons are blocked when power
 wire centerlines cross or touch; communication/power overlaps are allowed.

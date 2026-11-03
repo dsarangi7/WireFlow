@@ -682,6 +682,12 @@ ok('editing a route copies saved points rather than mutating them', routeDevice[
 eq('a missing draft route opens empty', portsApi.pictureCopyDraftRoutePoints(routeDevice['1,1'], 'busNeg').length, 0);
 ok('a malformed saved route is reported instead of copied', portsApi.pictureCopyDraftRoutePoints({ draftRoutes: { busPos: [{ x: NaN, y: 0 }] } }, 'busPos') === null);
 const routedWires = portsApi.pictureModuleWiring(completeGroups, measuredCal, ports, routeDevice);
+const curvedDevice = { '1,1': { ...routeDevice['1,1'], draftCurveRoutes: { busPos: true } } };
+const curvedBus = portsApi.pictureModuleWiring(completeGroups, measuredCal, ports, curvedDevice).find(s => s.kind === 'sscp' && s.pts[0] === curvedDevice['1,1'].busPos);
+ok('draft curve preserves endpoints and samples intermediate points', curvedBus.pts.length > 3 && curvedBus.pts[0] === curvedDevice['1,1'].busPos && JSON.stringify(curvedBus.pts[curvedBus.pts.length - 1]) === JSON.stringify(curvedDevice['1,1'].jbPos));
+const curvePoint = curvedBus.pts[4];
+ok('power crossing check includes sampled curve segments', portsApi.picturePowerCrossings([curvedBus, {kind:'power', pts:[{x:curvePoint.x-100,y:curvePoint.y},{x:curvePoint.x+100,y:curvePoint.y}]}]).pairs.length === 1);
+ok('invalid curve setting omits that route', !portsApi.pictureModuleWiring(completeGroups, measuredCal, ports, { '1,1': { ...routeDevice['1,1'], draftCurveRoutes: { busPos: 'bad' } } }).some(s => s.kind === 'sscp' && s.pts[0] === routeDevice['1,1'].busPos));
 const routedBus = routedWires.find(s => s.kind === 'sscp' && s.pts[0] === routeDevice['1,1'].busPos);
 eq('explicit draft route preserves terminals and waypoints', JSON.stringify(routedBus.pts), JSON.stringify([devicePorts['1,1'].busPos, { x: 360, y: 101 }, { x: 360, y: 50 }, devicePorts['1,1'].jbPos]));
 eq('explicit draft route length follows its segments', routedBus.lenMm, 111);

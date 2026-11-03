@@ -210,6 +210,22 @@ function picturePowerCrossings(segments) {
   return { valid: true, pairs };
 }
 
+/* Sample a draft curve controlled by engineer-selected points. It is a visual
+ * approximation, not a cable bend-radius or physical clearance calculation. */
+function pictureCurvePoints(a, b, controls) {
+  if (!controls.length) return [a, b];
+  const out = [a]; let start = a;
+  controls.forEach((control, i) => {
+    const next = controls[i+1], end = next ? {x:(control.x+next.x)/2,y:(control.y+next.y)/2} : b;
+    for (let step=1;step<=8;step++) {
+      const t=step/8, u=1-t;
+      out.push({x:u*u*start.x+2*u*t*control.x+t*t*end.x, y:u*u*start.y+2*u*t*control.y+t*t*end.y});
+    }
+    start=end;
+  });
+  return out;
+}
+
 function pictureModuleWiring(groups, cal, ports, devicePorts, modulePortPoints, powerConvention) {
   // This opt-in convention is confirmed for the supplied sample rack only.
   // It does not change the shared netlist or engineering rule engine.
@@ -259,7 +275,10 @@ function pictureModuleWiring(groups, cal, ports, devicePorts, modulePortPoints, 
         // Invalid explicit routes are omitted; silently substituting a straight
         // line would hide the problem. Coordinates are picture pixels, Y-down.
         if (!Array.isArray(waypoints) || !waypoints.every(validPoint)) return;
-        const pts = [a, ...waypoints, b];
+        const curves = d.draftCurveRoutes;
+        if (curves !== undefined && (!curves || typeof curves !== 'object' || Array.isArray(curves))) return;
+        if (curves && Object.prototype.hasOwnProperty.call(curves, key) && typeof curves[key] !== 'boolean') return;
+        const pts = curves && curves[key] ? pictureCurvePoints(a,b,waypoints) : [a, ...waypoints, b];
         const lenMm = pts.slice(1).reduce((sum, point, i) => sum + fvDist(pts[i], point), 0) * cal.mmPerPx;
         segments.push({ ...tag, kind, pts, lenMm });
       });
@@ -408,6 +427,7 @@ async function tabSimpleWiring(el, project, ctx) {
       if (st.routeEdit && previewPorts[st.routeEdit.slot]) {
         const device = previewPorts[st.routeEdit.slot];
         device.draftRoutes = Object.assign({}, device.draftRoutes, { [st.routeEdit.key]: st.routeEdit.points });
+        device.draftCurveRoutes = Object.assign({}, device.draftCurveRoutes, { [st.routeEdit.key]: st.routeEdit.curved });
       }
       const wiring = st.generated ? pictureModuleWiring(groups, cal, st.ports, previewPorts, st.modulePortPoints, st.powerConvention) : [];
       const portMarks = st.portRef && st.portStep >= 2 ? Object.entries(st.pendingPorts).map(([name, offset]) =>
@@ -478,8 +498,8 @@ async function tabSimpleWiring(el, project, ctx) {
         ${st.generated && powerBlocked ? '<p class="warn" role="alert">Power cables cross or touch in this drawing. Correct the routes before exporting. This check does not verify physical clearance.</p>' : ''}
         <div class="btn-row"><button class="btn btn-primary" id="simple-generate" ${!cal || !cal.ok || !moduleReady || st.deviceStep || st.portStep || issues.length || st.saving || st.saveFailed ? 'disabled' : ''}>Generate wiring</button>${st.generated ? `<button class="btn btn-ghost" id="simple-visio" ${powerBlocked || st.powerConvention === 'reference-sample' ? 'disabled' : ''}>Download editable draft (Visio)</button><button class="btn btn-ghost" id="simple-svg" ${powerBlocked ? 'disabled' : ''}>Download draft wiring drawing (SVG)</button><button class="btn btn-ghost" id="simple-sheet-svg" ${powerBlocked ? 'disabled' : ''}>Download draft A3 sheet (SVG)</button><button class="btn btn-ghost" id="simple-export" ${powerBlocked || st.powerConvention === 'reference-sample' ? 'disabled' : ''}>Print draft PDF</button>` : ''}</div>
         ${st.generated ? '<p class="muted small">You can change markings here and generate again. Visio edits are separate and do not update this saved project.</p>' : ''}
-        ${st.generated && !st.routeEdit ? `<details><summary>Adjust a draft SSC route</summary><p class="muted small">Choose a connection, then click its intermediate points in order on the picture. These straight segments are a draft and require engineering review.</p><div class="btn-row"><label>SSC <select id="route-ssc">${layoutGroups(project).filter(group => pictureDevicePortsComplete(st.devicePorts[group.slot])).map(group => `<option value="${esc(group.slot)}">${esc(group.label)}</option>`).join('')}</select></label><label>Connection <select id="route-key"><option value="stringPos">SSC string + to module</option><option value="stringNeg">SSC string − to module</option><option value="commS">SSC communication S to module</option><option value="commN">SSC communication N to module</option><option value="busPos">SSC bus + to junction box</option><option value="busNeg">SSC bus − to junction box</option></select></label><button class="btn btn-ghost btn-sm" id="route-start">Edit route</button></div></details>` : ''}
-        ${st.routeEdit ? `<div class="port-instruction" role="status"><strong>Click each route bend on the picture, in order from the SSC.</strong><span>${st.routeEdit.points.length} intermediate points selected. Save with no points to return to a straight preview.</span><div class="btn-row"><button class="btn btn-ghost btn-sm" id="route-undo" ${st.routeEdit.points.length ? '' : 'disabled'}>Undo point</button><button class="btn btn-ghost btn-sm" id="route-clear" ${st.routeEdit.points.length ? '' : 'disabled'}>Clear points</button><button class="btn btn-primary btn-sm" id="route-save">Save draft route</button><button class="btn btn-ghost btn-sm" id="route-cancel">Cancel</button></div></div>` : ''}
+        ${st.generated && !st.routeEdit ? `<details><summary>Adjust a draft SSC route</summary><p class="muted small">Choose a connection, then click its intermediate points in order on the picture. Choose straight bends or a smooth curve. Curves use approximate control points and require engineering review.</p><div class="btn-row"><label>SSC <select id="route-ssc">${layoutGroups(project).filter(group => pictureDevicePortsComplete(st.devicePorts[group.slot])).map(group => `<option value="${esc(group.slot)}">${esc(group.label)}</option>`).join('')}</select></label><label>Connection <select id="route-key"><option value="stringPos">SSC string + to module</option><option value="stringNeg">SSC string − to module</option><option value="commS">SSC communication S to module</option><option value="commN">SSC communication N to module</option><option value="busPos">SSC bus + to junction box</option><option value="busNeg">SSC bus − to junction box</option></select></label><label>Route style <select id="route-style"><option value="saved">Keep saved style</option><option value="straight">Straight bends</option><option value="curved">Smooth curve</option></select></label><button class="btn btn-ghost btn-sm" id="route-start">Edit route</button></div></details>` : ''}
+        ${st.routeEdit ? `<div class="port-instruction" role="status"><strong>${st.routeEdit.curved ? "Click curve control points" : "Click route bends"} on the picture, in order from the SSC.</strong><span>${st.routeEdit.points.length} intermediate points selected. Save with no points to return to a straight preview.</span><div class="btn-row"><button class="btn btn-ghost btn-sm" id="route-undo" ${st.routeEdit.points.length ? '' : 'disabled'}>Undo point</button><button class="btn btn-ghost btn-sm" id="route-clear" ${st.routeEdit.points.length ? '' : 'disabled'}>Clear points</button><button class="btn btn-primary btn-sm" id="route-save">Save draft route</button><button class="btn btn-ghost btn-sm" id="route-cancel">Cancel</button></div></div>` : ''}
         <p id="simple-message" role="status">${esc(st.message)}</p>
         ${st.generated ? `<p class="${failed.length ? 'warn' : 'muted'}">${failed.length ? failed.length + ' checks need attention before release.' : 'All ' + checks.length + ' checks pass.'}</p>${failed.length ? '<ul>' + failed.map(check => '<li>' + esc(check.id + ': ' + check.detail) + '</li>').join('') + '</ul>' : ''}` : ''}
       </div>`;
@@ -560,7 +580,9 @@ async function tabSimpleWiring(el, project, ctx) {
       const slot = el.querySelector('#route-ssc').value, key = el.querySelector('#route-key').value;
       if (!slot || !pictureDevicePortsComplete(st.devicePorts[slot])) { st.message = 'Mark this SSC and junction-box ports before editing a route.'; render(); return; }
       const saved = pictureCopyDraftRoutePoints(st.devicePorts[slot], key);
-      st.routeEdit = { slot, key, points: saved || [] };
+      const style = el.querySelector('#route-style').value;
+      const curved = style === 'saved' ? !!(st.devicePorts[slot].draftCurveRoutes && st.devicePorts[slot].draftCurveRoutes[key] === true) : style === 'curved';
+      st.routeEdit = { slot, key, points: saved || [], curved };
       st.message = saved === null ? 'The saved draft route is invalid. Select replacement points or cancel.' : ''; render();
     });
     el.querySelector('#route-undo')?.addEventListener('click', () => { st.routeEdit.points.pop(); render(); });
@@ -571,6 +593,8 @@ async function tabSimpleWiring(el, project, ctx) {
       const nextPorts = JSON.parse(JSON.stringify(st.devicePorts));
       const device = nextPorts[edit.slot]; device.draftRoutes = Object.assign({}, device.draftRoutes);
       if (edit.points.length) device.draftRoutes[edit.key] = edit.points; else delete device.draftRoutes[edit.key];
+      device.draftCurveRoutes = Object.assign({}, device.draftCurveRoutes);
+      if (edit.points.length && edit.curved) device.draftCurveRoutes[edit.key] = true; else delete device.draftCurveRoutes[edit.key];
       const config = JSON.parse(JSON.stringify(project.config || {}));
       config.numbering = Object.assign({}, config.numbering, { devicePorts: nextPorts });
       st.saving = true; render();

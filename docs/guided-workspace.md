@@ -34,6 +34,13 @@ title block. The background picture is not an editable CAD drawing. Edits made
 in Visio are not synchronized back to WireFlow. The Visio file and the preview
 are draft outputs; review terminal positions, assignments and routes.
 
+Under **Adjust a draft SSC route**, choose straight bends or a smooth curve,
+then click intermediate points in order from the SSC. Smooth-curve points act
+as control points and the displayed/exported line is an approximation. This
+manual tool does not automatically follow rack rails, calculate bend radii, or
+guarantee physical clearance. Review the generated route before use; the
+picture-first export guard checks drawn power centerline crossings separately.
+
 The grid assumes straight, evenly spaced rows and columns (maximum 12 by 24).
 The automatic assignment uses the nearest SSC subject to the existing configured
 string capacity; it cannot determine the intended electrical assignment from an
