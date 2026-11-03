@@ -1070,6 +1070,8 @@ function vsdxParts(bytes) {
   const svgSheet = portsApi.pictureSheetSvg(input, measuredCal, fullWires, 'UExBQ0VIT0xERVI=');
   ok('draft SVG sheet has A3 dimensions and embedded rack and logo', svgSheet.includes('width="420mm" height="297mm"') && svgSheet.includes('data:image/png;base64,UExBQ0VIT0xERVI=') && svgSheet.includes(input.underlay.src));
   ok('draft SVG sheet shows engineering review notice and wiring', svgSheet.includes('DRAFT - ENGINEERING REVIEW REQUIRED') && svgSheet.includes('<line ') && svgSheet.includes('stroke="#dc2626"') && svgSheet.includes('stroke="#16a34a"'));
+  const legendSheet = portsApi.pictureSheetSvg(input, measuredCal, fullWires, '', { wireLegend: true });
+  ok('optional wire legend describes both colors without changing default sheets', legendSheet.includes('Power cable</text>') && legendSheet.includes('Communication cable</text>') && !svgSheet.includes('Power cable</text>'));
   const lines = model.primitives.filter(p => p.type === 'line');
   const scale = model.underlay.w / measuredCal.imgW;
   const firstWire = fullWires.find(s => s.kind === 'power');

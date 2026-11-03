@@ -120,5 +120,5 @@ const plan={banks,records:api.markingSteps(banks).map(step=>{
 rack=rack.replace('</svg>',api.pictureDeviceLabelsSvg(plan,cal)+'<rect width="1155" height="25" fill="white"/><text x="577" y="18" text-anchor="middle" font-size="14" fill="#a00000">EXPERIMENTAL CANDIDATES AND INFERRED ROUTES — DO NOT BUILD</text></svg>');
 const logo=fs.readFileSync(path.join(root,'js/vsdx.js'),'utf8').match(/const VSDX_LOGO_B64 = '([^']+)'/)[1];
 const project={name:'EXPERIMENTAL - DO NOT BUILD',drawing_no:'DWG2512-01 - INFERRED',underlay:{src:image},config:{numbering:{marking:plan}}};
-fs.writeFileSync(rackOutput,rack); fs.writeFileSync(sheetOutput,api.pictureSheetSvg(project,cal,wires,logo));
+fs.writeFileSync(rackOutput,rack); fs.writeFileSync(sheetOutput,api.pictureSheetSvg(project,cal,wires,logo,{wireLegend:true}));
 console.log('Modules:',wires.filter(w=>w.kind==='label').length,'proposed links:',wires.filter(w=>w.kind!=='label').length,'candidate SSCs:',ssc.length,'candidate junction boxes:',jb.length);

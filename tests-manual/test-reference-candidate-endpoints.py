@@ -47,6 +47,8 @@ class ReferenceCandidateEndpoints(unittest.TestCase):
         if sheet_path:
             sheet = ET.parse(sheet_path)
             sheet_texts = [''.join(e.itertext()).strip() for e in sheet.iter() if e.tag.endswith('text')]
+            self.assertIn('Power cable', sheet_texts)
+            self.assertIn('Communication cable', sheet_texts)
             for label in labels:
                 self.assertEqual(sheet_texts.count(label), 1)
                 rack_element = text_elements[texts.index(label)]

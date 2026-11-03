@@ -265,13 +265,19 @@ function pictureVisioModel(project, cal, segments) {
 
 /* Draft A3 SVG sheet using the same picture and primitives as the Visio draft.
  * This is a presentation of existing draft wiring, not a route or approval. */
-function pictureSheetSvg(project, cal, segments, logoBase64) {
+function pictureSheetSvg(project, cal, segments, logoBase64, options) {
   const model = pictureVisioModel(project, cal, segments);
   const im = model.underlay;
   const parts = ['<svg xmlns="http://www.w3.org/2000/svg" width="420mm" height="297mm" viewBox="0 0 1680 1188" role="img" aria-label="Draft wiring sheet">',
     '<rect x="0" y="0" width="1680" height="1188" fill="#ffffff"/>',
     '<image href="' + sheetEsc(im.src) + '" x="' + im.x + '" y="' + im.y + '" width="' + im.w + '" height="' + im.h + '" preserveAspectRatio="none"/>'];
   for (const primitive of model.primitives) parts.push(sheetSvgPrimitive(primitive));
+  if (options && options.wireLegend === true) {
+    parts.push('<rect x="1092" y="924" width="35" height="3" fill="#dc2626"/>' +
+      '<text x="1137" y="930" font-size="14" fill="#172033">Power cable</text>' +
+      '<rect x="1092" y="950" width="35" height="3" fill="#16a34a"/>' +
+      '<text x="1137" y="956" font-size="14" fill="#172033">Communication cable</text>');
+  }
   if (logoBase64 && /^[A-Za-z0-9+/=]+$/.test(logoBase64)) {
     parts.push('<image x="1595" y="995" width="30" height="30" href="data:image/png;base64,' + logoBase64 + '"/>');
   }
