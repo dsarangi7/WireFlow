@@ -10,6 +10,7 @@ import hashlib
 from contextlib import contextmanager
 import secrets
 import io
+import os
 import shutil
 import subprocess
 import sys
@@ -82,6 +83,16 @@ def generate(source, outdir):
         ]
         for command in commands:
             subprocess.run(command, check=True)
+        # Verify the actual newly generated SVG and candidates before exposing
+        # outputs. This checks positions, not cable suitability or clearance.
+        validation_env = os.environ.copy()
+        validation_env.update(WIREFLOW_CANDIDATE_SVG=str(tmp/'rack.svg'),
+                              WIREFLOW_CANDIDATE_MODULES=str(modules),
+                              WIREFLOW_CANDIDATE_DEVICES=str(devices))
+        if not all(p.is_file() for p in (tmp/'rack.svg', modules, devices)):
+            raise ValueError('The generator did not produce all files required for endpoint checks.')
+        subprocess.run([sys.executable, str(HERE/'test-reference-candidate-endpoints.py')],
+                       check=True, env=validation_env)
         for src, dst in zip((tmp/'rack.svg', tmp/'sheet.svg'), outputs):
             with src.open('rb') as inp, dst.open('xb') as out:
                 shutil.copyfileobj(inp, out)

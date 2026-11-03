@@ -11,7 +11,9 @@ INPUT = pathlib.Path('G:/WiringTool')
 
 class ReferenceCandidateEndpoints(unittest.TestCase):
     def test_generated_svg_has_confirmed_endpoints(self):
-        inputs = [pathlib.Path(os.environ.get('WIREFLOW_CANDIDATE_SVG', INPUT / 'candidate-curved-bottom.svg')), INPUT / 'rack-module-port-candidates.json', INPUT / 'rack-device-port-candidates.json']
+        inputs = [pathlib.Path(os.environ.get('WIREFLOW_CANDIDATE_SVG', INPUT / 'candidate-curved-bottom.svg')),
+                  pathlib.Path(os.environ.get('WIREFLOW_CANDIDATE_MODULES', INPUT / 'rack-module-port-candidates.json')),
+                  pathlib.Path(os.environ.get('WIREFLOW_CANDIDATE_DEVICES', INPUT / 'rack-device-port-candidates.json'))]
         if not all(p.is_file() for p in inputs):
             self.skipTest('Fixture candidate files are not available')
         modules = json.loads(inputs[1].read_text(encoding='utf-8'))['modules']
