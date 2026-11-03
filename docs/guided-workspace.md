@@ -60,7 +60,16 @@ and its first module number, then use **Apply to this link number in every
 SSC**. Every SSC must have that next module. Routes are recalculated from each
 SSC's own marked terminals; no terminal coordinates are copied. The batch is
 rejected if a link is missing or if the proposed drawing has power centerlines
-crossing or touching. It does not transfer an entire method between racks.
+crossing or touching. After applying one or more such shapes across SSCs, use
+**Remember this rack method** to save those repeated module-link shape choices
+on this device. On another rack, mark and verify its own components and ports,
+then choose **Apply remembered method**. All remembered links must exist in
+every SSC, and the proposed picture must pass the power crossing check or none
+of the changes are applied. This remembers only repeated module-link shape
+choices: it does not copy terminals, SSC routes, manual exceptions, complete
+wiring plans, approvals, or synchronize between devices. Editing one link
+individually removes its rule from the current rack method. Verify all routes
+and physical clearances.
 The marking tools appear alongside the rack drawing on wider screens and stack
 above it on smaller screens.
 

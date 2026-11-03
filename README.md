@@ -27,7 +27,8 @@ The advanced route editor also offers rounded L and C styles for individual
 module-to-module links, plus one-click shape suggestions and a device-local
 last-used shape. A shape may also be applied to the same numbered link in every
 SSC of a rack, subject to terminal and power-crossing checks. These suggestions
-do not reuse complete rack wiring plans.
+can be remembered on the device as repeated module-link shapes for another
+rack; they do not reuse terminals or complete rack wiring plans.
 
 In the picture-first screen, its draft export buttons are blocked when power
 wire centerlines cross or touch; communication/power overlaps are allowed.
