@@ -68,7 +68,7 @@ for(let i=0;i<5;i++){
 const root=path.resolve(__dirname,'..');
 const source=fs.readFileSync(path.join(root,'js/frontview.js'),'utf8')+'\n'+fs.readFileSync(path.join(root,'js/simple-wiring.js'),'utf8');
 const helpers=new Function(fs.readFileSync(path.join(root,'js/engine.js'),'utf8')+'\nreturn {sheetSvgPrimitive,sheetEsc};')();
-const api=new Function('slotCell','SSC_PALETTE','sheetSvgPrimitive','sheetEsc',source+'\nreturn {pictureModuleWiring,pictureSheetSvg,fvSvg};')(s=>{const [c,r]=s.split(',').map(Number);return {c,r};},['#345678'],helpers.sheetSvgPrimitive,helpers.sheetEsc);
+const api=new Function('slotCell','SSC_PALETTE','sheetSvgPrimitive','sheetEsc',source+'\nreturn {pictureModuleWiring,pictureSheetSvg,pictureDeviceLabelsSvg,markingSteps,fvSvg};')(s=>{const [c,r]=s.split(',').map(Number);return {c,r};},['#345678'],helpers.sheetSvgPrimitive,helpers.sheetEsc);
 const wires=api.pictureModuleWiring(groups,cal,ports,devices,modulePortPoints), image='data:image/png;base64,'+png.toString('base64');
 // The engineer confirmed these SSC and module power endpoints for this rack.
 // This changes only the experimental fixture, not the shared wiring engine.
@@ -102,8 +102,16 @@ for (let i=0;i<groups.length;i++) {
   });
 }
 let rack=api.fvSvg(cal,{src:image},wires,{noGrid:true,sscLabels:true});
-rack=rack.replace('</svg>','<rect width="1155" height="25" fill="white"/><text x="577" y="18" text-anchor="middle" font-size="14" fill="#a00000">EXPERIMENTAL CANDIDATES AND INFERRED ROUTES — DO NOT BUILD</text></svg>');
+// Sample-only SSC IDs follow the reference's right-to-left S1...S5 ordering.
+// Device centres are visual candidates, not proven recognition or placement.
+const banks=[{msms:1,sscs:5,modules:12,junctionBoxes:5,acdps:0}];
+const plan={banks,records:api.markingSteps(banks).map(step=>{
+  if(step.kind!=='ssc') return {};
+  const number=Number(step.label.slice(3)), candidate=ssc[5-number];
+  return {point:{x:candidate.x+45,y:candidate.y+25}};
+})};
+rack=rack.replace('</svg>',api.pictureDeviceLabelsSvg(plan,cal)+'<rect width="1155" height="25" fill="white"/><text x="577" y="18" text-anchor="middle" font-size="14" fill="#a00000">EXPERIMENTAL CANDIDATES AND INFERRED ROUTES — DO NOT BUILD</text></svg>');
 const logo=fs.readFileSync(path.join(root,'js/vsdx.js'),'utf8').match(/const VSDX_LOGO_B64 = '([^']+)'/)[1];
-const project={name:'EXPERIMENTAL - DO NOT BUILD',drawing_no:'DWG2512-01 - INFERRED',underlay:{src:image},config:{}};
+const project={name:'EXPERIMENTAL - DO NOT BUILD',drawing_no:'DWG2512-01 - INFERRED',underlay:{src:image},config:{numbering:{marking:plan}}};
 fs.writeFileSync(rackOutput,rack); fs.writeFileSync(sheetOutput,api.pictureSheetSvg(project,cal,wires,logo));
 console.log('Modules:',wires.filter(w=>w.kind==='label').length,'proposed links:',wires.filter(w=>w.kind!=='label').length,'candidate SSCs:',ssc.length,'candidate junction boxes:',jb.length);

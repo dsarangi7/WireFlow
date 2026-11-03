@@ -87,6 +87,7 @@ def generate(source, outdir):
         # outputs. This checks positions, not cable suitability or clearance.
         validation_env = os.environ.copy()
         validation_env.update(WIREFLOW_CANDIDATE_SVG=str(tmp/'rack.svg'),
+                              WIREFLOW_CANDIDATE_SHEET=str(tmp/'sheet.svg'),
                               WIREFLOW_CANDIDATE_MODULES=str(modules),
                               WIREFLOW_CANDIDATE_DEVICES=str(devices))
         if not all(p.is_file() for p in (tmp/'rack.svg', modules, devices)):

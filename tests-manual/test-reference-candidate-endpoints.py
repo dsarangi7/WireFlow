@@ -11,7 +11,7 @@ INPUT = pathlib.Path('G:/WiringTool')
 
 class ReferenceCandidateEndpoints(unittest.TestCase):
     def test_generated_svg_has_confirmed_endpoints(self):
-        inputs = [pathlib.Path(os.environ.get('WIREFLOW_CANDIDATE_SVG', INPUT / 'candidate-curved-bottom.svg')),
+        inputs = [pathlib.Path(os.environ.get('WIREFLOW_CANDIDATE_SVG', INPUT / 'sample-ssc-labelled-verified/EXPERIMENTAL-rack-DO-NOT-BUILD.svg')),
                   pathlib.Path(os.environ.get('WIREFLOW_CANDIDATE_MODULES', INPUT / 'rack-module-port-candidates.json')),
                   pathlib.Path(os.environ.get('WIREFLOW_CANDIDATE_DEVICES', INPUT / 'rack-device-port-candidates.json'))]
         if not all(p.is_file() for p in inputs):
@@ -23,9 +23,19 @@ class ReferenceCandidateEndpoints(unittest.TestCase):
         slots = {(round((m['face_x'] - xmin) / ((xmax - xmin) / 9)), round((m['face_y'] - ymin) / ((ymax - ymin) / 7))): m for m in modules}
         def port(entity, name):
             return next(p['point'] for p in entity['ports'] if p['name'] == name)
-        wires = [e for e in ET.parse(inputs[0]).iter() if e.tag.endswith('polyline') and e.get('stroke') == '#e02020']
+        svg = ET.parse(inputs[0])
+        texts = [''.join(e.itertext()).strip() for e in svg.iter() if e.tag.endswith('text')]
+        for number in range(1, 6):
+            self.assertEqual(texts.count('SSC' + str(number)), 1)
+        sheet_path = os.environ.get('WIREFLOW_CANDIDATE_SHEET')
+        if sheet_path:
+            sheet = ET.parse(sheet_path)
+            sheet_texts = [''.join(e.itertext()).strip() for e in sheet.iter() if e.tag.endswith('text')]
+            for number in range(1, 6):
+                self.assertEqual(sheet_texts.count('SSC' + str(number)), 1)
+        wires = [e for e in svg.iter() if e.tag.endswith('polyline') and e.get('stroke') == '#e02020']
         paths = [[tuple(map(float, point.split(','))) for point in w.get('points').split()] for w in wires]
-        green_wires = [e for e in ET.parse(inputs[0]).iter() if e.tag.endswith('polyline') and e.get('stroke') == '#00a651']
+        green_wires = [e for e in svg.iter() if e.tag.endswith('polyline') and e.get('stroke') == '#00a651']
         green_paths = [[tuple(map(float, point.split(','))) for point in w.get('points').split()] for w in green_wires]
         def near(point, expected):
             return abs(point[0] - expected['x']) < .1 and abs(point[1] - expected['y']) < .1
