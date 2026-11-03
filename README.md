@@ -25,7 +25,9 @@ SSC draft routes can use engineer-selected straight bends or approximate smooth
 curves; neither mode automatically establishes a safe physical cable route.
 The advanced route editor also offers rounded L and C styles for individual
 module-to-module links, plus one-click shape suggestions and a device-local
-last-used shape. These suggestions do not reuse complete rack wiring plans.
+last-used shape. A shape may also be applied to the same numbered link in every
+SSC of a rack, subject to terminal and power-crossing checks. These suggestions
+do not reuse complete rack wiring plans.
 
 In the picture-first screen, its draft export buttons are blocked when power
 wire centerlines cross or touch; communication/power overlaps are allowed.

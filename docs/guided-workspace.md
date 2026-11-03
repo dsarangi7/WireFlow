@@ -55,6 +55,12 @@ and offered next time, including in another local project. This remembers a
 shape choice only: it does not copy terminal positions, assignments or a full
 rack wiring method, and does not synchronize across devices. Automatic shapes
 are visual suggestions; review the route, crossings and physical clearance.
+To repeat the shape across the current rack, choose a module-to-module link
+and its first module number, then use **Apply to this link number in every
+SSC**. Every SSC must have that next module. Routes are recalculated from each
+SSC's own marked terminals; no terminal coordinates are copied. The batch is
+rejected if a link is missing or if the proposed drawing has power centerlines
+crossing or touching. It does not transfer an entire method between racks.
 The marking tools appear alongside the rack drawing on wider screens and stack
 above it on smaller screens.
 

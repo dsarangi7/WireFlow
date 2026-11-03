@@ -254,6 +254,26 @@ function pictureSuggestedModuleRoute(a, b, template) {
   }
   return null;
 }
+/* Apply only to explicitly selected Mx→M(x+1) links; never copy coordinates
+ * between racks or silently skip an SSC whose chain is too short. */
+function pictureSuggestRoutesForGroups(groups, wires, routes, index, kind, template, targets) {
+  if (!pictureModuleRoutesValid(routes) || !Array.isArray(groups) || !Array.isArray(wires) || !Array.isArray(targets) || !targets.length || !Number.isInteger(index) || index < 1 || !['power','comm'].includes(kind)) return null;
+  const next = Object.assign({}, routes || {}), seen = new Set(), seenSlots = new Set();
+  for (const gi of targets) {
+    const group = groups[gi];
+    if (!group || !group.slot || seen.has(gi) || seenSlots.has(group.slot) || !Array.isArray(group.order) || index >= group.order.length) return null;
+    seen.add(gi); seenSlots.add(group.slot);
+    const links = wires.filter(w => w.group === gi && w.kind === kind);
+    if (links.length !== group.order.length - 1) return null;
+    const link = links[index-1];
+    if (!link || !Array.isArray(link.pts) || link.pts.length < 2) return null;
+    const route = pictureSuggestedModuleRoute(link.pts[0], link.pts[link.pts.length-1], template);
+    if (!route) return null;
+    const key = pictureModuleRouteKey(group.slot,index,kind);
+    if (route.points.length) next[key]=route; else delete next[key];
+  }
+  return next;
+}
 const PICTURE_ROUTE_TEMPLATES = ['straight','l-horizontal','l-vertical','c-above','c-below'];
 function pictureLastRouteTemplate() {
   try { const value = localStorage.getItem('ayk-wireflow-last-module-route'); return PICTURE_ROUTE_TEMPLATES.includes(value) ? value : ''; }
@@ -534,7 +554,7 @@ async function tabSimpleWiring(el, project, ctx) {
         <p class="muted small">Use the mouse wheel to zoom toward the pointer. Drag with the middle mouse button to pan; left-click to mark.</p>
         ${prompt ? `<div class="port-instruction" role="status" aria-live="polite"><div class="port-instruction-progress">${prompt.title} · STEP ${prompt.current} OF ${prompt.total}</div><strong>${prompt.instruction}</strong><span>${st.message ? esc(st.message) : prompt.current === 1 ? 'Select the marked component on the drawing below.' : 'Click the port centre on the drawing below.'}</span><button class="btn btn-ghost btn-sm" id="simple-cancel-ports">Cancel marking</button></div>` : next ? `<div class="port-instruction" role="status" aria-live="polite"><div class="port-instruction-progress">BANK ${next.bank} · COMPONENT ${records.length + 1} OF ${steps.length}</div><strong>Click ${esc(next.label)} on the drawing.</strong><span>${st.message ? esc(st.message) : next.kind === 'module' ? 'Click this module in chain order. This click determines its number and SSC assignment.' : next.kind === 'acdp' ? 'Identification only. No ACDP wiring will be generated.' : 'Click the component centre.'}</span>${next.kind === 'jb' ? `<label>Junction box <select id="marking-jb"><option value="">Choose a junction box</option>${next.jbIds.map(id => `<option value="${id}" ${next.defaultJb === id ? 'selected' : ''}>${id}${records.some(r => r.jbId === id) ? ' (already marked; share)' : ''}</option>`).join('')}</select></label>` : ''}</div>` : `<p class="muted small">${st.plan ? 'Component marking complete. Mark the module ports, then each SSC and its junction-box terminals.' : 'Start ordered marking to receive one command at a time.'}</p>`}
         ${issues.length ? '<ul class="marking-warnings">' + issues.map(issue => '<li>' + esc(issue) + '</li>').join('') + '</ul>' : ''}
-        ${st.generated && !st.routeEdit ? `<details><summary>Advanced: adjust a draft route</summary><p class="muted small">Choose a connection, then click its intermediate points in order on the picture. Choose straight bends or a smooth curve. Curves use approximate control points and require engineering review.</p><div class="btn-row"><label>SSC <select id="route-ssc">${layoutGroups(project).map(group => `<option value="${esc(group.slot)}">${esc(group.label)}</option>`).join('')}</select></label><label>Connection <select id="route-key"><option value="stringPos">SSC string + to module</option><option value="stringNeg">SSC string − to module</option><option value="commS">SSC communication S to module</option><option value="commN">SSC communication N to module</option><option value="busPos">SSC bus + to junction box</option><option value="busNeg">SSC bus − to junction box</option><option value="modulePower">Module-to-module power</option><option value="moduleComm">Module-to-module communication</option></select></label><label>From module <input id="route-module" type="number" min="1" max="47" value="1" style="width:75px"></label><label>Route style <select id="route-style"><option value="saved">Keep saved style</option><option value="straight">Straight bends</option><option value="curved">C-style curve</option><option value="rounded">Rounded L-style bends</option></select></label><button class="btn btn-ghost btn-sm" id="route-start">Edit route</button></div><div class="route-presets"><label>One-click shape <select id="route-template"><option value="">Choose a shape</option>${[['straight','Straight'],['l-horizontal','L: horizontal then vertical'],['l-vertical','L: vertical then horizontal'],['c-above','C: curve above'],['c-below','C: curve below']].map(([value,label]) => `<option value="${value}" ${pictureLastRouteTemplate() === value ? 'selected' : ''}>${label}${pictureLastRouteTemplate() === value ? ' (last used on this device)' : ''}</option>`).join('')}</select></label><button class="btn btn-primary btn-sm" id="route-apply-template">Apply shape</button><p class="muted small">For a module-to-module link. Shapes are draft suggestions; check routing and clearance.</p></div></details>` : ''}
+        ${st.generated && !st.routeEdit ? `<details><summary>Advanced: adjust a draft route</summary><p class="muted small">Choose a connection, then click its intermediate points in order on the picture. Choose straight bends or a smooth curve. Curves use approximate control points and require engineering review.</p><div class="btn-row"><label>SSC <select id="route-ssc">${layoutGroups(project).map(group => `<option value="${esc(group.slot)}">${esc(group.label)}</option>`).join('')}</select></label><label>Connection <select id="route-key"><option value="stringPos">SSC string + to module</option><option value="stringNeg">SSC string − to module</option><option value="commS">SSC communication S to module</option><option value="commN">SSC communication N to module</option><option value="busPos">SSC bus + to junction box</option><option value="busNeg">SSC bus − to junction box</option><option value="modulePower">Module-to-module power</option><option value="moduleComm">Module-to-module communication</option></select></label><label>From module <input id="route-module" type="number" min="1" max="47" value="1" style="width:75px"></label><label>Route style <select id="route-style"><option value="saved">Keep saved style</option><option value="straight">Straight bends</option><option value="curved">C-style curve</option><option value="rounded">Rounded L-style bends</option></select></label><button class="btn btn-ghost btn-sm" id="route-start">Edit route</button></div><div class="route-presets"><label>One-click shape <select id="route-template"><option value="">Choose a shape</option>${[['straight','Straight'],['l-horizontal','L: horizontal then vertical'],['l-vertical','L: vertical then horizontal'],['c-above','C: curve above'],['c-below','C: curve below']].map(([value,label]) => `<option value="${value}" ${pictureLastRouteTemplate() === value ? 'selected' : ''}>${label}${pictureLastRouteTemplate() === value ? ' (last used on this device)' : ''}</option>`).join('')}</select></label><button class="btn btn-primary btn-sm" id="route-apply-template">Apply to this link</button><button class="btn btn-ghost btn-sm" id="route-apply-all">Apply to this link number in every SSC</button><p class="muted small">Applies to Mx to M(x+1); all SSCs must contain that link. Shapes are draft suggestions; check routing and clearance.</p></div></details>` : ''}
         ${st.routeEdit ? `<div class="port-instruction" role="status"><strong>${st.routeEdit.curved ? "Click curve control points" : "Click route bends"} on the picture, in order from ${st.routeEdit.type === "module" ? "the first module" : "the SSC"}.</strong><span>${st.routeEdit.points.length} intermediate points selected. Save with no points to return to a straight preview.</span><div class="btn-row"><button class="btn btn-ghost btn-sm" id="route-undo" ${st.routeEdit.points.length ? '' : 'disabled'}>Undo point</button><button class="btn btn-ghost btn-sm" id="route-clear" ${st.routeEdit.points.length ? '' : 'disabled'}>Clear points</button><button class="btn btn-primary btn-sm" id="route-save">Save draft route</button><button class="btn btn-ghost btn-sm" id="route-cancel">Cancel</button></div></div>` : ''}
         </div><div id="simple-picture-scroll" style="border:1px solid var(--border);border-radius:8px;overflow:auto;max-height:70vh"><div id="simple-picture" style="width:${st.zoom * 100}%;cursor:crosshair">${svg}</div></div></div>
       </div>
@@ -642,7 +662,7 @@ async function tabSimpleWiring(el, project, ctx) {
       st.routeEdit = { slot, key, points: saved || [], curved };
       st.message = saved === null ? 'The saved draft route is invalid. Select replacement points or cancel.' : ''; render();
     });
-    el.querySelector('#route-apply-template')?.addEventListener('click', async () => {
+    const applyTemplate = async all => {
       const slot=el.querySelector('#route-ssc').value, selection=el.querySelector('#route-key').value;
       const index=Number(el.querySelector('#route-module').value), template=el.querySelector('#route-template').value;
       const groups=layoutGroups(project), gi=groups.findIndex(item=>item.slot===slot), group=groups[gi];
@@ -650,19 +670,22 @@ async function tabSimpleWiring(el, project, ctx) {
       if (!pictureModuleRoutesValid(st.moduleDraftRoutes)) { st.message='Saved module routes are invalid; they cannot be changed or exported.'; render(); return; }
       const kind=selection==='modulePower'?'power':'comm';
       const wires=pictureModuleWiring(groups,st.cal,st.ports,st.devicePorts,st.modulePortPoints,st.powerConvention,st.moduleDraftRoutes);
-      const links=wires.filter(w=>w.group===gi && w.kind===kind);
-      const link=links.length===group.order.length-1 ? links[index-1] : null;
-      const route=link && pictureSuggestedModuleRoute(link.pts[0],link.pts[link.pts.length-1],template);
-      if (!route) { st.message='Choose a shape for a link with valid, distinct terminals.'; render(); return; }
-      const next=Object.assign({},st.moduleDraftRoutes), routeKey=pictureModuleRouteKey(slot,index,kind);
-      if (route.points.length) next[routeKey]=route; else delete next[routeKey];
+      const next=pictureSuggestRoutesForGroups(groups,wires,st.moduleDraftRoutes,index,kind,template,all ? groups.map((_,i)=>i) : [gi]);
+      if (!next) { st.message='Choose a shape and valid terminals. Every selected SSC must contain this module link; nothing was changed.'; render(); return; }
+      if (all) {
+        const proposed=pictureModuleWiring(groups,st.cal,st.ports,st.devicePorts,st.modulePortPoints,st.powerConvention,next);
+        const crossing=picturePowerCrossings(proposed);
+        if (!crossing.valid || crossing.pairs.length) { st.message='This shape would leave power cables crossing or touching. Nothing was changed; adjust the routes first.'; render(); return; }
+      }
       const oldConfig=project.config, config=JSON.parse(JSON.stringify(project.config || {}));
       config.numbering=Object.assign({},config.numbering,{moduleDraftRoutes:next});
       st.saving=true; render(); const ok=await ctx.saveProject({config}); st.saving=false;
       if(!ok){project.config=oldConfig;st.message='Could not save this shape. Try again.';render();return;}
       st.moduleDraftRoutes=next; pictureRememberRouteTemplate(template);
-      st.message='Draft shape applied. Check the route and physical clearance.'; render();
-    });
+      st.message=all ? 'Draft shape applied to the selected link number in every SSC. Check each route and physical clearance.' : 'Draft shape applied. Check the route and physical clearance.'; render();
+    };
+    el.querySelector('#route-apply-template')?.addEventListener('click', () => applyTemplate(false));
+    el.querySelector('#route-apply-all')?.addEventListener('click', () => applyTemplate(true));
     el.querySelector('#route-undo')?.addEventListener('click', () => { st.routeEdit.points.pop(); render(); });
     el.querySelector('#route-clear')?.addEventListener('click', () => { st.routeEdit.points = []; render(); });
     el.querySelector('#route-cancel')?.addEventListener('click', () => { st.routeEdit = null; st.message = 'Draft route edit cancelled.'; render(); });

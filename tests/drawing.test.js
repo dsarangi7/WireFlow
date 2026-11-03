@@ -497,7 +497,7 @@ ok('print title block embeds the AYK logo and drawing details',
 
 const simpleSrc = fs.readFileSync(path.join(ROOT, 'js', 'simple-wiring.js'), 'utf8');
 const portFactory = new Function('slotCell', 'fvSlotCenter', 'fvDist', 'SSC_PALETTE', 'sheetSvgPrimitive', 'sheetEsc',
-  simpleSrc + '\nreturn { PICTURE_DEVICE_PORT_STEPS, pictureZoomOffset, modulePortsValid, pictureModulePortsReady, pictureCopyDraftRoutePoints, pictureDevicePortsComplete, picturePowerCrossings, pictureSuggestedModuleRoute, pictureModuleRoutesValid, pictureModuleWiring, pictureVisioModel, pictureSheetSvg, portMarkingPrompt, markingModuleCounts, markingPlanErrors, markingSteps, markingIssues, markingRecord, markingLayout, pictureDeviceLabels, pictureDeviceLabelsSvg };');
+  simpleSrc + '\nreturn { PICTURE_DEVICE_PORT_STEPS, pictureZoomOffset, modulePortsValid, pictureModulePortsReady, pictureCopyDraftRoutePoints, pictureDevicePortsComplete, picturePowerCrossings, pictureSuggestedModuleRoute, pictureSuggestRoutesForGroups, pictureModuleRoutesValid, pictureModuleWiring, pictureVisioModel, pictureSheetSvg, portMarkingPrompt, markingModuleCounts, markingPlanErrors, markingSteps, markingIssues, markingRecord, markingLayout, pictureDeviceLabels, pictureDeviceLabelsSvg };');
 const portsApi = portFactory(E.slotCell, (cal, c, r) => ({ x: cal.x0 + c * cal.pitchX, y: cal.y0 + r * cal.pitchY }),
   (a, b) => Math.hypot(a.x - b.x, a.y - b.y), E.SSC_PALETTE, E.sheetSvgPrimitive, E.sheetEsc);
 {
@@ -659,6 +659,15 @@ const shapeA={x:0,y:0}, shapeB={x:100,y:0};
 ok('one-click C choices bend in opposite directions', portsApi.pictureSuggestedModuleRoute(shapeA,shapeB,'c-above').points[0].y<0 && portsApi.pictureSuggestedModuleRoute(shapeA,shapeB,'c-below').points[0].y>0);
 eq('one-click L shape uses a rounded bend', portsApi.pictureSuggestedModuleRoute(shapeA,{x:100,y:50},'l-horizontal').style, 'rounded');
 ok('one-click shape refuses unknown types and coincident terminals', portsApi.pictureSuggestedModuleRoute(shapeA,shapeB,'unknown')===null && portsApi.pictureSuggestedModuleRoute(shapeA,shapeA,'c-above')===null);
+{
+  const groups=[{slot:'s1',order:['a','b','c']},{slot:'s2',order:['d','e']}];
+  const wires=[{group:0,kind:'power',pts:[{x:0,y:0},{x:10,y:0}]},{group:0,kind:'power',pts:[{x:10,y:0},{x:20,y:0}]},{group:1,kind:'power',pts:[{x:0,y:20},{x:20,y:20}]}];
+  const original={};
+  const result=portsApi.pictureSuggestRoutesForGroups(groups,wires,original,1,'power','c-below',[0,1]);
+  ok('bulk template derives each route from its own endpoints', result && result['s1|1|power'].points[0].x===5 && result['s2|1|power'].points[0].x===10 && Object.keys(original).length===0);
+  ok('bulk template rejects a chain too short without mutating prior routes', portsApi.pictureSuggestRoutesForGroups(groups,wires,original,2,'power','c-below',[0,1])===null && Object.keys(original).length===0);
+  ok('bulk template refuses duplicate SSC targets', portsApi.pictureSuggestRoutesForGroups(groups,wires,original,1,'power','c-below',[0,0])===null);
+}
 const bottomCurve=portsApi.pictureModuleWiring(completeGroups, measuredCal, ports, devicePorts, null, 'legacy', {[bottomKey]:{style:'curved',points:[{x:160,y:245}]}}).find(w=>w.kind==='power');
 const bottomL=portsApi.pictureModuleWiring(completeGroups, measuredCal, ports, devicePorts, null, 'legacy', {[bottomKey]:{style:'rounded',points:[{x:160,y:217},{x:160,y:278}]}}).find(w=>w.kind==='power');
 ok('module C and rounded L drafts retain terminals with distinct routes', bottomCurve.pts.length>2 && bottomL.pts.length>2 && JSON.stringify(bottomCurve.pts[0])===JSON.stringify(bottomL.pts[0]) && JSON.stringify(bottomCurve.pts[bottomCurve.pts.length-1])===JSON.stringify(bottomL.pts[bottomL.pts.length-1]) && JSON.stringify(bottomCurve.pts)!==JSON.stringify(bottomL.pts));
