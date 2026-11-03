@@ -481,7 +481,7 @@ eq('print-document builder returns ordered title/svg page records',
 const projectPrintBody = fnBody(appSrc, 'projectPrintPages');
 let printWiringOptions = null;
 let printSvgOptions = null;
-const printProjectPages = new Function('project', 'conns', 'fvCalib', 'layoutGroups', 'modulePortsValid', 'pictureModuleWiring', 'fvSvg', 'buildPrintDocument', 'renderDiagramSVG', 'schedulePrintSvg', 'pictureDeviceLabelsSvg', 'pictureModuleRoutesValid', 'pictureRefineWiringSvg', projectPrintBody);
+const printProjectPages = new Function('project', 'conns', 'fvCalib', 'layoutGroups', 'modulePortsValid', 'pictureModuleWiring', 'pictureWiringSvg', 'buildPrintDocument', 'renderDiagramSVG', 'schedulePrintSvg', 'pictureDeviceLabelsSvg', 'pictureModuleRoutesValid', 'pictureRefineWiringSvg', projectPrintBody);
 const overlayPages = printProjectPages({ config: { numbering: { cal: {} } }, underlay: { kind: 'image', src: 'data:image/png;base64,AA' } }, [],
   () => ({ ok: true }), () => ['group'], () => true, (groups, cal, ports) => { printWiringOptions = { groups, cal, ports }; return ['wire']; },
   (cal, image, wires, options) => { printSvgOptions = options; return wires.join(','); },
@@ -496,14 +496,16 @@ ok('print title block embeds the AYK logo and drawing details',
   printedHtml.includes('data:image/png;base64,logo-data') && printedHtml.includes('AYK POWER LTD.') && printedHtml.includes('DWG-1 · B'));
 
 const simpleSrc = fs.readFileSync(path.join(ROOT, 'js', 'simple-wiring.js'), 'utf8');
-const portFactory = new Function('slotCell', 'fvSlotCenter', 'fvDist', 'SSC_PALETTE', 'sheetSvgPrimitive', 'sheetEsc',
-  simpleSrc + '\nreturn { PICTURE_DEVICE_PORT_STEPS, pictureZoomOffset, pictureRefineWiringSvg, modulePortsValid, pictureModulePortsReady, pictureCopyDraftRoutePoints, pictureDevicePortsComplete, picturePowerCrossings, pictureSuggestedModuleRoute, pictureSuggestRoutesForGroups, pictureMethodRulesValid, pictureApplyMethod, pictureModuleRoutesValid, pictureModuleWiring, pictureVisioModel, pictureSheetSvg, portMarkingPrompt, markingModuleCounts, markingPlanErrors, markingSteps, markingIssues, markingRecord, markingLayout, pictureDeviceLabels, pictureDeviceLabelsSvg };');
+const portFactory = new Function('slotCell', 'fvSlotCenter', 'fvDist', 'SSC_PALETTE', 'sheetSvgPrimitive', 'sheetEsc', 'fvSvg',
+  simpleSrc + '\nreturn { PICTURE_DEVICE_PORT_STEPS, pictureZoomOffset, pictureRefineWiringSvg, pictureWiringSvg, modulePortsValid, pictureModulePortsReady, pictureCopyDraftRoutePoints, pictureDevicePortsComplete, picturePowerCrossings, pictureSuggestedModuleRoute, pictureSuggestRoutesForGroups, pictureMethodRulesValid, pictureApplyMethod, pictureModuleRoutesValid, pictureModuleWiring, pictureVisioModel, pictureSheetSvg, portMarkingPrompt, markingModuleCounts, markingPlanErrors, markingSteps, markingIssues, markingRecord, markingLayout, pictureDeviceLabels, pictureDeviceLabelsSvg };');
 const portsApi = portFactory(E.slotCell, (cal, c, r) => ({ x: cal.x0 + c * cal.pitchX, y: cal.y0 + r * cal.pitchY }),
-  (a, b) => Math.hypot(a.x - b.x, a.y - b.y), E.SSC_PALETTE, E.sheetSvgPrimitive, E.sheetEsc);
+  (a, b) => Math.hypot(a.x - b.x, a.y - b.y), E.SSC_PALETTE, E.sheetSvgPrimitive, E.sheetEsc, () => '<svg></svg>');
 {
   const source='<svg><polyline points="0,0 1,1" stroke-width="3"/><circle cx="1" pointer-events="none"/><circle cx="2"/><text>Rack</text></svg>';
   const refined=portsApi.pictureRefineWiringSvg(source);
   ok('picture output removes wire sample dots but preserves geometry and unrelated marks', refined.includes('points="0,0 1,1"') && refined.includes('stroke-width="1.2"') && !refined.includes('cx="1"') && refined.includes('cx="2"') && refined.includes('>Rack</text>'));
+  const labelSvg=portsApi.pictureWiringSvg({imgW:100,imgH:100,pitchX:30,pitchY:30},null,[{kind:'label',groupLabel:'SSC-7',groupColor:'#123456',m:2,pts:[{x:10,y:20}]}],{});
+  ok('picture combines string and module labels in their group color', labelSvg.includes('>S7-M2</text>') && labelSvg.includes('fill="#123456"'));
 }
 {
   const wire = (kind, pts) => ({ kind, pts: pts.map(([x,y]) => ({x,y})) });

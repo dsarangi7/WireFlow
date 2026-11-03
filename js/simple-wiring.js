@@ -10,6 +10,27 @@ function pictureRefineWiringSvg(svg) {
   return svg.replace(/<circle\b[^>]*pointer-events="none"\s*\/>/g, '')
     .replace(/<polyline\b[^>]*>/g, tag => tag.replace(/stroke-width="[^"]*"/, 'stroke-width="1.2"'));
 }
+function pictureStringName(label) {
+  const text=String(label || ''), match=/^(?:SSC[- ]?|S)(\d+)$/i.exec(text);
+  return match ? 'S'+match[1] : text;
+}
+function pictureStringColors(segments) {
+  const colors={};
+  (segments || []).forEach(s=>{ if (s.kind==='label' && /^#[0-9a-f]{6}$/i.test(s.groupColor || '')) colors[pictureStringName(s.groupLabel)]=s.groupColor; });
+  return colors;
+}
+function pictureWiringSvg(cal, image, segments, options) {
+  const o=options || {}, width=o.width || cal.imgW, height=o.height || cal.imgH;
+  const sx=width/cal.imgW, sy=height/cal.imgH;
+  const fs=Math.max(6,Math.min(cal.pitchX,cal.pitchY)*.34*Math.max(sx,sy));
+  let svg=pictureRefineWiringSvg(fvSvg(cal,image,(segments || []).filter(s=>s.kind!=='label'),o));
+  const labels=(segments || []).filter(s=>s.kind==='label').map(s=>{
+    const name=pictureStringName(s.groupLabel), text=(name ? name+'-' : '')+'M'+s.m;
+    const color=/^#[0-9a-f]{6}$/i.test(s.groupColor || '') ? s.groupColor : '#203954';
+    return '<text data-slot-label="'+sheetEsc(String(s.m))+'" x="'+(s.pts[0].x*sx).toFixed(1)+'" y="'+(s.pts[0].y*sy).toFixed(1)+'" text-anchor="middle" font-weight="700" font-size="'+fs.toFixed(1)+'" fill="'+color+'" stroke="#fff" stroke-width="'+(fs*.16).toFixed(1)+'" paint-order="stroke" pointer-events="none">'+sheetEsc(text)+'</text>';
+  }).join('');
+  return svg.replace('</svg>',labels+'</svg>');
+}
 function markingModuleCounts(bank) {
   // Existing projects stored one shared count; preserve their saved meaning.
   const count = Number.isInteger(bank.sscs) && bank.sscs > 0 && bank.sscs <= 24 ? bank.sscs : 0;
@@ -135,9 +156,10 @@ function pictureDeviceLabels(plan, cal) {
   });
 }
 
-function pictureDeviceLabelsSvg(plan, cal) {
+function pictureDeviceLabelsSvg(plan, cal, segments) {
   const size = Math.max(9, Math.min(cal.pitchX, cal.pitchY) * .19);
-  return pictureDeviceLabels(plan, cal).map(item => `<text x="${item.point.x}" y="${item.point.y}" text-anchor="middle" font-size="${size}" font-weight="700" fill="#203954" stroke="white" stroke-width="2" paint-order="stroke" pointer-events="none">${item.label}</text>`).join('');
+  const colors=pictureStringColors(segments);
+  return pictureDeviceLabels(plan, cal).map(item => `<text x="${item.point.x}" y="${item.point.y}" text-anchor="middle" font-size="${size}" font-weight="700" fill="${colors[pictureStringName(item.label)] || '#203954'}" stroke="white" stroke-width="2" paint-order="stroke" pointer-events="none">${sheetEsc(item.label)}</text>`).join('');
 }
 
 /* Four measured offsets describe the ports of identical modules in picture pixels. */
@@ -402,13 +424,14 @@ function pictureVisioModel(project, cal, segments) {
     { type: 'text', layer: 'TEXT', x: 1092, y: 1076, size: 12, text: 'NUMBER: ' + (project.drawing_no || 'Not specified') + '   REV: ' + (project.revision || 'A') },
     { type: 'text', layer: 'TEXT', x: 1092, y: 1110, size: 12, text: 'DRAFT - ENGINEERING REVIEW REQUIRED' },
   ];
+  const groupColors=pictureStringColors(segments);
   pictureDeviceLabels(project.config && project.config.numbering && project.config.numbering.marking, cal).forEach(item => {
-    primitives.push({ type: 'text', layer: 'NUMBER', x: rect.x + item.point.x * scale, y: rect.y + item.point.y * scale, size: 12, anchor: 'middle', bold: true, text: item.label });
+    primitives.push({ type: 'text', layer: 'NUMBER', x: rect.x + item.point.x * scale, y: rect.y + item.point.y * scale, size: 12, anchor: 'middle', bold: true, text: item.label, color:groupColors[pictureStringName(item.label)] });
   });
   for (const segment of segments || []) {
     if (segment.kind === 'label') {
       const p = segment.pts[0];
-      primitives.push({ type: 'text', layer: 'NUMBER', x: rect.x + p.x * scale, y: rect.y + p.y * scale, size: 12, anchor: 'middle', bold: true, text: (segment.groupLabel || '') + '-M' + segment.m });
+      primitives.push({ type: 'text', layer: 'NUMBER', x: rect.x + p.x * scale, y: rect.y + p.y * scale, size: 12, anchor: 'middle', bold: true, text: (pictureStringName(segment.groupLabel) || '') + '-M' + segment.m, color:segment.groupColor });
       continue;
     }
     const layer = segment.kind === 'power' || segment.kind === 'sscp' ? 'POWER' : 'COMM';
@@ -428,7 +451,11 @@ function pictureSheetSvg(project, cal, segments, logoBase64, options) {
   const parts = ['<svg xmlns="http://www.w3.org/2000/svg" width="420mm" height="297mm" viewBox="0 0 1680 1188" role="img" aria-label="Draft wiring sheet">',
     '<rect x="0" y="0" width="1680" height="1188" fill="#ffffff"/>',
     '<image href="' + sheetEsc(im.src) + '" x="' + im.x + '" y="' + im.y + '" width="' + im.w + '" height="' + im.h + '" preserveAspectRatio="none"/>'];
-  for (const primitive of model.primitives) parts.push(sheetSvgPrimitive(primitive));
+  for (const primitive of model.primitives) {
+    let markup=sheetSvgPrimitive(primitive);
+    if (primitive.type==='text' && /^#[0-9a-f]{6}$/i.test(primitive.color || '')) markup=markup.replace(/fill="[^"]*"/, 'fill="'+primitive.color+'"');
+    parts.push(markup);
+  }
   if (options && options.borderZones === true) {
     for (let column = 0; column < 8; column++) {
       const x = 40 + (column + 0.5) * 200, label = 8 - column;
@@ -535,7 +562,7 @@ async function tabSimpleWiring(el, project, ctx) {
         `<circle cx="${st.portRef.x + offset.x}" cy="${st.portRef.y + offset.y}" r="${Math.max(3, Math.min(cal.pitchX, cal.pitchY) * .045)}" fill="${name.startsWith('comm') ? '#00a651' : '#e02020'}" stroke="white" stroke-width="1" pointer-events="none"/>`).join('') : '';
       const deviceMarks = st.deviceStep >= 2 ? Object.entries(st.pendingDevice).map(([name, point]) =>
         `<circle cx="${point.x}" cy="${point.y}" r="${Math.max(3, Math.min(cal.pitchX, cal.pitchY) * .045)}" fill="${name.startsWith('comm') ? '#00a651' : '#e02020'}" stroke="white" stroke-width="1" pointer-events="none"/>`).join('') : '';
-      svg = pictureRefineWiringSvg(fvSvg(cal, { src: project.underlay.src }, wiring, { width, height, noGrid: true, sscLabels: true })).replace('</svg>', (st.generated ? pictureDeviceLabelsSvg(st.plan, cal) : marks) + portMarks + deviceMarks + '</svg>');
+      svg = pictureWiringSvg(cal, { src: project.underlay.src }, wiring, { width, height, noGrid: true, sscLabels: true }).replace('</svg>', (st.generated ? pictureDeviceLabelsSvg(st.plan, cal, wiring) : marks) + portMarks + deviceMarks + '</svg>');
     } else {
       svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${image.naturalWidth} ${image.naturalHeight}"><image width="${image.naturalWidth}" height="${image.naturalHeight}" href="${esc(project.underlay.src)}"/></svg>`;
     }
@@ -869,7 +896,7 @@ async function tabSimpleWiring(el, project, ctx) {
       if (powerBlocked) { toast('Power cables cross or touch. Correct the routes before exporting.', 'error'); return; }
       const wiring = pictureModuleWiring(layoutGroups(project), st.cal, st.ports, st.devicePorts, st.modulePortPoints, st.powerConvention, st.moduleDraftRoutes);
       const warning = st.powerConvention === 'reference-sample' ? '<text x="10" y="20" font-size="14" fill="#b91c1c" stroke="white" stroke-width="3" paint-order="stroke">EXPERIMENTAL PICTURE - NETLIST DIFFERS - ENGINEERING REVIEW REQUIRED</text>' : '';
-      const svgOut = pictureRefineWiringSvg(fvSvg(st.cal, { src: project.underlay.src }, wiring, { noGrid: true, sscLabels: true })).replace('</svg>', pictureDeviceLabelsSvg(st.plan, st.cal) + warning + '</svg>');
+      const svgOut = pictureWiringSvg(st.cal, { src: project.underlay.src }, wiring, { noGrid: true, sscLabels: true }).replace('</svg>', pictureDeviceLabelsSvg(st.plan, st.cal, wiring) + warning + '</svg>');
       download((project.name || 'wiring') + '-rack-wiring.svg', svgOut, 'image/svg+xml');
     });
     if (st.routeEdit) el.querySelectorAll('button,input,select').forEach(control => {

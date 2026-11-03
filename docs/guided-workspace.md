@@ -26,6 +26,9 @@ SSC NEG and N to the last module, and SSC B+/B− to matching junction-box
 terminals. Links for SSCs without all eight marked terminal positions are omitted.
 The preview joins marked endpoints by straight lines; it does not yet reproduce
 the routed paths, bends, cable channels, or the original editable Visio master.
+Picture-first outputs show module labels in the form S7-M1, using a distinct
+display color for each SSC. These colors identify strings; they do not change
+power or communication connections or indicate engineering approval.
 
 Engineers can change grid, component and port markings in WireFlow and generate
 again. **Download editable draft (Visio)** embeds the rack as a picture and writes

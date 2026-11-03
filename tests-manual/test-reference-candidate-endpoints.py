@@ -12,7 +12,7 @@ INPUT = pathlib.Path('G:/WiringTool')
 
 class ReferenceCandidateEndpoints(unittest.TestCase):
     def test_generated_svg_has_confirmed_endpoints(self):
-        inputs = [pathlib.Path(os.environ.get('WIREFLOW_CANDIDATE_SVG', INPUT / 'sample-equipment-labelled/EXPERIMENTAL-rack-DO-NOT-BUILD.svg')),
+        inputs = [pathlib.Path(os.environ.get('WIREFLOW_CANDIDATE_SVG', INPUT / 'sample-colored-labels/EXPERIMENTAL-rack-DO-NOT-BUILD.svg')),
                   pathlib.Path(os.environ.get('WIREFLOW_CANDIDATE_MODULES', INPUT / 'rack-module-port-candidates.json')),
                   pathlib.Path(os.environ.get('WIREFLOW_CANDIDATE_DEVICES', INPUT / 'rack-device-port-candidates.json'))]
         if not all(p.is_file() for p in inputs):
@@ -34,6 +34,12 @@ class ReferenceCandidateEndpoints(unittest.TestCase):
         labels = ['SSC' + str(number) for number in range(1, 6)] + ['MSM', 'ACDP1', 'ACDP2']
         for label in labels:
             self.assertEqual(texts.count(label), 1)
+        reference_colors = {1:'#4bacc6', 2:'#7e649e', 3:'#fee599', 4:'#7f7f7f', 5:'#f9c499'}
+        for string, color in reference_colors.items():
+            for module in range(1, 13):
+                label = f'S{string}-M{module}'
+                self.assertEqual(texts.count(label), 1)
+                self.assertEqual(text_elements[texts.index(label)].get('fill'), color)
         # Reference-derived coordinates belong to this fixture only.
         reference_positions = {'SSC1': (1050.7, 148.2), 'SSC2': (835.2, 137.8),
                                'SSC3': (622.9, 137.0), 'SSC4': (413.1, 137.8),
@@ -60,6 +66,11 @@ class ReferenceCandidateEndpoints(unittest.TestCase):
                             145 + (740 - 428 * scale) / 2 + float(rack_element.get('y')) * scale)
                 actual = (float(sheet_element.get('x')), float(sheet_element.get('y')))
                 self.assertLess(math.dist(actual, expected), 1, label)
+            for string, color in reference_colors.items():
+                for module in range(1, 13):
+                    label = f'S{string}-M{module}'
+                    self.assertEqual(sheet_texts.count(label), 1)
+                    self.assertEqual([e for e in sheet.iter() if e.tag.endswith('text')][sheet_texts.index(label)].get('fill'), color)
         wires = [e for e in svg.iter() if e.tag.endswith('polyline') and e.get('stroke') == '#e02020']
         paths = [[tuple(map(float, point.split(','))) for point in w.get('points').split()] for w in wires]
         green_wires = [e for e in svg.iter() if e.tag.endswith('polyline') and e.get('stroke') == '#00a651']
