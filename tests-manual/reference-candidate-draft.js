@@ -68,16 +68,24 @@ const source=fs.readFileSync(path.join(root,'js/frontview.js'),'utf8')+'\n'+fs.r
 const helpers=new Function(fs.readFileSync(path.join(root,'js/engine.js'),'utf8')+'\nreturn {sheetSvgPrimitive,sheetEsc};')();
 const api=new Function('slotCell','SSC_PALETTE','sheetSvgPrimitive','sheetEsc',source+'\nreturn {pictureModuleWiring,pictureSheetSvg,fvSvg};')(s=>{const [c,r]=s.split(',').map(Number);return {c,r};},['#345678'],helpers.sheetSvgPrimitive,helpers.sheetEsc);
 const wires=api.pictureModuleWiring(groups,cal,ports,devices,modulePortPoints), image='data:image/png;base64,'+png.toString('base64');
-// The engineer confirmed these SSC endpoints for this specific rack. The
-// module-to-module power direction remains unresolved; this changes only the
-// experimental fixture, not the shared wiring engine or its validation rules.
+// The engineer confirmed these SSC and module power endpoints for this rack.
+// This changes only the experimental fixture, not the shared wiring engine.
 for (let i=0;i<groups.length;i++) {
-  const groupWires=wires.filter(w=>w.group===i && w.kind==='sscp');
-  if (groupWires.length!==4) throw new Error('Expected the four SSC power links in the fixture.');
   const order=groups[i].order;
-  const endpoints=[modulePortPoints[order[order.length-1]].pwrPos,modulePortPoints[order[0]].pwrNeg];
-  [0,1].forEach(j=>{
-    const wire=groupWires[j]; wire.pts[wire.pts.length-1]=endpoints[j];
+  const device=devices[groups[i].slot];
+  const equal=(a,b)=>a && b && a.x===b.x && a.y===b.y;
+  for(let j=1;j<order.length;j++) {
+    const previous=modulePortPoints[order[j-1]], next=modulePortPoints[order[j]];
+    const matches=wires.filter(w=>w.group===i && w.kind==='power' && equal(w.pts[0],previous.pwrNeg) && equal(w.pts[w.pts.length-1],next.pwrPos));
+    if(matches.length!==1) throw new Error('Cannot uniquely identify the fixture module power link.');
+    const wire=matches[0]; wire.pts=[previous.pwrPos,next.pwrNeg];
+    wire.lenMm=Math.hypot(wire.pts[1].x-wire.pts[0].x,wire.pts[1].y-wire.pts[0].y)*cal.mmPerPx;
+  }
+  const pairs=[['pwrPos',order[0],order[order.length-1]],['pwrNeg',order[order.length-1],order[0]]];
+  pairs.forEach(([port,oldSlot,newSlot])=>{
+    const matches=wires.filter(w=>w.group===i && w.kind==='sscp' && equal(w.pts[0],device[port]) && equal(w.pts[w.pts.length-1],modulePortPoints[oldSlot][port]));
+    if(matches.length!==1) throw new Error('Cannot uniquely identify the fixture SSC '+port+' link.');
+    const wire=matches[0]; wire.pts[wire.pts.length-1]=modulePortPoints[newSlot][port];
     wire.lenMm=wire.pts.slice(1).reduce((sum,p,k)=>sum+Math.hypot(p.x-wire.pts[k].x,p.y-wire.pts[k].y),0)*cal.mmPerPx;
   });
 }
