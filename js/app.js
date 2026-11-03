@@ -291,6 +291,18 @@ async function renderDashboard() {
   catch (error) { shell(`<div class="empty">Could not open local projects: ${esc(error.message)}</div>`, 'dash'); return; }
 
   shell(`
+    <section class="studio-import" aria-labelledby="studio-import-title">
+      <img class="studio-logo" src="assets/ayk-logo.ico" alt="AYK Energy">
+      <p class="studio-kicker">AYK · WIRING STUDIO</p>
+      <h1 id="studio-import-title">Import your SVG drawing</h1>
+      <p>Select the rack layout or wiring drawing, or drop an SVG here.</p>
+      <button class="btn btn-primary" id="studio-import-button">Import SVG</button>
+      <button class="btn btn-ghost" id="studio-open-session">Open saved session</button>
+      <input id="studio-import-file" type="file" accept=".svg,image/svg+xml" hidden>
+      <input id="studio-session-file" type="file" accept=".json,application/json" hidden>
+      <p id="studio-import-status" role="status"></p>
+    </section>
+    <details class="studio-existing"><summary>Existing projects</summary>
     <div class="page-head">
       <div><h1>Projects</h1><p class="muted">Rack configurations, netlists and drawing packages.</p></div>
       <button class="btn btn-primary" id="btn-new">+ New project</button>
@@ -310,8 +322,101 @@ async function renderDashboard() {
           <div class="proj-foot">Updated ${new Date(p.updated_at || p.created_at).toLocaleDateString()}</div>
         </a>`).join('')}
       </div>`}
+    </details>
   `, 'dash');
+  const studioFile = document.getElementById('studio-import-file');
+  const studioStatus = document.getElementById('studio-import-status');
+  document.getElementById('studio-import-button').onclick = () => studioFile.click();
+  const sessionFile = document.getElementById('studio-session-file');
+  document.getElementById('studio-open-session').onclick = () => sessionFile.click();
+  sessionFile.onchange = async () => {
+    const file = sessionFile.files[0];
+    if (!file) return;
+    studioStatus.textContent = 'Opening session…';
+    try {
+      const saved = JSON.parse(await file.text());
+      validateStudioSession(saved);
+      const svg = validateStudioSvg(saved.svg);
+      const project = { ...saved.project, config: saved.project.config, status: 'draft', updated_at: new Date().toISOString() };
+      if (project.config.flow) { project.config.flow = { ...project.config.flow }; delete project.config.flow.deliveredAt; }
+      delete project.id; delete project.underlay; delete project.underlay_url;
+      project.id = await localAddProject(project);
+      await localPutUnderlay(project.id, new Blob([svg], { type: 'image/svg+xml' }), 'image');
+      project.underlay_kind = 'image'; project.underlay_url = `local-underlay:${project.id}`;
+      await localPutProject(project);
+      sessionStorage.setItem('wireflow-open-workspace', String(project.id));
+      location.hash = `#/project/${project.id}`;
+    } catch (error) { console.error('Session import failed', error); studioStatus.textContent = error.message || 'Could not open this session.'; }
+    finally { sessionFile.value = ''; }
+  };
+  async function openStudioDrawing(file) {
+    if (!file) return;
+    studioStatus.textContent = 'Checking drawing…';
+    try {
+      if (!/\.svg$/i.test(file.name)) throw new Error('Choose an SVG drawing.');
+      const svg = validateStudioSvg(await file.text());
+      const now = new Date().toISOString();
+      const project = { name: file.name.replace(/\.svg$/i, '') || 'Drawing', vessel: '', drawing_no: '',
+        product_family: '', modules_per_string: 0, config: { rules: { ...DEFAULT_RULES }, exceptions: [], spans: [] },
+        status: 'draft', revision: 'A', created_at: now, updated_at: now };
+      project.id = await localAddProject(project);
+      await localPutUnderlay(project.id, new Blob([svg], { type: 'image/svg+xml' }), 'image');
+      Object.assign(project, { underlay_url: `local-underlay:${project.id}`, underlay_kind: 'image', underlay_x: 120, underlay_y: 280, underlay_w: 1000, underlay_h: 640 });
+      await localPutProject(project);
+      sessionStorage.setItem('wireflow-open-workspace', String(project.id));
+      location.hash = `#/project/${project.id}`;
+    } catch (error) {
+      console.error('SVG import failed', error);
+      studioStatus.textContent = error.message || 'Could not import this SVG drawing.';
+    } finally { studioFile.value = ''; }
+  }
+  studioFile.onchange = () => openStudioDrawing(studioFile.files[0]);
+  const dropArea = document.querySelector('.studio-import');
+  dropArea.ondragover = event => { event.preventDefault(); dropArea.classList.add('studio-dragover'); };
+  dropArea.ondragleave = () => dropArea.classList.remove('studio-dragover');
+  dropArea.ondrop = event => {
+    event.preventDefault(); dropArea.classList.remove('studio-dragover');
+    if (event.dataTransfer.files.length !== 1) { studioStatus.textContent = 'Drop one SVG drawing at a time.'; return; }
+    openStudioDrawing(event.dataTransfer.files[0]);
+  };
   (document.getElementById('btn-new') || document.getElementById('btn-new2'))?.addEventListener('click', () => showNewProjectModal());
+}
+
+function validateStudioSession(saved) {
+  if (!saved || saved.format !== 'ayk-wireflow-session' || saved.version !== 1 || typeof saved.svg !== 'string' || !saved.project || typeof saved.project !== 'object' || Array.isArray(saved.project) || !saved.project.config || typeof saved.project.config !== 'object' || Array.isArray(saved.project.config)) throw new Error('This is not a supported WireFlow session.');
+  return true;
+}
+
+async function saveStudioSession(project) {
+  const record = await localGetUnderlay(project.id);
+  if (!record || !record.blob || record.blob.type !== 'image/svg+xml') throw new Error('Session export currently supports imported SVG drawings only.');
+  const copy = { ...project };
+  delete copy.id; delete copy.underlay; delete copy.underlay_url;
+  const saved = { format: 'ayk-wireflow-session', version: 1, project: copy, svg: await record.blob.text() };
+  download((project.name || 'wiring') + '.wireflow.json', JSON.stringify(saved), 'application/json');
+}
+
+/* Reject active or external SVG content at the new import boundary. SVG is
+   kept as vector data; unsupported content is reported instead of rewritten. */
+function validateStudioSvg(source) {
+  if (/<!ENTITY|<\?xml-stylesheet/i.test(source) || /<!DOCTYPE[^>]*\[/i.test(source)) throw new Error('SVG entity declarations are not supported.');
+  source = source.replace(/<!DOCTYPE\s+svg\s*(?:(?:PUBLIC\s+"[^"]*"\s+"[^"]*")|(?:SYSTEM\s+"[^"]*"))?\s*>/i, '');
+  if (/<!DOCTYPE/i.test(source)) throw new Error('This SVG document declaration is not supported.');
+  const doc = new DOMParser().parseFromString(source, 'image/svg+xml');
+  if (!doc.documentElement || doc.documentElement.localName !== 'svg' || doc.querySelector('parsererror')) throw new Error('The SVG is malformed or unsupported.');
+  for (const node of doc.querySelectorAll('*')) {
+    /* Visio supplies an SVG fallback beside its proprietary foreignObject. */
+    if (/^foreignObject$/i.test(node.localName)) { node.remove(); continue; }
+    if (/^(script|iframe|object|embed|animate|animateMotion|animateTransform|set)$/i.test(node.localName)) throw new Error('The SVG contains unsupported active content.');
+    if (node.localName.toLowerCase() === 'style' && /@|\\|\/\*|expression\s*\(|(?:url\s*\(\s*(?!#[\w:.-]+\s*\)))/i.test(node.textContent || '')) throw new Error('The SVG stylesheet contains unsupported content.');
+    for (const attr of node.attributes) {
+      const name = attr.localName.toLowerCase(), value = attr.value.trim();
+      if (attr.namespaceURI === 'http://www.w3.org/XML/1998/namespace' && name === 'base') throw new Error('The SVG contains an unsupported base URL.');
+      if (name.startsWith('on') || /(?:@|\\|expression\s*\(|url\s*\(\s*(?!#[\w:.-]+\s*\)))/i.test(value)) throw new Error('The SVG contains unsupported active or external content.');
+      if (name === 'href' && !/^#[-\w:.]+$/.test(value) && !/^data:image\/(png|jpeg|gif|webp);base64,[a-z0-9+/=\s]+$/i.test(value)) throw new Error('The SVG refers to an unsupported external resource.');
+    }
+  }
+  return new XMLSerializer().serializeToString(doc.documentElement);
 }
 
 function showNewProjectModal() {
@@ -531,7 +636,10 @@ async function renderProjectPage(id) {
     const b = e.target.closest('.tab'); if (b) switchTab(+b.dataset.i);
   });
   await loadUnderlay();
-  await renderWorkspace();
+  if (sessionStorage.getItem('wireflow-open-workspace') === String(id)) {
+    sessionStorage.removeItem('wireflow-open-workspace');
+    await switchTab(1);
+  } else await renderWorkspace();
 }
 
 /* ---- Tab 1: Configuration ---- */

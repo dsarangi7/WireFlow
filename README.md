@@ -10,6 +10,10 @@ deterministic rule engine implementing the Wiring Diagram Tool Engineering Rules
 
 Live site: https://dsarangi7.github.io/WireFlow/
 
+- **SVG-first entry (early version):** Import an SVG without entering project
+  metadata, then continue in the existing wiring workspace. See
+  [SVG-first import](docs/svg-first-import.md) for supported content and limits.
+
 The picture-first workspace lets engineers align a regular rack grid, mark
 battery modules and SSC/ACDP/MSM positions on the imported picture, declare a
 separate number and module count for each SSC, and
@@ -32,6 +36,10 @@ rack; they do not reuse terminals or complete rack wiring plans.
 
 In the picture-first screen, its draft export buttons are blocked when power
 wire centerlines cross or touch; communication/power overlaps are allowed.
+Exports also require complete SSC terminal positions, passing supported checks,
+and agreement between the picture convention and the netlist. The experimental
+111-rack convention cannot currently be exported because its picture and
+netlist differ.
 This is a 2D check, not a physical clearance or engineering approval check.
 An opt-in experimental picture connection choice is available for the supplied
 111 rack. It does not update the netlist or schedule; see the workflow limits in

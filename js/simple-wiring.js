@@ -3,6 +3,15 @@
 function pictureZoomOffset(scroll, anchor, oldZoom, newZoom) {
   return (scroll + anchor) * (newZoom / oldZoom) - anchor;
 }
+function studioExportIssues(input) {
+  const issues = [];
+  if (!input.generated) issues.push('Generate wiring first.');
+  if (!input.deviceReady) issues.push('Mark all SSC and junction-box terminals.');
+  if (input.failedChecks) issues.push('Resolve the failed engineering checks.');
+  if (input.powerBlocked) issues.push('Correct crossing or invalid power routes.');
+  if (input.experimental) issues.push('The picture connection convention differs from the netlist and needs engineering review.');
+  return issues;
+}
 /* fvSvg emits a circle at every sampled point, including curve samples. The
  * rack image already shows the terminals; suppress those dots in picture-first
  * output and use a finer stroke. Geometry and electrical rules are unchanged. */
@@ -271,6 +280,34 @@ function pictureModuleRoutesValid(routes) {
   return routes === undefined || routes === null || (!!routes && typeof routes === 'object' && !Array.isArray(routes) && Object.values(routes).every(route => route && ['straight','rounded','curved'].includes(route.style) && Array.isArray(route.points) && route.points.every(p => p && Number.isFinite(p.x) && Number.isFinite(p.y))));
 }
 function pictureModuleRouteKey(slot, index, kind) { return slot + '|' + index + '|' + kind; }
+/* Suggest bottom-column transition curves using the marked chain geometry.
+   These are picture drafts, not clearance-checked physical routes. */
+function pictureSuggestBottomCurves(groups, wires, routes) {
+  if (!pictureModuleRoutesValid(routes) || !Array.isArray(groups) || !Array.isArray(wires)) return null;
+  const next = Object.assign({}, routes || {}); let count = 0;
+  for (let gi = 0; gi < groups.length; gi++) {
+    const group = groups[gi];
+    if (!group || !group.slot || !Array.isArray(group.order) || group.order.length < 2) return null;
+    const slots = group.order.map(slotCell);
+    if (slots.some(s => !Number.isInteger(s.c) || !Number.isInteger(s.r))) return null;
+    const bottom = Math.max(...slots.map(s => s.r));
+    for (let i = 1; i < slots.length; i++) {
+      if (slots[i-1].r !== bottom || slots[i].r !== bottom || slots[i-1].c === slots[i].c) continue;
+      for (const kind of ['power', 'comm']) {
+        const links = wires.filter(w => w.group === gi && w.kind === kind);
+        const link = links[i-1];
+        if (links.length !== slots.length-1 || !link || !Array.isArray(link.pts) || link.pts.length < 2) return null;
+        const a = link.pts[0], b = link.pts[link.pts.length-1];
+        if (![a,b].every(p => p && Number.isFinite(p.x) && Number.isFinite(p.y))) return null;
+        const depth = Math.abs(b.x-a.x) * (kind === 'power' ? .50 : .16);
+        if (!(depth > 0)) return null;
+        next[pictureModuleRouteKey(group.slot, i, kind)] = { style:'curved', points:[{x:(a.x+b.x)/2,y:(a.y+b.y)/2+depth}] };
+      }
+      count++;
+    }
+  }
+  return count ? { routes: next, count } : null;
+}
 function pictureSuggestedModuleRoute(a, b, template) {
   if (![a,b].every(p=>p && Number.isFinite(p.x) && Number.isFinite(p.y))) return null;
   const span = Math.hypot(b.x-a.x,b.y-a.y);
@@ -505,7 +542,7 @@ async function tabSimpleWiring(el, project, ctx) {
     devicePorts: JSON.parse(JSON.stringify(saved.devicePorts || {})), deviceStep: 0, deviceSlot: '', pendingDevice: {},
     plan: saved.marking ? JSON.parse(JSON.stringify(saved.marking)) : null,
     banks: saved.marking ? JSON.parse(JSON.stringify(saved.marking.banks)).map((bank, i, all) => ({ ...bank, moduleCounts: markingModuleCounts(bank).slice(), sscNumbers: markingSscNumbers(bank, all.slice(0, i).reduce((sum, b) => sum + b.sscs, 0)).slice() })) : [{ msms: 1, sscs: 5, sscNumbers: [null, null, null, null, null], moduleCounts: [null, null, null, null, null], junctionBoxes: 5, acdps: 2 }],
-    saving: false, saveFailed: false, routeEdit: null,
+    saving: false, saveFailed: false, routeEdit: null, panelCollapsed: false, redoMarks: [], configError: '',
     generated: !!(existingRack && saved.cal && fvCalib(saved.cal).ok && project.config.layout && pictureModulePortsReady(rackModuleCells(existingRack), saved.modulePorts, saved.modulePortPoints)), message: '',
   };
   function rebuildMarks() {
@@ -570,6 +607,8 @@ async function tabSimpleWiring(el, project, ctx) {
     const failed = checks.filter(check => check.status !== 'pass');
     const powerAudit = st.generated ? picturePowerCrossings(pictureModuleWiring(layoutGroups(project), cal, st.ports, st.devicePorts, st.modulePortPoints, st.powerConvention, st.moduleDraftRoutes)) : { valid: true, pairs: [] };
     const powerBlocked = !pictureModuleRoutesValid(st.moduleDraftRoutes) || !powerAudit.valid || powerAudit.pairs.length > 0;
+    const deviceReady = !!rack && rackDeviceCells(rack, 'ssc').length > 0 && rackDeviceCells(rack, 'ssc').every(slot => pictureDevicePortsComplete(st.devicePorts[slot]));
+    const exportIssues = studioExportIssues({ generated: st.generated, deviceReady, failedChecks: failed.length, powerBlocked, experimental: st.powerConvention === 'reference-sample' });
     const prompt = portMarkingPrompt(st.portStep, st.deviceStep);
     if (prompt && st.deviceStep && st.plan && !issues.length) {
       const groups = markingLayout(st.plan).sscs;
@@ -587,8 +626,9 @@ async function tabSimpleWiring(el, project, ctx) {
         <div class="marking-table"><table><thead><tr><th>Bank</th><th>MSMs</th><th>SSCs</th><th>Junction boxes</th><th>ACDPs</th></tr></thead><tbody>${st.banks.map((bank, i) => `<tr><th>${i + 1}</th>${['msms','sscs','junctionBoxes','acdps'].map(key => `<td><input aria-label="Bank ${i + 1} ${key}" data-bank="${i}" data-count="${key}" type="number" min="${key === 'acdps' ? 0 : 1}" max="${key === 'msms' ? 12 : 24}" value="${bank[key]}"></td>`).join('')}</tr>`).join('')}</tbody></table></div>
         <p>Enter the actual SSC number and module count for each SSC in this rack. You will mark every module in order.</p>
         ${st.banks.map((bank, i) => `<div><strong>Bank ${i + 1}</strong>${markingModuleCounts(bank).map((count, s) => `<div class="btn-row"><span>SSC entry ${s + 1}</span><label>SSC number <input aria-label="Bank ${i + 1} SSC entry ${s + 1} number" data-ssc-bank="${i}" data-ssc-index="${s}" type="number" min="1" max="9999" value="${bank.sscNumbers[s] ?? ''}" style="width:75px"></label><label>Modules <input aria-label="Bank ${i + 1} SSC entry ${s + 1} modules" data-module-bank="${i}" data-module-ssc="${s}" type="number" min="2" max="48" value="${count ?? ''}" style="width:75px"></label></div>`).join('')}</div>`).join('')}
+        ${st.configError ? `<p class="studio-config-error" role="alert">${esc(st.configError)}</p>` : ''}
         <button class="btn btn-ghost" id="marking-start" ${!cal || !cal.ok || st.saving ? 'disabled' : ''}>${st.plan || marked.length ? 'Restart ordered marking (replaces current marks)' : 'Start ordered marking'}</button>
-        <p class="muted small">Set and align the grid below first. Edited counts apply when you start again, replacing current component marks and port measurements. Counts and progress are saved on this device.</p>
+        <p class="muted small">First complete “Align the drawing”. Each SSC needs a unique number. Starting again replaces current marks and port measurements.</p>
       </div>
       <div class="card" style="margin-bottom:16px">
         <h3>1 · Set the rack grid</h3><p class="muted small">Enter the number of evenly spaced grid columns and rows, including empty positions. Enter the actual centre-to-centre distances in millimetres.</p>
@@ -616,7 +656,7 @@ async function tabSimpleWiring(el, project, ctx) {
         <p class="muted small">Use the mouse wheel to zoom toward the pointer. Drag with the middle mouse button to pan; left-click to mark.</p>
         ${prompt ? `<div class="port-instruction" role="status" aria-live="polite"><div class="port-instruction-progress">${prompt.title} · STEP ${prompt.current} OF ${prompt.total}</div><strong>${prompt.instruction}</strong><span>${st.message ? esc(st.message) : prompt.current === 1 ? 'Select the marked component on the drawing below.' : 'Click the port centre on the drawing below.'}</span><button class="btn btn-ghost btn-sm" id="simple-cancel-ports">Cancel marking</button></div>` : next ? `<div class="port-instruction" role="status" aria-live="polite"><div class="port-instruction-progress">BANK ${next.bank} · COMPONENT ${records.length + 1} OF ${steps.length}</div><strong>Click ${esc(next.label)} on the drawing.</strong><span>${st.message ? esc(st.message) : next.kind === 'module' ? 'Click this module in chain order. This click determines its number and SSC assignment.' : next.kind === 'acdp' ? 'Identification only. No ACDP wiring will be generated.' : 'Click the component centre.'}</span>${next.kind === 'jb' ? `<label>Junction box <select id="marking-jb"><option value="">Choose a junction box</option>${next.jbIds.map(id => `<option value="${id}" ${next.defaultJb === id ? 'selected' : ''}>${id}${records.some(r => r.jbId === id) ? ' (already marked; share)' : ''}</option>`).join('')}</select></label>` : ''}</div>` : `<p class="muted small">${st.plan ? 'Component marking complete. Mark the module ports, then each SSC and its junction-box terminals.' : 'Start ordered marking to receive one command at a time.'}</p>`}
         ${issues.length ? '<ul class="marking-warnings">' + issues.map(issue => '<li>' + esc(issue) + '</li>').join('') + '</ul>' : ''}
-        ${st.generated && !st.routeEdit ? `<details><summary>Advanced: adjust a draft route</summary><p class="muted small">Choose a connection, then click its intermediate points in order on the picture. Choose straight bends or a smooth curve. Curves use approximate control points and require engineering review.</p><div class="btn-row"><label>SSC <select id="route-ssc">${layoutGroups(project).map(group => `<option value="${esc(group.slot)}">${esc(group.label)}</option>`).join('')}</select></label><label>Connection <select id="route-key"><option value="stringPos">SSC string + to module</option><option value="stringNeg">SSC string − to module</option><option value="commS">SSC communication S to module</option><option value="commN">SSC communication N to module</option><option value="busPos">SSC bus + to junction box</option><option value="busNeg">SSC bus − to junction box</option><option value="modulePower">Module-to-module power</option><option value="moduleComm">Module-to-module communication</option></select></label><label>From module <input id="route-module" type="number" min="1" max="47" value="1" style="width:75px"></label><label>Route style <select id="route-style"><option value="saved">Keep saved style</option><option value="straight">Straight bends</option><option value="curved">C-style curve</option><option value="rounded">Rounded L-style bends</option></select></label><button class="btn btn-ghost btn-sm" id="route-start">Edit route</button></div><div class="route-presets"><label>One-click shape <select id="route-template"><option value="">Choose a shape</option>${[['straight','Straight'],['l-horizontal','L: horizontal then vertical'],['l-vertical','L: vertical then horizontal'],['c-above','C: curve above'],['c-below','C: curve below']].map(([value,label]) => `<option value="${value}" ${pictureLastRouteTemplate() === value ? 'selected' : ''}>${label}${pictureLastRouteTemplate() === value ? ' (last used on this device)' : ''}</option>`).join('')}</select></label><button class="btn btn-primary btn-sm" id="route-apply-template">Apply to this link</button><button class="btn btn-ghost btn-sm" id="route-apply-all">Apply to this link number in every SSC</button><button class="btn btn-ghost btn-sm" id="route-remember-method" ${pictureMethodRulesValid(st.routeMethodRules) ? '' : 'disabled'}>Remember this rack method</button><button class="btn btn-ghost btn-sm" id="route-use-method" ${pictureRememberedMethod() ? '' : 'disabled'}>Apply remembered method</button><p class="muted small">The remembered method contains only shapes applied across SSCs, not terminal positions, manual exceptions, SSC routes or a complete wiring plan. It is saved on this device.</p><p class="muted small">Applies to Mx to M(x+1); all SSCs must contain that link. Shapes are draft suggestions; check routing and clearance.</p></div></details>` : ''}
+        ${st.generated && !st.routeEdit ? `<button class="btn btn-ghost btn-sm" id="route-bottom-suggest">Suggest bottom curves</button><p class="muted small">Suggest curves where a chain crosses between bottom-row columns. Review the drawing and physical clearance.</p><details><summary>Advanced: adjust a draft route</summary><p class="muted small">Choose a connection, then click its intermediate points in order on the picture. Choose straight bends or a smooth curve. Curves use approximate control points and require engineering review.</p><div class="btn-row"><label>SSC <select id="route-ssc">${layoutGroups(project).map(group => `<option value="${esc(group.slot)}">${esc(group.label)}</option>`).join('')}</select></label><label>Connection <select id="route-key"><option value="stringPos">SSC string + to module</option><option value="stringNeg">SSC string − to module</option><option value="commS">SSC communication S to module</option><option value="commN">SSC communication N to module</option><option value="busPos">SSC bus + to junction box</option><option value="busNeg">SSC bus − to junction box</option><option value="modulePower">Module-to-module power</option><option value="moduleComm">Module-to-module communication</option></select></label><label>From module <input id="route-module" type="number" min="1" max="47" value="1" style="width:75px"></label><label>Route style <select id="route-style"><option value="saved">Keep saved style</option><option value="straight">Straight bends</option><option value="curved">C-style curve</option><option value="rounded">Rounded L-style bends</option></select></label><button class="btn btn-ghost btn-sm" id="route-start">Edit route</button></div><div class="route-presets"><label>One-click shape <select id="route-template"><option value="">Choose a shape</option>${[['straight','Straight'],['l-horizontal','L: horizontal then vertical'],['l-vertical','L: vertical then horizontal'],['c-above','C: curve above'],['c-below','C: curve below']].map(([value,label]) => `<option value="${value}" ${pictureLastRouteTemplate() === value ? 'selected' : ''}>${label}${pictureLastRouteTemplate() === value ? ' (last used on this device)' : ''}</option>`).join('')}</select></label><button class="btn btn-primary btn-sm" id="route-apply-template">Apply to this link</button><button class="btn btn-ghost btn-sm" id="route-apply-all">Apply to this link number in every SSC</button><button class="btn btn-ghost btn-sm" id="route-remember-method" ${pictureMethodRulesValid(st.routeMethodRules) ? '' : 'disabled'}>Remember this rack method</button><button class="btn btn-ghost btn-sm" id="route-use-method" ${pictureRememberedMethod() ? '' : 'disabled'}>Apply remembered method</button><p class="muted small">The remembered method contains only shapes applied across SSCs, not terminal positions, manual exceptions, SSC routes or a complete wiring plan. It is saved on this device.</p><p class="muted small">Applies to Mx to M(x+1); all SSCs must contain that link. Shapes are draft suggestions; check routing and clearance.</p></div></details>` : ''}
         ${st.routeEdit ? `<div class="port-instruction" role="status"><strong>${st.routeEdit.curved ? "Click curve control points" : "Click route bends"} on the picture, in order from ${st.routeEdit.type === "module" ? "the first module" : "the SSC"}.</strong><span>${st.routeEdit.points.length} intermediate points selected. Save with no points to return to a straight preview.</span><div class="btn-row"><button class="btn btn-ghost btn-sm" id="route-undo" ${st.routeEdit.points.length ? '' : 'disabled'}>Undo point</button><button class="btn btn-ghost btn-sm" id="route-clear" ${st.routeEdit.points.length ? '' : 'disabled'}>Clear points</button><button class="btn btn-primary btn-sm" id="route-save">Save draft route</button><button class="btn btn-ghost btn-sm" id="route-cancel">Cancel</button></div></div>` : ''}
         </div><div id="simple-picture-scroll" style="border:1px solid var(--border);border-radius:8px;overflow:auto;max-height:70vh"><div id="simple-picture" style="width:${st.zoom * 100}%;cursor:crosshair">${svg}</div></div></div>
       </div>
@@ -626,11 +666,84 @@ async function tabSimpleWiring(el, project, ctx) {
         <p class="muted small">${rack ? Object.keys(st.devicePorts).filter(slot => rackIsModule(rack, slot) === false && rackDeviceCells(rack, 'ssc').includes(slot) && pictureDevicePortsComplete(st.devicePorts[slot])).length : 0} of ${rack ? rackDeviceCells(rack, 'ssc').length : 0} SSCs have their ports marked. Links with missing terminals or invalid draft routes are omitted. Check assignments and routes; lines are direct previews, not approved cable routes.</p>
         ${st.modulePortPoints !== null && !moduleReady ? '<p class="warn" role="status">Some individual module ports are missing or invalid. Complete them, or mark module ports again to replace these positions.</p>' : ''}
         ${st.generated && powerBlocked ? '<p class="warn" role="alert">Power cables cross or touch in this drawing. Correct the routes before exporting. This check does not verify physical clearance.</p>' : ''}
-        <div class="btn-row"><button class="btn btn-primary" id="simple-generate" ${!cal || !cal.ok || !moduleReady || st.deviceStep || st.portStep || issues.length || st.saving || st.saveFailed ? 'disabled' : ''}>Generate wiring</button>${st.generated ? `<button class="btn btn-ghost" id="simple-visio" ${powerBlocked || st.powerConvention === 'reference-sample' ? 'disabled' : ''}>Download editable draft (Visio)</button><button class="btn btn-ghost" id="simple-svg" ${powerBlocked ? 'disabled' : ''}>Download draft wiring drawing (SVG)</button><button class="btn btn-ghost" id="simple-sheet-svg" ${powerBlocked ? 'disabled' : ''}>Download draft A3 sheet (SVG)</button><button class="btn btn-ghost" id="simple-export" ${powerBlocked || st.powerConvention === 'reference-sample' ? 'disabled' : ''}>Print draft PDF</button>` : ''}</div>
+        <div class="btn-row"><button class="btn btn-primary" id="simple-generate" ${!cal || !cal.ok || !moduleReady || st.deviceStep || st.portStep || issues.length || st.saving || st.saveFailed ? 'disabled' : ''}>Generate wiring</button>${st.generated ? `<button class="btn btn-ghost" id="simple-visio" ${exportIssues.length ? 'disabled' : ''}>Download editable draft (Visio)</button><button class="btn btn-ghost" id="simple-svg" ${exportIssues.length ? 'disabled' : ''}>Download draft wiring drawing (SVG)</button><button class="btn btn-ghost" id="simple-sheet-svg" ${exportIssues.length ? 'disabled' : ''}>Download draft A3 sheet (SVG)</button><button class="btn btn-ghost" id="simple-export" ${exportIssues.length ? 'disabled' : ''}>Print draft PDF</button>` : ''}</div>
+        ${st.generated && exportIssues.length ? '<ul class="marking-warnings">' + exportIssues.map(issue => '<li>' + esc(issue) + '</li>').join('') + '</ul>' : ''}
         ${st.generated ? '<p class="muted small">You can change markings here and generate again. Visio edits are separate and do not update this saved project.</p>' : ''}
         <p id="simple-message" role="status">${esc(st.message)}</p>
         ${st.generated ? `<p class="${failed.length ? 'warn' : 'muted'}">${failed.length ? failed.length + ' checks need attention before release.' : 'All ' + checks.length + ' checks pass.'}</p>${failed.length ? '<ul>' + failed.map(check => '<li>' + esc(check.id + ': ' + check.detail) + '</li>').join('') + '</ul>' : ''}` : ''}
       </div>`;
+    /* Reuse the existing controls and handlers in a canvas-first shell. */
+    const cards = Array.from(el.children);
+    const countCard = cards[1], gridCard = cards[2], markCard = cards[3], generateCard = cards[4];
+    const tools = markCard.querySelector('.marking-tools');
+    const canvas = markCard.querySelector('#simple-picture-scroll');
+    const studio = document.createElement('div');
+    studio.className = 'wiring-studio';
+    studio.innerHTML = '<header class="studio-toolbar"><strong>AYK <span>Wiring Studio</span></strong><span class="studio-stage">Drawing workspace</span><div><button class="studio-tool" type="button" data-studio-action="undo" title="Undo last component mark">Undo</button><button class="studio-tool" type="button" data-studio-action="redo" title="Redo last component mark">Redo</button><button class="studio-tool" type="button" data-studio-action="fit" title="Fit drawing">Fit</button><button class="studio-tool" type="button" data-studio-action="out" title="Zoom out">−</button><button class="studio-tool" type="button" data-studio-action="in" title="Zoom in">+</button><button class="studio-tool" type="button" data-studio-action="save" title="Download saved session">Save session</button><button class="studio-tool" type="button" data-studio-action="export" title="Open export options">Export</button><button class="studio-tool" type="button" data-studio-action="panel" aria-expanded="true" title="Show or hide workflow">Workflow</button><button class="studio-tool" type="button" data-studio-action="exit" title="Return to projects">Exit</button></div></header><div class="studio-body"><main class="studio-canvas"></main><aside class="studio-panel" aria-label="Wiring workflow"></aside></div>';
+    studio.querySelector('.studio-canvas').appendChild(canvas);
+    const brand = studio.querySelector('.studio-toolbar strong');
+    const logo = document.createElement('img'); logo.src = 'assets/ayk-logo.ico'; logo.alt = 'AYK Energy'; logo.className = 'studio-toolbar-logo';
+    brand.prepend(logo);
+    const panel = studio.querySelector('.studio-panel');
+    const stage = !cal || !cal.ok ? 0 : st.configError || !st.plan ? 1 : next || st.portStep || st.deviceStep || !moduleReady || !deviceReady ? 2 : 3;
+    const sections = [[gridCard, '1 · Align the drawing'], [countCard, '2 · Configure the rack'], [tools, '3 · Mark components and ports'], [generateCard, '4 · Generate and review']];
+    sections.forEach(([content, label], index) => {
+      const section = document.createElement('details'); section.className = 'studio-step'; section.open = index === stage;
+      const summary = document.createElement('summary'); summary.textContent = label;
+      section.appendChild(summary); section.appendChild(content); panel.appendChild(section);
+    });
+    studio.querySelector('.studio-stage').textContent = sections[stage][1];
+    el.replaceChildren(studio);
+    studio.classList.toggle('studio-panel-collapsed', st.panelCollapsed);
+    studio.querySelector('[data-studio-action="panel"]').setAttribute('aria-expanded', String(!st.panelCollapsed));
+    studio.querySelector('[data-studio-action="fit"]').onclick = () => el.querySelector('#simple-zoom-fit').click();
+    const toolbarUndo = studio.querySelector('[data-studio-action="undo"]');
+    toolbarUndo.disabled = !records.length || st.saving;
+    toolbarUndo.onclick = () => el.querySelector('#marking-undo').click();
+    const toolbarRedo = studio.querySelector('[data-studio-action="redo"]');
+    toolbarRedo.disabled = !st.redoMarks.length || st.saving || !st.plan;
+    toolbarRedo.onclick = async () => {
+      const record = st.redoMarks[st.redoMarks.length - 1];
+      const checked = markingRecord(st.plan, record.point, record.slot, record.jbId);
+      if (checked.error || checked.record.key !== record.key) { st.redoMarks = []; st.message = checked.error || 'The marking order changed; redo is unavailable.'; render(); return; }
+      st.redoMarks.pop(); st.plan.records.push(checked.record); rebuildMarks(); st.generated = false;
+      st.message = 'Component mark restored. Terminal positions still require review.'; await persist();
+    };
+    const toolbarExport = studio.querySelector('[data-studio-action="export"]');
+    toolbarExport.disabled = exportIssues.length > 0;
+    toolbarExport.onclick = () => {
+      st.panelCollapsed = false; studio.classList.remove('studio-panel-collapsed');
+      studio.querySelector('[data-studio-action="panel"]').setAttribute('aria-expanded', 'true');
+      const section = generateCard.closest('details'); section.open = true; section.scrollIntoView({ block: 'start' });
+    };
+    studio.querySelector('[data-studio-action="out"]').onclick = () => el.querySelector('#simple-zoom-out').click();
+    studio.querySelector('[data-studio-action="in"]').onclick = () => el.querySelector('#simple-zoom-in').click();
+    studio.querySelector('[data-studio-action="save"]').onclick = async () => {
+      if (st.saving || st.saveFailed) { toast('Finish saving the current markings before downloading a session.', 'error'); return; }
+      try { await saveStudioSession(project); toast('Saved session downloaded. Unapplied count edits are not included.'); }
+      catch (error) { toast(error.message || 'Could not save this session.', 'error'); }
+    };
+    studio.querySelector('[data-studio-action="exit"]').onclick = () => {
+      if (confirm('Return to projects? Save or apply any unfinished input first.')) location.hash = '#/app';
+    };
+    studio.querySelector('[data-studio-action="panel"]').onclick = event => {
+      st.panelCollapsed = studio.classList.toggle('studio-panel-collapsed');
+      event.currentTarget.setAttribute('aria-expanded', String(!st.panelCollapsed));
+    };
+    studio.onkeydown = event => {
+      if (/^(INPUT|TEXTAREA|SELECT)$/.test(event.target.tagName) || event.target.isContentEditable) return;
+      if ((event.key.toLowerCase() === 'f' || event.key === ' ') && !event.ctrlKey && !event.metaKey && !event.altKey) {
+        event.preventDefault(); el.querySelector('#simple-zoom-fit').click();
+      } else if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === 'z') {
+        if (!toolbarRedo.disabled) { event.preventDefault(); toolbarRedo.click(); }
+      } else if ((event.ctrlKey || event.metaKey) && !event.shiftKey && event.key.toLowerCase() === 'z') {
+        const undo = el.querySelector('#marking-undo');
+        if (undo && !undo.disabled) { event.preventDefault(); undo.click(); }
+      } else if (event.key === 'Escape') {
+        const cancel = el.querySelector('#route-cancel') || el.querySelector('#simple-cancel-ports');
+        if (cancel && !cancel.disabled) { event.preventDefault(); cancel.click(); }
+      }
+    };
     const newScroll = el.querySelector('#simple-picture-scroll');
     newScroll.scrollLeft = scrollLeft; newScroll.scrollTop = scrollTop;
     el.querySelectorAll('[data-count]').forEach(input => { input.oninput = () => { st.banks[Number(input.dataset.bank)][input.dataset.count] = Number(input.value); }; });
@@ -654,20 +767,21 @@ async function tabSimpleWiring(el, project, ctx) {
     }; });
     el.querySelector('#marking-banks').onclick = () => {
       const count = Number(el.querySelector('#marking-bank-count').value);
-      if (!Number.isInteger(count) || count < 1 || count > 8) { st.message = 'Enter between 1 and 8 banks.'; render(); return; }
+      if (!Number.isInteger(count) || count < 1 || count > 8) { st.configError = 'Enter between 1 and 8 banks.'; render(); return; }
+      st.configError = '';
       st.banks = Array.from({ length: count }, (_, i) => st.banks[i] || { msms: 1, sscs: 5, sscNumbers: [null, null, null, null, null], moduleCounts: [null, null, null, null, null], junctionBoxes: 5, acdps: 2 }); render();
     };
     el.querySelector('#marking-start').onclick = async () => {
       const errors = markingPlanErrors(st.banks);
-      if (errors.length) { st.message = errors.join(' '); render(); return; }
+      if (errors.length) { st.configError = errors.join(' '); render(); return; }
       const needed = markingSteps(st.banks).filter(step => step.kind !== 'jb').length;
-      if (needed > st.rack.cols * st.rack.rows) { st.message = 'The declared components need ' + needed + ' grid positions, but this grid has only ' + (st.rack.cols * st.rack.rows) + '. Increase the grid before marking.'; render(); return; }
-      st.plan = { version: 1, banks: JSON.parse(JSON.stringify(st.banks)), records: [] };
+      if (needed > st.rack.cols * st.rack.rows) { st.configError = 'The declared components need ' + needed + ' grid positions, but this grid has only ' + (st.rack.cols * st.rack.rows) + '. Increase the grid before marking.'; render(); return; }
+      st.configError = ''; st.plan = { version: 1, banks: JSON.parse(JSON.stringify(st.banks)), records: [] }; st.redoMarks = [];
       rebuildMarks(); st.ports = null; st.modulePortPoints = null; st.moduleDraftRoutes = {}; st.routeMethodRules = []; st.devicePorts = {}; st.portStep = 0; st.deviceStep = 0; st.generated = false; st.message = '';
       await persist();
     };
     el.querySelector('#marking-undo').onclick = async () => {
-      st.plan.records.pop(); rebuildMarks(); st.generated = false; st.portStep = 0; st.deviceStep = 0;
+      st.redoMarks.push(st.plan.records.pop()); rebuildMarks(); st.generated = false; st.portStep = 0; st.deviceStep = 0;
       st.devicePorts = {}; st.modulePortPoints = null; st.moduleDraftRoutes = {}; st.routeMethodRules = []; st.message = 'Last component mark removed. Repeat the highlighted step. SSC ports must be marked again after changing components.'; await persist();
     };
     el.querySelector('#marking-retry')?.addEventListener('click', persist);
@@ -679,22 +793,24 @@ async function tabSimpleWiring(el, project, ctx) {
       for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) cells.push({ c, r, kind: 'empty', label: '' });
       st.rack = rackEnsure({ cols, rows, pitchX: px, pitchY: py, cells });
       st.cal = fvCalib({ imgW: image.naturalWidth, imgH: image.naturalHeight, cols, rows });
-      st.plan = null; st.calibrating = 1; st.click = null; st.generated = false; st.ports = null; st.modulePortPoints = null; st.moduleDraftRoutes = {}; st.routeMethodRules = []; st.portStep = 0; st.devicePorts = {}; st.deviceStep = 0; st.message = ''; render();
+      st.plan = null; st.redoMarks = []; st.calibrating = 1; st.click = null; st.generated = false; st.ports = null; st.modulePortPoints = null; st.moduleDraftRoutes = {}; st.routeMethodRules = []; st.portStep = 0; st.devicePorts = {}; st.deviceStep = 0; st.message = ''; render();
     };
     const picture = el.querySelector('#simple-picture');
+    const fitWidth = Math.min(newScroll.clientWidth, newScroll.clientHeight * image.naturalWidth / image.naturalHeight);
+    if (fitWidth > 0) picture.style.width = (fitWidth * st.zoom) + 'px';
     const zoomAt = (factor, clientX, clientY) => {
       const bounds = newScroll.getBoundingClientRect();
       const x = clientX - bounds.left - newScroll.clientLeft, y = clientY - bounds.top - newScroll.clientTop;
       const next = Math.max(1, Math.min(12, st.zoom * factor));
       const left = pictureZoomOffset(newScroll.scrollLeft, x, st.zoom, next), top = pictureZoomOffset(newScroll.scrollTop, y, st.zoom, next);
-      st.zoom = next; picture.style.width = (next * 100) + '%';
+      st.zoom = next; picture.style.width = (fitWidth * next) + 'px';
       newScroll.scrollLeft = left; newScroll.scrollTop = top;
       el.querySelector('#simple-zoom-label').textContent = Math.round(next * 100) + '%';
     };
     const zoomCentre = factor => { const r = newScroll.getBoundingClientRect(); zoomAt(factor, r.left + newScroll.clientWidth / 2, r.top + newScroll.clientHeight / 2); };
     el.querySelector('#simple-zoom-in').onclick = () => zoomCentre(1.3);
     el.querySelector('#simple-zoom-out').onclick = () => zoomCentre(1 / 1.3);
-    el.querySelector('#simple-zoom-fit').onclick = () => zoomCentre(1 / st.zoom);
+    el.querySelector('#simple-zoom-fit').onclick = () => { st.zoom = 1; picture.style.width = fitWidth + 'px'; newScroll.scrollLeft = 0; newScroll.scrollTop = 0; el.querySelector('#simple-zoom-label').textContent = '100%'; };
     newScroll.addEventListener('wheel', event => { event.preventDefault(); zoomAt(event.deltaY < 0 ? 1.15 : 1 / 1.15, event.clientX, event.clientY); }, { passive: false });
     let pan = null;
     newScroll.addEventListener('pointerdown', event => { if (event.button !== 1) return; event.preventDefault(); pan = { x: event.clientX, y: event.clientY, left: newScroll.scrollLeft, top: newScroll.scrollTop }; newScroll.setPointerCapture(event.pointerId); });
@@ -723,6 +839,20 @@ async function tabSimpleWiring(el, project, ctx) {
       const curved = style === 'saved' ? !!(st.devicePorts[slot].draftCurveRoutes && st.devicePorts[slot].draftCurveRoutes[key] === true) : style === 'curved';
       st.routeEdit = { slot, key, points: saved || [], curved };
       st.message = saved === null ? 'The saved draft route is invalid. Select replacement points or cancel.' : ''; render();
+    });
+    el.querySelector('#route-bottom-suggest')?.addEventListener('click', async () => {
+      const groups = layoutGroups(project);
+      const wires = pictureModuleWiring(groups, st.cal, st.ports, st.devicePorts, st.modulePortPoints, st.powerConvention, st.moduleDraftRoutes);
+      const suggestion = pictureSuggestBottomCurves(groups, wires, st.moduleDraftRoutes);
+      if (!suggestion) { st.message = 'No complete bottom-row column transitions were found. Check module markings and ports.'; toast(st.message, 'error'); return; }
+      const proposed = pictureModuleWiring(groups, st.cal, st.ports, st.devicePorts, st.modulePortPoints, st.powerConvention, suggestion.routes);
+      const audit = picturePowerCrossings(proposed);
+      if (!audit.valid || audit.pairs.length) { toast('Suggested curves were not applied because power routes cross or touch. Adjust the routes and try again.', 'error'); return; }
+      const oldConfig = project.config, config = JSON.parse(JSON.stringify(project.config || {}));
+      config.numbering = Object.assign({}, config.numbering, { moduleDraftRoutes: suggestion.routes });
+      st.saving = true; render(); const ok = await ctx.saveProject({ config }); st.saving = false;
+      if (!ok) { project.config = oldConfig; toast('Could not save suggested curves.', 'error'); render(); return; }
+      st.moduleDraftRoutes = suggestion.routes; st.message = 'Suggested ' + suggestion.count + ' bottom transition curve(s). Review all routes and clearance.'; render();
     });
     const applyTemplate = async all => {
       const slot=el.querySelector('#route-ssc').value, selection=el.querySelector('#route-key').value;
@@ -842,7 +972,7 @@ async function tabSimpleWiring(el, project, ctx) {
       if (next.kind !== 'jb' && !cell) { st.message = 'Click a position inside the calibrated grid.'; render(); return; }
       const result = markingRecord(st.plan, p, c + ',' + r, el.querySelector('#marking-jb')?.value);
       if (result.error) { st.message = result.error; render(); return; }
-      st.plan.records.push(result.record); rebuildMarks(); st.generated = false; st.message = ''; await persist();
+      st.redoMarks = []; st.plan.records.push(result.record); rebuildMarks(); st.generated = false; st.message = ''; await persist();
     };
     el.querySelector('#simple-power-convention').onchange = async event => {
       st.powerConvention = event.target.value === 'reference-sample' ? 'reference-sample' : 'legacy';
@@ -866,10 +996,20 @@ async function tabSimpleWiring(el, project, ctx) {
       await ctx.getValidations(true);
       st.generated = true; st.message = 'Draft generated. Links with missing terminals or invalid draft routes are omitted; review all assignments and routes.'; render();
     };
-    el.querySelector('#simple-export')?.addEventListener('click', () => { if (!powerBlocked && st.powerConvention !== 'reference-sample') ctx.switchTab(9); });
+    el.querySelector('#simple-export')?.addEventListener('click', () => {
+      if (exportIssues.length) return;
+      const wiring = pictureModuleWiring(layoutGroups(project), st.cal, st.ports, st.devicePorts, st.modulePortPoints, st.powerConvention, st.moduleDraftRoutes);
+      const svg = pictureWiringSvg(st.cal, { src: project.underlay.src }, wiring, { noGrid: true, sscLabels: true }).replace('</svg>', pictureDeviceLabelsSvg(st.plan, st.cal, wiring) + '</svg>');
+      const container = document.createElement('div');
+      container.id = 'print-document'; container.className = 'print-document'; container.setAttribute('aria-hidden', 'true');
+      container.innerHTML = printDocumentHtml(project, [{ title: 'DRAFT — verify all terminals and cable routes', svg }], new Date().toLocaleDateString('en-GB'));
+      document.body.appendChild(container);
+      window.addEventListener('afterprint', () => container.remove(), { once: true });
+      window.print();
+    });
     el.querySelector('#simple-visio')?.addEventListener('click', async () => {
       try {
-        if (powerBlocked || st.powerConvention === 'reference-sample') throw new Error('This draft cannot be exported to Visio until its connections and netlist agree.');
+        if (exportIssues.length) throw new Error(exportIssues.join(' '));
         const wiring = pictureModuleWiring(layoutGroups(project), st.cal, st.ports, st.devicePorts, st.modulePortPoints, st.powerConvention, st.moduleDraftRoutes);
         let exportProject = project;
         if (/^data:image\/svg\+xml/i.test(project.underlay.src)) {
@@ -885,7 +1025,7 @@ async function tabSimpleWiring(el, project, ctx) {
     });
     el.querySelector('#simple-sheet-svg')?.addEventListener('click', () => {
       try {
-        if (powerBlocked) throw new Error('Power cables cross or touch. Correct the routes before exporting.');
+        if (exportIssues.length) throw new Error(exportIssues.join(' '));
         const wiring = pictureModuleWiring(layoutGroups(project), st.cal, st.ports, st.devicePorts, st.modulePortPoints, st.powerConvention, st.moduleDraftRoutes);
         let sheet = pictureSheetSvg(project, st.cal, wiring, VSDX_LOGO_B64);
         if (st.powerConvention === 'reference-sample') sheet = sheet.replace('</svg>', '<text x="80" y="140" font-size="16" fill="#b91c1c">EXPERIMENTAL PICTURE - NETLIST DIFFERS - ENGINEERING REVIEW REQUIRED</text></svg>');
@@ -893,7 +1033,7 @@ async function tabSimpleWiring(el, project, ctx) {
       } catch (error) { toast('Could not create the draft sheet: ' + error.message, 'error'); }
     });
     el.querySelector('#simple-svg')?.addEventListener('click', () => {
-      if (powerBlocked) { toast('Power cables cross or touch. Correct the routes before exporting.', 'error'); return; }
+      if (exportIssues.length) { toast(exportIssues.join(' '), 'error'); return; }
       const wiring = pictureModuleWiring(layoutGroups(project), st.cal, st.ports, st.devicePorts, st.modulePortPoints, st.powerConvention, st.moduleDraftRoutes);
       const warning = st.powerConvention === 'reference-sample' ? '<text x="10" y="20" font-size="14" fill="#b91c1c" stroke="white" stroke-width="3" paint-order="stroke">EXPERIMENTAL PICTURE - NETLIST DIFFERS - ENGINEERING REVIEW REQUIRED</text>' : '';
       const svgOut = pictureWiringSvg(st.cal, { src: project.underlay.src }, wiring, { noGrid: true, sscLabels: true }).replace('</svg>', pictureDeviceLabelsSvg(st.plan, st.cal, wiring) + warning + '</svg>');

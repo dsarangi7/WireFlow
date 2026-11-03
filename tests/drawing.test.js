@@ -497,9 +497,23 @@ ok('print title block embeds the AYK logo and drawing details',
 
 const simpleSrc = fs.readFileSync(path.join(ROOT, 'js', 'simple-wiring.js'), 'utf8');
 const portFactory = new Function('slotCell', 'fvSlotCenter', 'fvDist', 'SSC_PALETTE', 'sheetSvgPrimitive', 'sheetEsc', 'fvSvg',
-  simpleSrc + '\nreturn { PICTURE_DEVICE_PORT_STEPS, pictureZoomOffset, pictureRefineWiringSvg, pictureWiringSvg, modulePortsValid, pictureModulePortsReady, pictureCopyDraftRoutePoints, pictureDevicePortsComplete, picturePowerCrossings, pictureSuggestedModuleRoute, pictureSuggestRoutesForGroups, pictureMethodRulesValid, pictureApplyMethod, pictureModuleRoutesValid, pictureModuleWiring, pictureVisioModel, pictureSheetSvg, portMarkingPrompt, markingModuleCounts, markingPlanErrors, markingSteps, markingIssues, markingRecord, markingLayout, pictureDeviceLabels, pictureDeviceLabelsSvg };');
+  simpleSrc + '\nreturn { PICTURE_DEVICE_PORT_STEPS, studioExportIssues, pictureZoomOffset, pictureRefineWiringSvg, pictureWiringSvg, modulePortsValid, pictureModulePortsReady, pictureCopyDraftRoutePoints, pictureDevicePortsComplete, picturePowerCrossings, pictureSuggestedModuleRoute, pictureSuggestBottomCurves, pictureSuggestRoutesForGroups, pictureMethodRulesValid, pictureApplyMethod, pictureModuleRoutesValid, pictureModuleWiring, pictureVisioModel, pictureSheetSvg, portMarkingPrompt, markingModuleCounts, markingPlanErrors, markingSteps, markingIssues, markingRecord, markingLayout, pictureDeviceLabels, pictureDeviceLabelsSvg };');
 const portsApi = portFactory(E.slotCell, (cal, c, r) => ({ x: cal.x0 + c * cal.pitchX, y: cal.y0 + r * cal.pitchY }),
   (a, b) => Math.hypot(a.x - b.x, a.y - b.y), E.SSC_PALETTE, E.sheetSvgPrimitive, E.sheetEsc, () => '<svg></svg>');
+{
+  const groups = [{ slot:'ssc', order:['0,0','0,1','1,1'] }];
+  const wires = ['power','comm'].flatMap(kind => [{ group:0, kind, pts:[{x:0,y:0},{x:0,y:10}] }, { group:0, kind, pts:[{x:0,y:10},{x:100,y:10}] }]);
+  const result = portsApi.pictureSuggestBottomCurves(groups, wires, {});
+  ok('bottom-column transition gets separate downward power and comm curves', result && result.count === 1 && result.routes['ssc|2|power'].points[0].y > result.routes['ssc|2|comm'].points[0].y);
+  eq('bottom curves fail closed when a communication link is missing', portsApi.pictureSuggestBottomCurves(groups, wires.filter(w => w.kind === 'power'), {}), null);
+}
+{
+  const ready = { generated: true, deviceReady: true, failedChecks: 0, powerBlocked: false, experimental: false };
+  eq('studio export opens only when supported checks pass', portsApi.studioExportIssues(ready).length, 0);
+  for (const [field, value] of [['generated', false], ['deviceReady', false], ['failedChecks', 1], ['powerBlocked', true], ['experimental', true]]) {
+    ok('studio export blocks ' + field, portsApi.studioExportIssues({ ...ready, [field]: value }).length > 0);
+  }
+}
 {
   const source='<svg><polyline points="0,0 1,1" stroke-width="3"/><circle cx="1" pointer-events="none"/><circle cx="2"/><text>Rack</text></svg>';
   const refined=portsApi.pictureRefineWiringSvg(source);
@@ -587,6 +601,9 @@ eq('variable modules per SSC become saved per-string counts', orderedProject.con
 ok('generation preserves bank metadata and omits ACDPs from wiring groups', orderedProject.config.numbering.marking.banks.length === 2 && E.layoutGroups(orderedProject).length === 3);
 const undoPlan = JSON.parse(JSON.stringify(orderedPlan)); undoPlan.records.pop();
 ok('undo reopens exactly the last expected component and blocks completion', portsApi.markingIssues(undoPlan).some(s => s.includes('ACDP3')));
+const undoneRecord = orderedPlan.records[orderedPlan.records.length - 1];
+const redoResult = portsApi.markingRecord(undoPlan, undoneRecord.point, undoneRecord.slot, undoneRecord.jbId);
+ok('redo revalidates and restores the same component identity and position', !redoResult.error && JSON.stringify(redoResult.record) === JSON.stringify(undoneRecord));
 const duplicatePlan = { banks: orderedBanks, records: [orderedPlan.records[0]] };
 ok('duplicate grid clicks cannot create a second component identity', !!portsApi.markingRecord(duplicatePlan, { x: 10, y: 10 }, orderedPlan.records[0].slot).error);
 const sharedBank = { msms: 1, sscs: 2, modules: 2, junctionBoxes: 1, acdps: 0 };
