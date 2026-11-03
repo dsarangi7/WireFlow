@@ -481,11 +481,11 @@ eq('print-document builder returns ordered title/svg page records',
 const projectPrintBody = fnBody(appSrc, 'projectPrintPages');
 let printWiringOptions = null;
 let printSvgOptions = null;
-const printProjectPages = new Function('project', 'conns', 'fvCalib', 'layoutGroups', 'modulePortsValid', 'pictureModuleWiring', 'fvSvg', 'buildPrintDocument', 'renderDiagramSVG', 'schedulePrintSvg', 'pictureDeviceLabelsSvg', 'pictureModuleRoutesValid', projectPrintBody);
+const printProjectPages = new Function('project', 'conns', 'fvCalib', 'layoutGroups', 'modulePortsValid', 'pictureModuleWiring', 'fvSvg', 'buildPrintDocument', 'renderDiagramSVG', 'schedulePrintSvg', 'pictureDeviceLabelsSvg', 'pictureModuleRoutesValid', 'pictureRefineWiringSvg', projectPrintBody);
 const overlayPages = printProjectPages({ config: { numbering: { cal: {} } }, underlay: { kind: 'image', src: 'data:image/png;base64,AA' } }, [],
   () => ({ ok: true }), () => ['group'], () => true, (groups, cal, ports) => { printWiringOptions = { groups, cal, ports }; return ['wire']; },
   (cal, image, wires, options) => { printSvgOptions = options; return wires.join(','); },
-  parts => parts, () => '<svg/>', () => '<svg/>', () => '', () => true);
+  parts => parts, () => '<svg/>', () => '<svg/>', () => '', () => true, svg => svg);
 eq('printed rack picture includes generated wiring', overlayPages.frontSvg, 'wire');
 ok('printed rack uses calibrated wiring and keeps the source image proportions',
   printWiringOptions.groups[0] === 'group' && printSvgOptions.noGrid === true && printSvgOptions.width === undefined);
@@ -497,9 +497,14 @@ ok('print title block embeds the AYK logo and drawing details',
 
 const simpleSrc = fs.readFileSync(path.join(ROOT, 'js', 'simple-wiring.js'), 'utf8');
 const portFactory = new Function('slotCell', 'fvSlotCenter', 'fvDist', 'SSC_PALETTE', 'sheetSvgPrimitive', 'sheetEsc',
-  simpleSrc + '\nreturn { PICTURE_DEVICE_PORT_STEPS, pictureZoomOffset, modulePortsValid, pictureModulePortsReady, pictureCopyDraftRoutePoints, pictureDevicePortsComplete, picturePowerCrossings, pictureSuggestedModuleRoute, pictureSuggestRoutesForGroups, pictureMethodRulesValid, pictureApplyMethod, pictureModuleRoutesValid, pictureModuleWiring, pictureVisioModel, pictureSheetSvg, portMarkingPrompt, markingModuleCounts, markingPlanErrors, markingSteps, markingIssues, markingRecord, markingLayout, pictureDeviceLabels, pictureDeviceLabelsSvg };');
+  simpleSrc + '\nreturn { PICTURE_DEVICE_PORT_STEPS, pictureZoomOffset, pictureRefineWiringSvg, modulePortsValid, pictureModulePortsReady, pictureCopyDraftRoutePoints, pictureDevicePortsComplete, picturePowerCrossings, pictureSuggestedModuleRoute, pictureSuggestRoutesForGroups, pictureMethodRulesValid, pictureApplyMethod, pictureModuleRoutesValid, pictureModuleWiring, pictureVisioModel, pictureSheetSvg, portMarkingPrompt, markingModuleCounts, markingPlanErrors, markingSteps, markingIssues, markingRecord, markingLayout, pictureDeviceLabels, pictureDeviceLabelsSvg };');
 const portsApi = portFactory(E.slotCell, (cal, c, r) => ({ x: cal.x0 + c * cal.pitchX, y: cal.y0 + r * cal.pitchY }),
   (a, b) => Math.hypot(a.x - b.x, a.y - b.y), E.SSC_PALETTE, E.sheetSvgPrimitive, E.sheetEsc);
+{
+  const source='<svg><polyline points="0,0 1,1" stroke-width="3"/><circle cx="1" pointer-events="none"/><circle cx="2"/><text>Rack</text></svg>';
+  const refined=portsApi.pictureRefineWiringSvg(source);
+  ok('picture output removes wire sample dots but preserves geometry and unrelated marks', refined.includes('points="0,0 1,1"') && refined.includes('stroke-width="1.2"') && !refined.includes('cx="1"') && refined.includes('cx="2"') && refined.includes('>Rack</text>'));
+}
 {
   const wire = (kind, pts) => ({ kind, pts: pts.map(([x,y]) => ({x,y})) });
   const a = wire('power', [[0,0],[2,2]]), crossing = wire('sscp', [[0,2],[2,0]]);
@@ -638,7 +643,7 @@ const printRoutes = {'1,1|1|power':{style:'rounded',points:[{x:3,y:4}]}};
 const individualPrint = printProjectPages({ config: { numbering: { cal: {}, modulePortPoints: individualPorts, moduleDraftRoutes: printRoutes } }, underlay: { kind: 'image', src: 'data:image/png;base64,AA' } }, [],
   () => ({ ok: true }), () => [{ order: ['0,0','0,1'] }], portsApi.modulePortsValid,
   (groups, cal, shared, devices, map, mode, routes) => { printedPortMap = map; printedRoutes = routes; return ['wire']; },
-  () => '<svg></svg>', parts => parts, () => '<svg/>', () => '<svg/>', () => '', () => true);
+  () => '<svg></svg>', parts => parts, () => '<svg/>', () => '<svg/>', () => '', () => true, svg => svg);
 ok('print uses complete individual module positions without shared offsets', printedPortMap === individualPorts && individualPrint.frontSvg.includes('<svg>'));
 ok('print preserves module route adjustments', printedRoutes === printRoutes);
 let incompletePrintWired = false;

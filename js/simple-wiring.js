@@ -3,6 +3,13 @@
 function pictureZoomOffset(scroll, anchor, oldZoom, newZoom) {
   return (scroll + anchor) * (newZoom / oldZoom) - anchor;
 }
+/* fvSvg emits a circle at every sampled point, including curve samples. The
+ * rack image already shows the terminals; suppress those dots in picture-first
+ * output and use a finer stroke. Geometry and electrical rules are unchanged. */
+function pictureRefineWiringSvg(svg) {
+  return svg.replace(/<circle\b[^>]*pointer-events="none"\s*\/>/g, '')
+    .replace(/<polyline\b[^>]*>/g, tag => tag.replace(/stroke-width="[^"]*"/, 'stroke-width="1.2"'));
+}
 function markingModuleCounts(bank) {
   // Existing projects stored one shared count; preserve their saved meaning.
   const count = Number.isInteger(bank.sscs) && bank.sscs > 0 && bank.sscs <= 24 ? bank.sscs : 0;
@@ -528,7 +535,7 @@ async function tabSimpleWiring(el, project, ctx) {
         `<circle cx="${st.portRef.x + offset.x}" cy="${st.portRef.y + offset.y}" r="${Math.max(3, Math.min(cal.pitchX, cal.pitchY) * .045)}" fill="${name.startsWith('comm') ? '#00a651' : '#e02020'}" stroke="white" stroke-width="1" pointer-events="none"/>`).join('') : '';
       const deviceMarks = st.deviceStep >= 2 ? Object.entries(st.pendingDevice).map(([name, point]) =>
         `<circle cx="${point.x}" cy="${point.y}" r="${Math.max(3, Math.min(cal.pitchX, cal.pitchY) * .045)}" fill="${name.startsWith('comm') ? '#00a651' : '#e02020'}" stroke="white" stroke-width="1" pointer-events="none"/>`).join('') : '';
-      svg = fvSvg(cal, { src: project.underlay.src }, wiring, { width, height, noGrid: true, sscLabels: true }).replace('</svg>', (st.generated ? pictureDeviceLabelsSvg(st.plan, cal) : marks) + portMarks + deviceMarks + '</svg>');
+      svg = pictureRefineWiringSvg(fvSvg(cal, { src: project.underlay.src }, wiring, { width, height, noGrid: true, sscLabels: true })).replace('</svg>', (st.generated ? pictureDeviceLabelsSvg(st.plan, cal) : marks) + portMarks + deviceMarks + '</svg>');
     } else {
       svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${image.naturalWidth} ${image.naturalHeight}"><image width="${image.naturalWidth}" height="${image.naturalHeight}" href="${esc(project.underlay.src)}"/></svg>`;
     }
@@ -862,7 +869,7 @@ async function tabSimpleWiring(el, project, ctx) {
       if (powerBlocked) { toast('Power cables cross or touch. Correct the routes before exporting.', 'error'); return; }
       const wiring = pictureModuleWiring(layoutGroups(project), st.cal, st.ports, st.devicePorts, st.modulePortPoints, st.powerConvention, st.moduleDraftRoutes);
       const warning = st.powerConvention === 'reference-sample' ? '<text x="10" y="20" font-size="14" fill="#b91c1c" stroke="white" stroke-width="3" paint-order="stroke">EXPERIMENTAL PICTURE - NETLIST DIFFERS - ENGINEERING REVIEW REQUIRED</text>' : '';
-      const svgOut = fvSvg(st.cal, { src: project.underlay.src }, wiring, { noGrid: true, sscLabels: true }).replace('</svg>', pictureDeviceLabelsSvg(st.plan, st.cal) + warning + '</svg>');
+      const svgOut = pictureRefineWiringSvg(fvSvg(st.cal, { src: project.underlay.src }, wiring, { noGrid: true, sscLabels: true })).replace('</svg>', pictureDeviceLabelsSvg(st.plan, st.cal) + warning + '</svg>');
       download((project.name || 'wiring') + '-rack-wiring.svg', svgOut, 'image/svg+xml');
     });
     if (st.routeEdit) el.querySelectorAll('button,input,select').forEach(control => {
