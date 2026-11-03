@@ -55,11 +55,13 @@ for(let i=0;i<5;i++){
     const railX=box.x+(positive?90.3:94.9), lowY=start.y-(positive?23.8:20.2), topY=end.y+55;
     const top={x:railX,y:topY}; d.draftRoutes[key]=[{x:railX,y:lowY},top,...arcPoints(top,{x:railX,y:end.y},end)];
   }
-  // Sample-informed comm rail geometry; string power routes remain straight
-  // because the reference and the approved ordering are unresolved.
+  // Sample-informed comm rail geometry, subject to engineering review.
   const topModule=modules.find(m=>Math.round((m.face_x-xMin)/pitchX)===2*i && Math.round((m.face_y-yMin)/pitchY)===0);
   const terminal=getPoint(topModule,'S'), railX=topModule.face_x+98;
   d.draftRoutes.commN=[{x:railX,y:d.commN.y-16},{x:railX,y:terminal.y+4},{x:terminal.x+70,y:terminal.y-11},{x:terminal.x+10,y:terminal.y-11}];
+  // Fixture-only lane and bends measured from the reference drawing, pending
+  // engineering review of the actual cable route and clearance.
+  d.draftRoutes.stringPos=[{x:railX-3,y:d.pwrPos.y-25},{x:railX-3,y:getPoint(topModule,'positive').y+11.5}];
   devices[slot]=d;
   groups.push({slot,label:'S'+(5-i),order:[...Array.from({length:4},(_,r)=>(2*i+1)+','+(r+4)),...Array.from({length:8},(_,r)=>(2*i)+','+(7-r))]});
 }
