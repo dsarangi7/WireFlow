@@ -7,14 +7,17 @@ routes; its output is not approved or suitable for building a rack. Existing
 output files are never overwritten. The finished reference is not read.
 """
 import hashlib
+import importlib.util
 from contextlib import contextmanager
 import secrets
 import io
+from itertools import combinations
 import os
 import shutil
 import subprocess
 import sys
 import zipfile
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from PIL import Image
@@ -30,6 +33,29 @@ def sha256_file(path):
         for chunk in iter(lambda: stream.read(1024 * 1024), b''):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def require_no_power_crossings(root):
+    """Reject visible red segment crossings, touches and collinear overlaps."""
+    audit_spec = importlib.util.spec_from_file_location('wireflow_crossings', HERE/'audit-svg-crossings.py')
+    audit_module = importlib.util.module_from_spec(audit_spec)
+    audit_spec.loader.exec_module(audit_module)
+    def on_segment(a, b, p):
+        return (abs(audit_module.cross(a, b, p)) < 1e-7 and
+                min(a[0], b[0])-1e-7 <= p[0] <= max(a[0], b[0])+1e-7 and
+                min(a[1], b[1])-1e-7 <= p[1] <= max(a[1], b[1])+1e-7)
+    def intersects(a, b, c, d):
+        return (audit_module.interior_cross(a, b, c, d) or on_segment(a, b, c) or
+                on_segment(a, b, d) or on_segment(c, d, a) or on_segment(c, d, b))
+    paths = []
+    for element in root.iter():
+        if element.tag.split('}')[-1] == 'polyline' and element.get('stroke', '').lower() == '#e02020':
+            points = [tuple(map(float, p.split(','))) for p in element.attrib['points'].split()]
+            paths.append(list(zip(points, points[1:])))
+    if not paths:
+        raise ValueError('No power cables found in draft.')
+    if any(intersects(*a, *b) for first, second in combinations(paths, 2) for a in first for b in second):
+        raise ValueError('Power cable crossings detected. Draft files were not released.')
 
 
 @contextmanager
@@ -94,6 +120,8 @@ def generate(source, outdir):
             raise ValueError('The generator did not produce all files required for endpoint checks.')
         subprocess.run([sys.executable, str(HERE/'test-reference-candidate-endpoints.py')],
                        check=True, env=validation_env)
+        # This 2D centreline check cannot establish physical cable clearance.
+        require_no_power_crossings(ET.parse(tmp/'rack.svg').getroot())
         for src, dst in zip((tmp/'rack.svg', tmp/'sheet.svg'), outputs):
             with src.open('rb') as inp, dst.open('xb') as out:
                 shutil.copyfileobj(inp, out)
