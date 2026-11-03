@@ -61,6 +61,27 @@ class ReferenceCandidateEndpoints(unittest.TestCase):
         green_wires = [e for e in svg.iter() if e.tag.endswith('polyline') and e.get('stroke') == '#00a651']
         green_paths = [[tuple(map(float, point.split(','))) for point in w.get('points').split()] for w in green_wires]
         self.assertEqual((len(paths), len(green_paths)), (75, 65))
+        if sheet_path:
+            # Compare each exported segment, rather than only the number of
+            # wires. Rack coordinates are rounded to tenths, sheet to hundredths.
+            scale = min(1510 / 1155, 740 / 428)
+            ox = 85 + (1510 - 1155 * scale) / 2
+            oy = 145 + (740 - 428 * scale) / 2
+            for rack_paths, color in ((paths, '#dc2626'), (green_paths, '#16a34a')):
+                lines = [e for e in sheet.iter() if e.tag.endswith('line') and e.get('stroke') == color]
+                remaining = [((float(e.get('x1')), float(e.get('y1'))),
+                              (float(e.get('x2')), float(e.get('y2')))) for e in lines]
+                for path in rack_paths:
+                    for a, b in zip(path, path[1:]):
+                        target = ((ox + a[0] * scale, oy + a[1] * scale),
+                                  (ox + b[0] * scale, oy + b[1] * scale))
+                        matches = [(max(math.dist(target[0], candidate[0]), math.dist(target[1], candidate[1])), i)
+                                   for i, candidate in enumerate(remaining)]
+                        self.assertTrue(matches, 'Missing A3 wire segment')
+                        error, index = min(matches)
+                        self.assertLess(error, .15, 'A3 wire segment moved or changed color')
+                        remaining.pop(index)
+                self.assertFalse(remaining, 'Unexpected extra A3 wire segments')
         def near(point, expected):
             return abs(point[0] - expected['x']) < .1 and abs(point[1] - expected['y']) < .1
         for index, device in enumerate(devices):
