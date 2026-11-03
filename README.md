@@ -11,7 +11,8 @@ deterministic rule engine implementing the Wiring Diagram Tool Engineering Rules
 Live site: https://dsarangi7.github.io/WireFlow/
 
 The picture-first workspace lets engineers align a regular rack grid, mark
-battery modules and SSC/ACDP/MSM positions on the imported picture, and
+battery modules and SSC/ACDP/MSM positions on the imported picture, declare a
+separate number and module count for each SSC, and
 mark the actual module, SSC and junction-box ports to generate a wiring preview
 using the existing endpoint rules. It reports rule failures and exports a draft
 SVG, print/PDF, or Visio file with individually editable wire shapes and an AYK

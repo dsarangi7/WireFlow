@@ -3,13 +3,33 @@
 function pictureZoomOffset(scroll, anchor, oldZoom, newZoom) {
   return (scroll + anchor) * (newZoom / oldZoom) - anchor;
 }
+function markingModuleCounts(bank) {
+  // Existing projects stored one shared count; preserve their saved meaning.
+  const count = Number.isInteger(bank.sscs) && bank.sscs > 0 && bank.sscs <= 24 ? bank.sscs : 0;
+  return Array.isArray(bank.moduleCounts) ? bank.moduleCounts : Array.from({ length: count }, () => bank.modules);
+}
+function markingSscNumbers(bank, offset) {
+  const count = Number.isInteger(bank.sscs) && bank.sscs > 0 && bank.sscs <= 24 ? bank.sscs : 0;
+  return Array.isArray(bank.sscNumbers) ? bank.sscNumbers : Array.from({ length: count }, (_, i) => offset + i + 1);
+}
 function markingPlanErrors(banks) {
   if (!Array.isArray(banks) || !banks.length || banks.length > 8) return ['Enter between 1 and 8 banks.'];
-  const errors = [];
+  const errors = [], usedSscNumbers = new Set(); let offset = 0;
   banks.forEach((bank, i) => {
-    [['msms', 1, 12], ['sscs', 1, 24], ['modules', 2, 48], ['junctionBoxes', 1, 24], ['acdps', 0, 24]].forEach(([key, min, max]) => {
+    [['msms', 1, 12], ['sscs', 1, 24], ['junctionBoxes', 1, 24], ['acdps', 0, 24]].forEach(([key, min, max]) => {
       if (!Number.isInteger(bank[key]) || bank[key] < min || bank[key] > max) errors.push('Bank ' + (i + 1) + ': ' + key + ' must be a whole number from ' + min + ' to ' + max + '.');
     });
+    const counts = markingModuleCounts(bank);
+    if (counts.length !== bank.sscs) errors.push('Bank ' + (i + 1) + ': enter a module count for every SSC.');
+    counts.forEach((n, s) => { if (!Number.isInteger(n) || n < 2 || n > 48) errors.push('Bank ' + (i + 1) + ', SSC ' + (s + 1) + ': enter a module count from 2 to 48.'); });
+    const numbers = markingSscNumbers(bank, offset);
+    if (numbers.length !== bank.sscs) errors.push('Bank ' + (i + 1) + ': enter a number for every SSC.');
+    numbers.forEach((n, s) => {
+      if (!Number.isInteger(n) || n < 1 || n > 9999) errors.push('Bank ' + (i + 1) + ', SSC entry ' + (s + 1) + ': enter an SSC number from 1 to 9999.');
+      else if (usedSscNumbers.has(n)) errors.push('SSC' + n + ' is entered more than once. Use a unique number for each SSC.');
+      else usedSscNumbers.add(n);
+    });
+    if (Number.isInteger(bank.sscs) && bank.sscs > 0 && bank.sscs <= 24) offset += bank.sscs;
   });
   return errors;
 }
@@ -24,10 +44,10 @@ function markingSteps(banks) {
     for (let m = 0; m < bank.msms; m++) add('msm', 'MSM-' + (++msm), 'MSM' + msm);
     const jbIds = Array.from({ length: bank.junctionBoxes }, (_, i) => 'JB-' + (jb + i + 1));
     for (let s = 0; s < bank.sscs; s++) {
-      const id = 'SSC-' + (++ssc);
-      add('ssc', id, 'SSC' + ssc);
-      add('jb', id + ':JB', 'junction box for SSC' + ssc, { ssc: id, jbIds, defaultJb: jbIds[s] || '' });
-      for (let m = 1; m <= bank.modules; m++) add('module', id + ':M' + m, 'SSC' + ssc + ' · M' + m, { ssc: id, module: m });
+      const number = markingSscNumbers(bank, ssc - s)[s], id = 'SSC-' + number; ssc++;
+      add('ssc', id, 'SSC' + number);
+      add('jb', id + ':JB', 'junction box for SSC' + number, { ssc: id, jbIds, defaultJb: jbIds[s] || '' });
+      for (let m = 1; m <= markingModuleCounts(bank)[s]; m++) add('module', id + ':M' + m, 'SSC' + number + ' · M' + m, { ssc: id, module: m });
     }
     for (let j = bank.sscs; j < bank.junctionBoxes; j++) add('jb', jbIds[j], jbIds[j], { jbIds: [jbIds[j]], defaultJb: jbIds[j] });
     jb += bank.junctionBoxes;
@@ -339,7 +359,7 @@ async function tabSimpleWiring(el, project, ctx) {
     portStep: 0, portRef: null, pendingPorts: {}, previousPorts: null, zoom: 1,
     devicePorts: JSON.parse(JSON.stringify(saved.devicePorts || {})), deviceStep: 0, deviceSlot: '', pendingDevice: {},
     plan: saved.marking ? JSON.parse(JSON.stringify(saved.marking)) : null,
-    banks: saved.marking ? JSON.parse(JSON.stringify(saved.marking.banks)) : [{ msms: 1, sscs: 5, modules: 12, junctionBoxes: 5, acdps: 2 }],
+    banks: saved.marking ? JSON.parse(JSON.stringify(saved.marking.banks)).map((bank, i, all) => ({ ...bank, moduleCounts: markingModuleCounts(bank).slice(), sscNumbers: markingSscNumbers(bank, all.slice(0, i).reduce((sum, b) => sum + b.sscs, 0)).slice() })) : [{ msms: 1, sscs: 5, sscNumbers: [null, null, null, null, null], moduleCounts: [null, null, null, null, null], junctionBoxes: 5, acdps: 2 }],
     saving: false, saveFailed: false, routeEdit: null,
     generated: !!(existingRack && saved.cal && fvCalib(saved.cal).ok && project.config.layout && pictureModulePortsReady(rackModuleCells(existingRack), saved.modulePorts, saved.modulePortPoints)), message: '',
   };
@@ -416,7 +436,9 @@ async function tabSimpleWiring(el, project, ctx) {
       <div class="card marking-counts" style="margin-bottom:16px"><h3>Declare the banks and component counts</h3>
         <p class="muted small">Confirm these counts from the imported drawing. Click order sets the SSC identities and each chain’s M1, M2 and so on. ACDPs are marked last for identification only.</p>
         <div class="btn-row"><label>Banks <input id="marking-bank-count" type="number" min="1" max="8" value="${st.banks.length}" style="width:80px"></label><button class="btn btn-ghost btn-sm" id="marking-banks">Update bank rows</button></div>
-        <div class="marking-table"><table><thead><tr><th>Bank</th><th>MSMs</th><th>SSCs</th><th>Modules per SSC</th><th>Junction boxes</th><th>ACDPs</th></tr></thead><tbody>${st.banks.map((bank, i) => `<tr><th>${i + 1}</th>${['msms','sscs','modules','junctionBoxes','acdps'].map(key => `<td><input aria-label="Bank ${i + 1} ${key}" data-bank="${i}" data-count="${key}" type="number" min="${key === 'acdps' ? 0 : key === 'modules' ? 2 : 1}" max="${key === 'modules' ? 48 : key === 'msms' ? 12 : 24}" value="${bank[key]}"></td>`).join('')}</tr>`).join('')}</tbody></table></div>
+        <div class="marking-table"><table><thead><tr><th>Bank</th><th>MSMs</th><th>SSCs</th><th>Junction boxes</th><th>ACDPs</th></tr></thead><tbody>${st.banks.map((bank, i) => `<tr><th>${i + 1}</th>${['msms','sscs','junctionBoxes','acdps'].map(key => `<td><input aria-label="Bank ${i + 1} ${key}" data-bank="${i}" data-count="${key}" type="number" min="${key === 'acdps' ? 0 : 1}" max="${key === 'msms' ? 12 : 24}" value="${bank[key]}"></td>`).join('')}</tr>`).join('')}</tbody></table></div>
+        <p>Enter the actual SSC number and module count for each SSC in this rack. You will mark every module in order.</p>
+        ${st.banks.map((bank, i) => `<div><strong>Bank ${i + 1}</strong>${markingModuleCounts(bank).map((count, s) => `<div class="btn-row"><span>SSC entry ${s + 1}</span><label>SSC number <input aria-label="Bank ${i + 1} SSC entry ${s + 1} number" data-ssc-bank="${i}" data-ssc-index="${s}" type="number" min="1" max="9999" value="${bank.sscNumbers[s] ?? ''}" style="width:75px"></label><label>Modules <input aria-label="Bank ${i + 1} SSC entry ${s + 1} modules" data-module-bank="${i}" data-module-ssc="${s}" type="number" min="2" max="48" value="${count ?? ''}" style="width:75px"></label></div>`).join('')}</div>`).join('')}
         <button class="btn btn-ghost" id="marking-start" ${!cal || !cal.ok || st.saving ? 'disabled' : ''}>${st.plan || marked.length ? 'Restart ordered marking (replaces current marks)' : 'Start ordered marking'}</button>
         <p class="muted small">Set and align the grid below first. Edited counts apply when you start again, replacing current component marks and port measurements. Counts and progress are saved on this device.</p>
       </div>
@@ -437,7 +459,7 @@ async function tabSimpleWiring(el, project, ctx) {
           const mine = steps.slice(0, records.length).map((step, i) => ({ step, record: records[i] })).filter(item => item.step.bank === bi + 1);
           const count = kind => mine.filter(item => item.step.kind === kind).length;
           const boxes = new Set(mine.filter(item => item.record.jbId).map(item => item.record.jbId)).size;
-          return `<p><strong>Bank ${bi + 1}</strong> · MSM ${count('msm')}/${bank.msms} · SSC ${count('ssc')}/${bank.sscs} · Modules ${count('module')}/${bank.sscs * bank.modules} · Junction boxes ${boxes}/${bank.junctionBoxes} · ACDP ${count('acdp')}/${bank.acdps}</p>`;
+          return `<p><strong>Bank ${bi + 1}</strong> · MSM ${count('msm')}/${bank.msms} · SSC ${count('ssc')}/${bank.sscs} · Modules ${count('module')}/${markingModuleCounts(bank).reduce((sum, n) => sum + n, 0)} · Junction boxes ${boxes}/${bank.junctionBoxes} · ACDP ${count('acdp')}/${bank.acdps}</p>`;
         }).join('') + '</div>' : ''}
         <div class="btn-row"><button class="btn btn-ghost btn-sm" id="marking-undo" ${!records.length || st.saving ? 'disabled' : ''}>Undo last component mark</button>${st.saveFailed ? '<button class="btn btn-ghost" id="marking-retry">Retry saving</button>' : ''}</div>
         <div class="btn-row"><button class="btn btn-ghost btn-sm" id="simple-ports" ${!cal || !cal.ok || !rackModuleCells(rack).length || (st.plan && issues.length) ? 'disabled' : ''}>${st.ports || st.modulePortPoints ? 'Mark module ports again' : 'Mark four module ports'}</button>
@@ -464,10 +486,28 @@ async function tabSimpleWiring(el, project, ctx) {
     const newScroll = el.querySelector('#simple-picture-scroll');
     newScroll.scrollLeft = scrollLeft; newScroll.scrollTop = scrollTop;
     el.querySelectorAll('[data-count]').forEach(input => { input.oninput = () => { st.banks[Number(input.dataset.bank)][input.dataset.count] = Number(input.value); }; });
+    el.querySelectorAll('[data-count="sscs"]').forEach(input => { input.onchange = () => {
+      const bank = st.banks[Number(input.dataset.bank)], count = bank.sscs;
+      if (Number.isInteger(count) && count >= 1 && count <= 24) {
+        const old = markingModuleCounts(bank);
+        bank.moduleCounts = Array.from({ length: count }, (_, i) => old[i] ?? null);
+        const oldNumbers = bank.sscNumbers || [];
+        bank.sscNumbers = Array.from({ length: count }, (_, i) => oldNumbers[i] ?? null);
+      }
+      render();
+    }; });
+    el.querySelectorAll('[data-module-bank]').forEach(input => { input.oninput = () => {
+      const bank = st.banks[Number(input.dataset.moduleBank)];
+      bank.moduleCounts[Number(input.dataset.moduleSsc)] = input.value.trim() === '' ? null : Number(input.value);
+    }; });
+    el.querySelectorAll('[data-ssc-bank]').forEach(input => { input.oninput = () => {
+      const bank = st.banks[Number(input.dataset.sscBank)];
+      bank.sscNumbers[Number(input.dataset.sscIndex)] = input.value.trim() === '' ? null : Number(input.value);
+    }; });
     el.querySelector('#marking-banks').onclick = () => {
       const count = Number(el.querySelector('#marking-bank-count').value);
       if (!Number.isInteger(count) || count < 1 || count > 8) { st.message = 'Enter between 1 and 8 banks.'; render(); return; }
-      st.banks = Array.from({ length: count }, (_, i) => st.banks[i] || { msms: 1, sscs: 5, modules: 12, junctionBoxes: 5, acdps: 2 }); render();
+      st.banks = Array.from({ length: count }, (_, i) => st.banks[i] || { msms: 1, sscs: 5, sscNumbers: [null, null, null, null, null], moduleCounts: [null, null, null, null, null], junctionBoxes: 5, acdps: 2 }); render();
     };
     el.querySelector('#marking-start').onclick = async () => {
       const errors = markingPlanErrors(st.banks);
@@ -598,7 +638,7 @@ async function tabSimpleWiring(el, project, ctx) {
       const config = JSON.parse(JSON.stringify(project.config || {}));
       config.numbering = { rack: st.rack, cal: st.cal, marking: st.plan, modulePorts: st.ports, modulePortPoints: st.modulePortPoints, devicePorts: st.devicePorts, powerConvention: st.powerConvention };
       config.layout = markingLayout(st.plan);
-      config.rules = Object.assign({}, config.rules, { modulesPerString: Math.max(...st.plan.banks.map(bank => bank.modules)) });
+      config.rules = Object.assign({}, config.rules, { modulesPerString: Math.max(...st.plan.banks.flatMap(markingModuleCounts)) });
       const candidate = { ...project, config };
       const groups = layoutGroups(candidate);
       layoutApply(candidate, groups);

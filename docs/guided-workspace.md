@@ -5,7 +5,12 @@
 Import a VSDX, PNG, JPG or SVG rack picture, then enter the number of regularly
 spaced grid columns and rows and their measured centre-to-centre spacing in mm.
 Click the top-left and bottom-right grid positions to align the grid, then mark
-each battery module, SSC, ACDP and MSM on the picture. Empty positions remain
+each battery module, SSC, ACDP and MSM on the picture. Declare the module count
+separately for each SSC (2–48), and enter each actual SSC number (1–9999),
+such as SSC7 through SSC12 for a later rack. SSC numbers must be unique within
+the project. The ordered marking prompts use those numbers and require exactly
+the declared number of modules for each SSC before moving to the next. Existing saved plans
+with a shared per-bank count retain that count for every SSC. Empty positions remain
 unmarked. Mark communication S and N and power negative and positive on one
 representative module; those four measured offsets are applied to identical
 modules. For each SSC, mark its communication S/N, power NEG/POS and bus B−/B+

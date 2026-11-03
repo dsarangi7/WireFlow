@@ -497,7 +497,7 @@ ok('print title block embeds the AYK logo and drawing details',
 
 const simpleSrc = fs.readFileSync(path.join(ROOT, 'js', 'simple-wiring.js'), 'utf8');
 const portFactory = new Function('slotCell', 'fvSlotCenter', 'fvDist', 'SSC_PALETTE', 'sheetSvgPrimitive', 'sheetEsc',
-  simpleSrc + '\nreturn { PICTURE_DEVICE_PORT_STEPS, pictureZoomOffset, modulePortsValid, pictureModulePortsReady, pictureCopyDraftRoutePoints, pictureDevicePortsComplete, picturePowerCrossings, pictureModuleWiring, pictureVisioModel, pictureSheetSvg, portMarkingPrompt, markingPlanErrors, markingSteps, markingIssues, markingRecord, markingLayout, pictureDeviceLabels, pictureDeviceLabelsSvg };');
+  simpleSrc + '\nreturn { PICTURE_DEVICE_PORT_STEPS, pictureZoomOffset, modulePortsValid, pictureModulePortsReady, pictureCopyDraftRoutePoints, pictureDevicePortsComplete, picturePowerCrossings, pictureModuleWiring, pictureVisioModel, pictureSheetSvg, portMarkingPrompt, markingModuleCounts, markingPlanErrors, markingSteps, markingIssues, markingRecord, markingLayout, pictureDeviceLabels, pictureDeviceLabelsSvg };');
 const portsApi = portFactory(E.slotCell, (cal, c, r) => ({ x: cal.x0 + c * cal.pitchX, y: cal.y0 + r * cal.pitchY }),
   (a, b) => Math.hypot(a.x - b.x, a.y - b.y), E.SSC_PALETTE, E.sheetSvgPrimitive, E.sheetEsc);
 {
@@ -511,6 +511,38 @@ const portsApi = portFactory(E.slotCell, (cal, c, r) => ({ x: cal.x0 + c * cal.p
 }
 eq('zoom keeps the picture point beneath the pointer stationary', portsApi.pictureZoomOffset(100, 50, 1, 2), 250);
 const orderedBanks = [{ msms: 1, sscs: 2, modules: 3, junctionBoxes: 2, acdps: 1 }, { msms: 2, sscs: 1, modules: 2, junctionBoxes: 1, acdps: 2 }];
+{
+  const banks = [{msms:1, sscs:2, moduleCounts:[3,5], junctionBoxes:2, acdps:0}];
+  const steps = portsApi.markingSteps(banks);
+  eq('each SSC requests its declared module count', steps.filter(s => s.ssc === 'SSC-1' && s.kind === 'module').length + ',' + steps.filter(s => s.ssc === 'SSC-2' && s.kind === 'module').length, '3,5');
+  ok('missing per-SSC module count blocks marking', portsApi.markingPlanErrors([{...banks[0], moduleCounts:[3,null]}]).length > 0);
+  ok('mismatched per-SSC count array blocks marking', portsApi.markingPlanErrors([{...banks[0], moduleCounts:[3]}]).length > 0);
+  const plan = {banks, records: []};
+  steps.forEach((step, i) => { const result = portsApi.markingRecord(plan,{x:i*20,y:10},(i%8)+','+Math.floor(i/8),step.kind === 'jb' ? step.defaultJb : ''); if (result.error) throw Error(result.error); plan.records.push(result.record); });
+  eq('manual assignments retain each individual SSC capacity', portsApi.markingLayout(plan).sscs.map(s => s.order.length).join(','), '3,5');
+  const cells=[]; for(let r=0;r<8;r++) for(let c=0;c<8;c++) cells.push({c,r,kind:'empty'});
+  steps.forEach((step,i)=>{const record=plan.records[i]; if(record.slot){const p=E.slotCell(record.slot); cells.find(cell=>cell.c===p.c && cell.r===p.r).kind=step.kind;}});
+  const project={config:{rules:{...E.DEFAULT_RULES,modulesPerString:5},numbering:{rack:{cols:8,rows:8,cells},marking:plan},layout:portsApi.markingLayout(plan)}};
+  E.layoutApply(project,E.layoutGroups(project));
+  eq('variable counts reach the real netlist input', E.stringModuleCounts(project).join(','), '3,5');
+  plan.records.pop();
+  ok('missing final component blocks completion', portsApi.markingIssues(plan).some(s => s.includes('remaining')));
+  eq('legacy shared counts retain original meaning', portsApi.markingModuleCounts(orderedBanks[0]).join(','), '3,3');
+  const numbered = [{...banks[0], sscNumbers:[7,12]}];
+  const numberedSteps = portsApi.markingSteps(numbered);
+  eq('engineer-supplied SSC numbers drive marking labels and IDs', numberedSteps.filter(s => s.kind === 'ssc').map(s => s.key + ':' + s.label).join(','), 'SSC-7:SSC7,SSC-12:SSC12');
+  ok('SSC7 and SSC12 retain their own module counts', numberedSteps.filter(s => s.ssc === 'SSC-7' && s.kind === 'module').length === 3 && numberedSteps.filter(s => s.ssc === 'SSC-12' && s.kind === 'module').length === 5);
+  const numberedPlan={banks:numbered,records:[]};
+  numberedSteps.forEach((step,i)=>{const result=portsApi.markingRecord(numberedPlan,{x:i*20,y:10},(i%8)+','+Math.floor(i/8),step.kind==='jb'?step.defaultJb:''); if(result.error) throw Error(result.error); numberedPlan.records.push(result.record);});
+  const numberedLayout=portsApi.markingLayout(numberedPlan);
+  eq('custom SSC identities survive completed assignments', numberedLayout.sscs.map(s=>s.id+':'+s.order.length).join(','), 'SSC-7:3,SSC-12:5');
+  const numberedProject={config:{rules:{...E.DEFAULT_RULES,modulesPerString:5},numbering:{rack:{cols:8,rows:8,cells},marking:numberedPlan},layout:numberedLayout}};
+  E.layoutApply(numberedProject,E.layoutGroups(numberedProject));
+  eq('custom SSC labels and counts survive the real planner', E.layoutGroups(numberedProject).map(s=>s.label+':'+s.order.length).join(','), 'SSC7:3,SSC12:5');
+  ok('missing SSC number blocks ordered marking', portsApi.markingPlanErrors([{...banks[0], sscNumbers:[7,null]}]).length > 0);
+  ok('duplicate SSC numbers across banks are rejected', portsApi.markingPlanErrors([{...banks[0], sscNumbers:[7,12]}, {...banks[0], sscNumbers:[12,13]}]).some(s => s.includes('more than once')));
+  eq('legacy multi-bank SSC numbers remain sequential', portsApi.markingSteps(orderedBanks).filter(s => s.kind === 'ssc').map(s => s.label).join(','), 'SSC1,SSC2,SSC3');
+}
 const orderedSteps = portsApi.markingSteps(orderedBanks);
 const sixtyModules = portsApi.markingSteps([{ msms: 1, sscs: 5, modules: 12, junctionBoxes: 5, acdps: 2 }]);
 ok('one MSM and five SSCs request exactly twelve ordered modules each', sixtyModules.filter(s => s.kind === 'module').length === 60 && sixtyModules[14].key === 'SSC-1:M12' && sixtyModules[15].key === 'SSC-2');
