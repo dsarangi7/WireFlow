@@ -497,7 +497,7 @@ ok('print title block embeds the AYK logo and drawing details',
 
 const simpleSrc = fs.readFileSync(path.join(ROOT, 'js', 'simple-wiring.js'), 'utf8');
 const portFactory = new Function('slotCell', 'fvSlotCenter', 'fvDist', 'SSC_PALETTE', 'sheetSvgPrimitive', 'sheetEsc',
-  simpleSrc + '\nreturn { pictureZoomOffset, modulePortsValid, pictureCopyDraftRoutePoints, pictureDevicePortsComplete, pictureModuleWiring, pictureVisioModel, pictureSheetSvg, portMarkingPrompt, markingPlanErrors, markingSteps, markingIssues, markingRecord, markingLayout, pictureDeviceLabels, pictureDeviceLabelsSvg };');
+  simpleSrc + '\nreturn { PICTURE_DEVICE_PORT_STEPS, pictureZoomOffset, modulePortsValid, pictureCopyDraftRoutePoints, pictureDevicePortsComplete, pictureModuleWiring, pictureVisioModel, pictureSheetSvg, portMarkingPrompt, markingPlanErrors, markingSteps, markingIssues, markingRecord, markingLayout, pictureDeviceLabels, pictureDeviceLabelsSvg };');
 const portsApi = portFactory(E.slotCell, (cal, c, r) => ({ x: cal.x0 + c * cal.pitchX, y: cal.y0 + r * cal.pitchY }),
   (a, b) => Math.hypot(a.x - b.x, a.y - b.y), E.SSC_PALETTE, E.sheetSvgPrimitive, E.sheetEsc);
 eq('zoom keeps the picture point beneath the pointer stationary', portsApi.pictureZoomOffset(100, 50, 1, 2), 250);
@@ -565,7 +565,8 @@ ok('module port prompts advance through five explicit steps',
 const devicePrompts = [1, 2, 3, 4, 5, 6, 7, 8, 9].map(step => portsApi.portMarkingPrompt(0, step));
 ok('SSC and junction-box prompts advance through nine explicit steps',
   devicePrompts.every((prompt, index) => prompt.current === index + 1 && prompt.total === 9) &&
-  devicePrompts[7].instruction.includes('NEGATIVE') && devicePrompts[8].instruction.includes('POSITIVE'));
+  devicePrompts[7].instruction.includes('POSITIVE') && devicePrompts[8].instruction.includes('NEGATIVE'));
+eq('SSC and assigned junction-box marking follows confirmed port order', portsApi.PICTURE_DEVICE_PORT_STEPS.map(step => step.key).join(','), 'commS,commN,pwrPos,busPos,busNeg,pwrNeg,jbPos,jbNeg');
 const ports = { commS: { x: -30, y: 15 }, commN: { x: -20, y: 16 }, pwrNeg: { x: 20, y: 17 }, pwrPos: { x: 30, y: 18 } };
 const measuredCal = { ok: true, imgW: 1000, imgH: 700, x0: 100, y0: 200, pitchX: 120, pitchY: 60, mmPerPx: 1 };
 const measuredGroups = [{ label: 'SSC-1', order: ['0,0', '0,1'] }];

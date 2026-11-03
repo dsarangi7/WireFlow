@@ -18,8 +18,8 @@ reading of the imported drawing; the importer does not detect these devices.
    the tool adds no ACDP wiring. Extra declared junction boxes are requested
    after their bank's SSC chains and before the final ACDPs.
 6. Mark the four ports on one representative module, then mark each SSC's
-   communication S/N, power NEG/POS, bus B−/B+ and its junction-box NEG/POS
-   terminals. SSC port marking requests the first SSC without saved terminals.
+   communication S/N, string +, bus B+, bus B−, string −, then its assigned
+   junction-box positive and negative terminals, in the confirmed order. SSC port marking requests the first SSC without saved terminals.
 7. Generate the draft. Each SSC's marked M1, M2, ... order becomes a manual
    layout; the automatic nearest-SSC assignment and path optimizer are bypassed.
 

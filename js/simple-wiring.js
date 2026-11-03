@@ -119,6 +119,19 @@ function modulePortsValid(ports) {
     ports[name] && Number.isFinite(ports[name].x) && Number.isFinite(ports[name].y));
 }
 
+/* SSC and assigned junction-box ports in the confirmed left-to-right order.
+ * Keys preserve the existing saved-project field names and wiring rules. */
+const PICTURE_DEVICE_PORT_STEPS = [
+  { key: 'commS', instruction: 'Click the SSC communication S port.' },
+  { key: 'commN', instruction: 'Click the SSC communication N port.' },
+  { key: 'pwrPos', instruction: 'Click the SSC string POSITIVE (+) port.' },
+  { key: 'busPos', instruction: 'Click the SSC bus B+ port.' },
+  { key: 'busNeg', instruction: 'Click the SSC bus B− port.' },
+  { key: 'pwrNeg', instruction: 'Click the SSC string NEGATIVE (−) port.' },
+  { key: 'jbPos', instruction: 'Click the assigned junction-box POSITIVE (+) terminal.' },
+  { key: 'jbNeg', instruction: 'Click the assigned junction-box NEGATIVE (−) terminal.' },
+];
+
 function portMarkingPrompt(portStep, deviceStep) {
   const moduleSteps = [
     'Click the centre of a marked battery module.',
@@ -127,17 +140,7 @@ function portMarkingPrompt(portStep, deviceStep) {
     'Click the power NEGATIVE (−) port on that module.',
     'Click the power POSITIVE (+) port on that module.',
   ];
-  const deviceSteps = [
-    'Click the centre of the SSC you are marking.',
-    'Click the SSC communication S port.',
-    'Click the SSC communication N port.',
-    'Click the SSC power NEGATIVE (−) port.',
-    'Click the SSC power POSITIVE (+) port.',
-    'Click the SSC bus B− port.',
-    'Click the SSC bus B+ port.',
-    'Click the junction-box NEGATIVE (−) terminal.',
-    'Click the junction-box POSITIVE (+) terminal.',
-  ];
+  const deviceSteps = ['Click the centre of the SSC you are marking.', ...PICTURE_DEVICE_PORT_STEPS.map(step => step.instruction)];
   if (deviceStep >= 1 && deviceStep <= deviceSteps.length) return { title: 'SSC AND JUNCTION BOX', current: deviceStep, total: deviceSteps.length, instruction: deviceSteps[deviceStep - 1] };
   if (portStep >= 1 && portStep <= moduleSteps.length) return { title: 'BATTERY MODULE', current: portStep, total: moduleSteps.length, instruction: moduleSteps[portStep - 1] };
   return null;
@@ -345,7 +348,7 @@ async function tabSimpleWiring(el, project, ctx) {
       const group = st.deviceStep === 1 ? groups.find(s => !pictureDevicePortsComplete(st.devicePorts[s.slot])) : groups.find(s => s.slot === st.deviceSlot);
       if (group) {
         prompt.title = group.label + ' / ' + group.jb;
-        prompt.instruction = prompt.instruction.replace('the centre of the SSC you are marking', 'the centre of ' + group.label).replace('the junction-box', group.jb).replace('the SSC', group.label);
+        prompt.instruction = prompt.instruction.replace('the centre of the SSC you are marking', 'the centre of ' + group.label).replace('the assigned junction-box', 'the assigned ' + group.jb).replace('the SSC', group.label);
       }
     }
     el.innerHTML = `
@@ -492,7 +495,7 @@ async function tabSimpleWiring(el, project, ctx) {
         st.deviceSlot = id; st.pendingDevice = {}; st.deviceStep = 2; st.message = ''; render(); return;
       }
       if (st.deviceStep >= 2) {
-        const name = ['commS', 'commN', 'pwrNeg', 'pwrPos', 'busNeg', 'busPos', 'jbNeg', 'jbPos'][st.deviceStep - 2];
+        const name = PICTURE_DEVICE_PORT_STEPS[st.deviceStep - 2].key;
         st.pendingDevice[name] = { x: p.x, y: p.y };
         st.message = '';
         if (st.deviceStep === 9) { st.devicePorts[st.deviceSlot] = st.pendingDevice; st.deviceStep = 0; st.message = 'SSC and junction-box ports recorded. Repeat for the next SSC.'; await persist(); return; }
