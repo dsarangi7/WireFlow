@@ -85,4 +85,6 @@ The runner also checks each red and green polyline segment against a matching, p
 
 The experimental A3 sheet opts into a basic red power / green communication legend. It deliberately does not invent cable gauges, part numbers or customer-side wire specifications. The optional legend does not alter the default sheet output or wiring calculations.
 
+The sample sheet also opts into an A3 border grid labelled 8–1 and F–A, following the reference's zone labels. This is presentation only and does not change default sheets or the wiring engine. The reference's detailed title block, engineering notes and cable callouts are not yet reproduced.
+
 `tests-manual/crossing-review.py` generates a side-by-side crop of representative upper and lower draft crossings and their corresponding reference locations. The reference also shows red and green lines overlapping in these views. The blue circles identify draft intersection coordinates projected onto both images; they do not establish that the corresponding reference cables physically cross or touch. An engineer must decide whether the required drawing should retain these overlaps or avoid visual crossings.

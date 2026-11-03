@@ -272,6 +272,20 @@ function pictureSheetSvg(project, cal, segments, logoBase64, options) {
     '<rect x="0" y="0" width="1680" height="1188" fill="#ffffff"/>',
     '<image href="' + sheetEsc(im.src) + '" x="' + im.x + '" y="' + im.y + '" width="' + im.w + '" height="' + im.h + '" preserveAspectRatio="none"/>'];
   for (const primitive of model.primitives) parts.push(sheetSvgPrimitive(primitive));
+  if (options && options.borderZones === true) {
+    for (let column = 0; column < 8; column++) {
+      const x = 40 + (column + 0.5) * 200, label = 8 - column;
+      parts.push('<text x="' + x + '" y="29" text-anchor="middle" font-size="13">' + label + '</text>' +
+        '<text x="' + x + '" y="1168" text-anchor="middle" font-size="13">' + label + '</text>');
+      if (column) parts.push('<line x1="' + (40 + column * 200) + '" y1="32" x2="' + (40 + column * 200) + '" y2="40" stroke="#64748b"/>' +
+        '<line x1="' + (40 + column * 200) + '" y1="1148" x2="' + (40 + column * 200) + '" y2="1156" stroke="#64748b"/>');
+    }
+    for (let row = 0; row < 6; row++) {
+      const y = 40 + (row + 0.5) * 1108 / 6, label = String.fromCharCode(70 - row);
+      parts.push('<text x="22" y="' + y + '" text-anchor="middle" font-size="13">' + label + '</text>' +
+        '<text x="1657" y="' + y + '" text-anchor="middle" font-size="13">' + label + '</text>');
+    }
+  }
   if (options && options.wireLegend === true) {
     parts.push('<rect x="1092" y="924" width="35" height="3" fill="#dc2626"/>' +
       '<text x="1137" y="930" font-size="14" fill="#172033">Power cable</text>' +
