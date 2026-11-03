@@ -19,6 +19,7 @@ class CrossingAuditTests(unittest.TestCase):
         report = module.audit(root)
         self.assertEqual(report['wire_polylines'], 2)
         self.assertEqual(report['crossing_wire_pairs']['power/communication'], 1)
+        self.assertEqual(report['crossings'][0]['points'], [[1.0, 1.0], [3.0, 1.0]])
 
 
 if __name__ == '__main__':

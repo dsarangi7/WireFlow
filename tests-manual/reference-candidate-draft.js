@@ -68,6 +68,19 @@ const source=fs.readFileSync(path.join(root,'js/frontview.js'),'utf8')+'\n'+fs.r
 const helpers=new Function(fs.readFileSync(path.join(root,'js/engine.js'),'utf8')+'\nreturn {sheetSvgPrimitive,sheetEsc};')();
 const api=new Function('slotCell','SSC_PALETTE','sheetSvgPrimitive','sheetEsc',source+'\nreturn {pictureModuleWiring,pictureSheetSvg,fvSvg};')(s=>{const [c,r]=s.split(',').map(Number);return {c,r};},['#345678'],helpers.sheetSvgPrimitive,helpers.sheetEsc);
 const wires=api.pictureModuleWiring(groups,cal,ports,devices,modulePortPoints), image='data:image/png;base64,'+png.toString('base64');
+// The engineer confirmed these SSC endpoints for this specific rack. The
+// module-to-module power direction remains unresolved; this changes only the
+// experimental fixture, not the shared wiring engine or its validation rules.
+for (let i=0;i<groups.length;i++) {
+  const groupWires=wires.filter(w=>w.group===i && w.kind==='sscp');
+  if (groupWires.length!==4) throw new Error('Expected the four SSC power links in the fixture.');
+  const order=groups[i].order;
+  const endpoints=[modulePortPoints[order[order.length-1]].pwrPos,modulePortPoints[order[0]].pwrNeg];
+  [0,1].forEach(j=>{
+    const wire=groupWires[j]; wire.pts[wire.pts.length-1]=endpoints[j];
+    wire.lenMm=wire.pts.slice(1).reduce((sum,p,k)=>sum+Math.hypot(p.x-wire.pts[k].x,p.y-wire.pts[k].y),0)*cal.mmPerPx;
+  });
+}
 let rack=api.fvSvg(cal,{src:image},wires,{noGrid:true,sscLabels:true});
 rack=rack.replace('</svg>','<rect width="1155" height="25" fill="white"/><text x="577" y="18" text-anchor="middle" font-size="14" fill="#a00000">EXPERIMENTAL CANDIDATES AND INFERRED ROUTES — DO NOT BUILD</text></svg>');
 const logo=fs.readFileSync(path.join(root,'js/vsdx.js'),'utf8').match(/const VSDX_LOGO_B64 = '([^']+)'/)[1];
