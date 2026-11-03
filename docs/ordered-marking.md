@@ -84,3 +84,11 @@ After generating a draft, **Download draft A3 sheet (SVG)** creates a standalone
 420 × 297 mm SVG with the rack picture, currently generated draft connections,
 title block, AYK logo and an engineering-review notice. This draft sheet does
 not reproduce the complete reference title block or imply approved routing.
+
+WireFlow can also retain per-module absolute picture positions in
+`config.numbering.modulePortPoints`, keyed by grid slot with `commS`, `commN`,
+`pwrNeg`, and `pwrPos` points. When this map is present, all marked modules must
+have all four finite points before generating or printing; missing positions are
+never filled using a representative module. Preview, SVG, A3 SVG, Visio and
+print use the same points. The current interface does not yet automatically
+populate this map; detected candidates require engineering review.

@@ -24,11 +24,12 @@ if (![...xs,...ys].every(Number.isFinite)) throw new Error('Invalid module-face 
 const xMin=Math.min(...xs), xMax=Math.max(...xs), yMin=Math.min(...ys), yMax=Math.max(...ys);
 const pitchX=(xMax-xMin)/9, pitchY=(yMax-yMin)/7;
 if (!(pitchX > 50 && pitchY > 20)) throw new Error('Unexpected candidate grid.');
-const slotSet=new Set();
+const slotSet=new Set(), modulePortPoints={};
 for (const m of modules) {
   const c=Math.round((m.face_x-xMin)/pitchX), r=Math.round((m.face_y-yMin)/pitchY), k=c+','+r;
   if(c<0||c>9||r<0||r>7||slotSet.has(k)) throw new Error('Ambiguous candidate grid position.');
   slotSet.add(k);
+  modulePortPoints[k]={commS:getPoint(m,'S'),commN:getPoint(m,'N'),pwrNeg:getPoint(m,'negative'),pwrPos:getPoint(m,'positive')};
 }
 for(let i=0;i<5;i++) {
   const expected=[...Array.from({length:8},(_,r)=>(2*i)+','+r), ...Array.from({length:4},(_,r)=>(2*i+1)+','+(r+4))];
@@ -66,7 +67,7 @@ const root=path.resolve(__dirname,'..');
 const source=fs.readFileSync(path.join(root,'js/frontview.js'),'utf8')+'\n'+fs.readFileSync(path.join(root,'js/simple-wiring.js'),'utf8');
 const helpers=new Function(fs.readFileSync(path.join(root,'js/engine.js'),'utf8')+'\nreturn {sheetSvgPrimitive,sheetEsc};')();
 const api=new Function('slotCell','SSC_PALETTE','sheetSvgPrimitive','sheetEsc',source+'\nreturn {pictureModuleWiring,pictureSheetSvg,fvSvg};')(s=>{const [c,r]=s.split(',').map(Number);return {c,r};},['#345678'],helpers.sheetSvgPrimitive,helpers.sheetEsc);
-const wires=api.pictureModuleWiring(groups,cal,ports,devices), image='data:image/png;base64,'+png.toString('base64');
+const wires=api.pictureModuleWiring(groups,cal,ports,devices,modulePortPoints), image='data:image/png;base64,'+png.toString('base64');
 let rack=api.fvSvg(cal,{src:image},wires,{noGrid:true,sscLabels:true});
 rack=rack.replace('</svg>','<rect width="1155" height="25" fill="white"/><text x="577" y="18" text-anchor="middle" font-size="14" fill="#a00000">EXPERIMENTAL CANDIDATES AND INFERRED ROUTES — DO NOT BUILD</text></svg>');
 const logo=fs.readFileSync(path.join(root,'js/vsdx.js'),'utf8').match(/const VSDX_LOGO_B64 = '([^']+)'/)[1];

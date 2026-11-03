@@ -497,7 +497,7 @@ ok('print title block embeds the AYK logo and drawing details',
 
 const simpleSrc = fs.readFileSync(path.join(ROOT, 'js', 'simple-wiring.js'), 'utf8');
 const portFactory = new Function('slotCell', 'fvSlotCenter', 'fvDist', 'SSC_PALETTE', 'sheetSvgPrimitive', 'sheetEsc',
-  simpleSrc + '\nreturn { PICTURE_DEVICE_PORT_STEPS, pictureZoomOffset, modulePortsValid, pictureCopyDraftRoutePoints, pictureDevicePortsComplete, pictureModuleWiring, pictureVisioModel, pictureSheetSvg, portMarkingPrompt, markingPlanErrors, markingSteps, markingIssues, markingRecord, markingLayout, pictureDeviceLabels, pictureDeviceLabelsSvg };');
+  simpleSrc + '\nreturn { PICTURE_DEVICE_PORT_STEPS, pictureZoomOffset, modulePortsValid, pictureModulePortsReady, pictureCopyDraftRoutePoints, pictureDevicePortsComplete, pictureModuleWiring, pictureVisioModel, pictureSheetSvg, portMarkingPrompt, markingPlanErrors, markingSteps, markingIssues, markingRecord, markingLayout, pictureDeviceLabels, pictureDeviceLabelsSvg };');
 const portsApi = portFactory(E.slotCell, (cal, c, r) => ({ x: cal.x0 + c * cal.pitchX, y: cal.y0 + r * cal.pitchY }),
   (a, b) => Math.hypot(a.x - b.x, a.y - b.y), E.SSC_PALETTE, E.sheetSvgPrimitive, E.sheetEsc);
 eq('zoom keeps the picture point beneath the pointer stationary', portsApi.pictureZoomOffset(100, 50, 1, 2), 250);
@@ -577,6 +577,31 @@ eq('measured module communication wire uses S then next N port',
   JSON.stringify(measured.find(s => s.kind === 'comm').pts), JSON.stringify([{ x: 70, y: 215 }, { x: 80, y: 276 }]));
 eq('module-only drawing never invents SSC terminal connections', measured.filter(s => s.kind === 'sscp' || s.kind === 'sscc').length, 0);
 eq('incomplete module-port calibration draws no connections', portsApi.pictureModuleWiring(measuredGroups, measuredCal, { commS: ports.commS }).length, 0);
+const individualPorts = {
+  '0,0': { commS: {x:10,y:11}, commN: {x:20,y:11}, pwrNeg: {x:30,y:11}, pwrPos: {x:40,y:11} },
+  '0,1': { commS: {x:12,y:71}, commN: {x:22,y:71}, pwrNeg: {x:32,y:71}, pwrPos: {x:42,y:71} },
+};
+const exactWires = portsApi.pictureModuleWiring(measuredGroups, measuredCal, null, null, individualPorts);
+eq('individual module power endpoints use each module position', JSON.stringify(exactWires.find(s => s.kind === 'power').pts), JSON.stringify([{x:30,y:11},{x:42,y:71}]));
+eq('individual module communication endpoints use each module position', JSON.stringify(exactWires.find(s => s.kind === 'comm').pts), JSON.stringify([{x:10,y:11},{x:22,y:71}]));
+ok('complete individual positions can be used without representative ports', portsApi.pictureModulePortsReady(['0,0','0,1'], null, individualPorts));
+const missingIndividual = { '0,0': individualPorts['0,0'], '0,1': { ...individualPorts['0,1'], pwrPos: null } };
+ok('incomplete individual positions block generation even with shared offsets', !portsApi.pictureModulePortsReady(['0,0','0,1'], ports, missingIndividual));
+const partialIndividualWires = portsApi.pictureModuleWiring(measuredGroups, measuredCal, ports, null, missingIndividual);
+ok('unknown individual endpoint never falls back to a representative offset', !partialIndividualWires.some(s => s.kind === 'power') && partialIndividualWires.some(s => s.kind === 'comm'));
+ok('missing individual module entry blocks generation', !portsApi.pictureModulePortsReady(['0,0','0,1'], ports, {'0,0':individualPorts['0,0']}));
+ok('malformed individual map does not fall back to shared offsets', !portsApi.pictureModulePortsReady(['0,0'], ports, false));
+let printedPortMap = null;
+const individualPrint = printProjectPages({ config: { numbering: { cal: {}, modulePortPoints: individualPorts } }, underlay: { kind: 'image', src: 'data:image/png;base64,AA' } }, [],
+  () => ({ ok: true }), () => [{ order: ['0,0','0,1'] }], portsApi.modulePortsValid,
+  (groups, cal, shared, devices, map) => { printedPortMap = map; return ['wire']; },
+  () => '<svg></svg>', parts => parts, () => '<svg/>', () => '<svg/>', () => '');
+ok('print uses complete individual module positions without shared offsets', printedPortMap === individualPorts && individualPrint.frontSvg.includes('<svg>'));
+let incompletePrintWired = false;
+const incompletePrint = printProjectPages({ config: { numbering: { cal: {}, modulePorts: ports, modulePortPoints: missingIndividual } }, underlay: { kind: 'image', src: 'data:image/png;base64,AA' } }, [],
+  () => ({ ok: true }), () => [{ order: ['0,0','0,1'] }], portsApi.modulePortsValid,
+  () => { incompletePrintWired = true; return []; }, () => '<svg></svg>', parts => parts, () => '<svg/>', () => '<svg/>', () => '');
+ok('print refuses an incomplete individual map rather than reverting to shared offsets', !incompletePrintWired && incompletePrint.frontSvg.includes('unavailable'));
 const devicePorts = { '1,1': {
   commS: { x: 300, y: 101 }, commN: { x: 310, y: 101 },
   pwrNeg: { x: 320, y: 101 }, pwrPos: { x: 330, y: 101 },
