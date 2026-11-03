@@ -619,6 +619,11 @@ const devicePorts = { '1,1': {
 } };
 const completeGroups = [{ label: 'SSC-1', slot: '1,1', order: ['0,0', '0,1'] }];
 const fullWires = portsApi.pictureModuleWiring(completeGroups, measuredCal, ports, devicePorts);
+const referenceWires = portsApi.pictureModuleWiring(completeGroups, measuredCal, ports, devicePorts, null, 'reference-sample');
+eq('sample convention connects lower positive to higher negative', JSON.stringify(referenceWires.find(s => s.kind === 'power').pts), JSON.stringify([{x:130,y:218},{x:120,y:277}]));
+const referenceSsc = referenceWires.filter(s => s.kind === 'sscp');
+eq('sample convention connects SSC positive to last module positive', JSON.stringify(referenceSsc[0].pts), JSON.stringify([devicePorts['1,1'].pwrPos,{x:130,y:278}]));
+eq('sample convention connects SSC negative to first module negative', JSON.stringify(referenceSsc[1].pts), JSON.stringify([devicePorts['1,1'].pwrNeg,{x:120,y:217}]));
 const actualDeviceWires = fullWires.filter(s => s.kind === 'sscp' || s.kind === 'sscc').map(s => [s.kind, s.pts]);
 eq('measured SSC and junction-box ports connect using the six approved endpoint rules', JSON.stringify(actualDeviceWires), JSON.stringify([
   ['sscp', [devicePorts['1,1'].pwrPos, { x: 130, y: 218 }]],

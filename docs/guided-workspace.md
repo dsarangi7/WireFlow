@@ -120,3 +120,13 @@ Communication-to-power overlaps are allowed. Correct affected routes before
 exporting. This check is limited to that screen's current picture wiring and
 its export buttons; it does not cover other tabs or establish physical cable
 clearance, valid connectivity or approval.
+
+For the supplied 111 rack only, Build wiring offers an explicit experimental
+picture power-connections choice. This uses the user-confirmed module and SSC
+endpoints in the picture. Other racks must use their reviewed rules. The shared
+netlist, validations, cable schedule and engineering engine remain unchanged and
+may disagree with this picture. The Build wiring Visio and combined PDF paths,
+and the guided export screen, are unavailable for this experimental choice;
+other advanced exports are not covered by this restriction and must not be used
+to approve it. The option does not automatically recognize rack components or
+provide approved physical routing.

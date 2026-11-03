@@ -190,7 +190,10 @@ function picturePowerCrossings(segments) {
   return { valid: true, pairs };
 }
 
-function pictureModuleWiring(groups, cal, ports, devicePorts, modulePortPoints) {
+function pictureModuleWiring(groups, cal, ports, devicePorts, modulePortPoints, powerConvention) {
+  // This opt-in convention is confirmed for the supplied sample rack only.
+  // It does not change the shared netlist or engineering rule engine.
+  const referencePower = powerConvention === 'reference-sample';
   const hasPoints = modulePortPoints !== undefined && modulePortPoints !== null;
   if (!cal || !cal.ok || (hasPoints && (typeof modulePortPoints !== 'object' || Array.isArray(modulePortPoints))) || (!hasPoints && !modulePortsValid(ports))) return [];
   const validPoint = p => p && Number.isFinite(p.x) && Number.isFinite(p.y);
@@ -212,7 +215,7 @@ function pictureModuleWiring(groups, cal, ports, devicePorts, modulePortPoints) 
       segments.push({ ...tag, kind: 'label', pts: [centre], m: i + 1, lenMm: 0 });
       if (!i) return;
       const previous = slots[i - 1];
-      [['power', 'pwrNeg', 'pwrPos'], ['comm', 'commS', 'commN']].forEach(([kind, from, to]) => {
+      [['power', referencePower ? 'pwrPos' : 'pwrNeg', referencePower ? 'pwrNeg' : 'pwrPos'], ['comm', 'commS', 'commN']].forEach(([kind, from, to]) => {
         const a = at(previous, from), b = at(slot, to);
         if (validPoint(a) && validPoint(b)) segments.push({ ...tag, kind, pts: [a, b], lenMm: fvDist(a, b) * cal.mmPerPx });
       });
@@ -220,8 +223,8 @@ function pictureModuleWiring(groups, cal, ports, devicePorts, modulePortPoints) 
     const d = devicePorts && devicePorts[group.slot];
     if (slots.length && d) {
       const connections = [
-        ['stringPos', 'sscp', d.pwrPos, at(slots[0], 'pwrPos')],
-        ['stringNeg', 'sscp', d.pwrNeg, at(slots[slots.length - 1], 'pwrNeg')],
+        ['stringPos', 'sscp', d.pwrPos, at(slots[referencePower ? slots.length - 1 : 0], 'pwrPos')],
+        ['stringNeg', 'sscp', d.pwrNeg, at(slots[referencePower ? 0 : slots.length - 1], 'pwrNeg')],
         ['commS', 'sscc', d.commS, at(slots[0], 'commN')],
         ['commN', 'sscc', d.commN, at(slots[slots.length - 1], 'commS')],
         ['busPos', 'sscp', d.busPos, d.jbPos],
@@ -332,6 +335,7 @@ async function tabSimpleWiring(el, project, ctx) {
     click: null, calibrating: 0,
     ports: modulePortsValid(saved.modulePorts) ? saved.modulePorts : null,
     modulePortPoints: saved.modulePortPoints === undefined ? null : saved.modulePortPoints,
+    powerConvention: saved.powerConvention === 'reference-sample' ? 'reference-sample' : 'legacy',
     portStep: 0, portRef: null, pendingPorts: {}, previousPorts: null, zoom: 1,
     devicePorts: JSON.parse(JSON.stringify(saved.devicePorts || {})), deviceStep: 0, deviceSlot: '', pendingDevice: {},
     plan: saved.marking ? JSON.parse(JSON.stringify(saved.marking)) : null,
@@ -351,7 +355,7 @@ async function tabSimpleWiring(el, project, ctx) {
   async function persist() {
     st.saving = true; render();
     const config = JSON.parse(JSON.stringify(project.config || {}));
-    config.numbering = Object.assign({}, config.numbering, { mode: 'layout', rack: st.rack, cal: st.cal, marking: st.plan, modulePorts: st.ports, modulePortPoints: st.modulePortPoints, devicePorts: st.devicePorts });
+    config.numbering = Object.assign({}, config.numbering, { mode: 'layout', rack: st.rack, cal: st.cal, marking: st.plan, modulePorts: st.ports, modulePortPoints: st.modulePortPoints, devicePorts: st.devicePorts, powerConvention: st.powerConvention });
     delete config.layout;
     st.saveFailed = !await ctx.saveProject({ config });
     st.saving = false;
@@ -385,7 +389,7 @@ async function tabSimpleWiring(el, project, ctx) {
         const device = previewPorts[st.routeEdit.slot];
         device.draftRoutes = Object.assign({}, device.draftRoutes, { [st.routeEdit.key]: st.routeEdit.points });
       }
-      const wiring = st.generated ? pictureModuleWiring(groups, cal, st.ports, previewPorts, st.modulePortPoints) : [];
+      const wiring = st.generated ? pictureModuleWiring(groups, cal, st.ports, previewPorts, st.modulePortPoints, st.powerConvention) : [];
       const portMarks = st.portRef && st.portStep >= 2 ? Object.entries(st.pendingPorts).map(([name, offset]) =>
         `<circle cx="${st.portRef.x + offset.x}" cy="${st.portRef.y + offset.y}" r="${Math.max(3, Math.min(cal.pitchX, cal.pitchY) * .045)}" fill="${name.startsWith('comm') ? '#00a651' : '#e02020'}" stroke="white" stroke-width="1" pointer-events="none"/>`).join('') : '';
       const deviceMarks = st.deviceStep >= 2 ? Object.entries(st.pendingDevice).map(([name, point]) =>
@@ -396,7 +400,7 @@ async function tabSimpleWiring(el, project, ctx) {
     }
     const checks = st.generated ? runValidations(project, generateNetlist(project)).concat(layoutValidate(project)) : [];
     const failed = checks.filter(check => check.status !== 'pass');
-    const powerAudit = st.generated ? picturePowerCrossings(pictureModuleWiring(layoutGroups(project), cal, st.ports, st.devicePorts, st.modulePortPoints)) : { valid: true, pairs: [] };
+    const powerAudit = st.generated ? picturePowerCrossings(pictureModuleWiring(layoutGroups(project), cal, st.ports, st.devicePorts, st.modulePortPoints, st.powerConvention)) : { valid: true, pairs: [] };
     const powerBlocked = !powerAudit.valid || powerAudit.pairs.length > 0;
     const prompt = portMarkingPrompt(st.portStep, st.deviceStep);
     if (prompt && st.deviceStep && st.plan && !issues.length) {
@@ -445,10 +449,12 @@ async function tabSimpleWiring(el, project, ctx) {
         <div id="simple-picture-scroll" style="border:1px solid var(--border);border-radius:8px;overflow:auto;max-height:70vh"><div id="simple-picture" style="width:${st.zoom * 100}%;cursor:crosshair">${svg}</div></div>
       </div>
       <div class="card" style="margin-top:16px"><h3>3 · Generate wiring</h3>
+        <label>Picture power connections <select id="simple-power-convention"><option value="legacy" ${st.powerConvention === 'legacy' ? 'selected' : ''}>Existing project rules</option><option value="reference-sample" ${st.powerConvention === 'reference-sample' ? 'selected' : ''}>Confirmed 111 rack reference (experimental)</option></select></label>
+        ${st.powerConvention === 'reference-sample' ? '<p class="warn" role="status">This changes the picture draft only for the confirmed sample rack. The netlist, validations and cable schedule still use existing rules; do not use them to approve this draft. Review all routes.</p>' : ''}
         <p class="muted small">${rack ? Object.keys(st.devicePorts).filter(slot => rackIsModule(rack, slot) === false && rackDeviceCells(rack, 'ssc').includes(slot) && pictureDevicePortsComplete(st.devicePorts[slot])).length : 0} of ${rack ? rackDeviceCells(rack, 'ssc').length : 0} SSCs have their ports marked. Links with missing terminals or invalid draft routes are omitted. Check assignments and routes; lines are direct previews, not approved cable routes.</p>
         ${st.modulePortPoints !== null && !moduleReady ? '<p class="warn" role="status">Some individual module ports are missing or invalid. Complete them, or mark module ports again to replace these positions.</p>' : ''}
         ${st.generated && powerBlocked ? '<p class="warn" role="alert">Power cables cross or touch in this drawing. Correct the routes before exporting. This check does not verify physical clearance.</p>' : ''}
-        <div class="btn-row"><button class="btn btn-primary" id="simple-generate" ${!cal || !cal.ok || !moduleReady || st.deviceStep || st.portStep || issues.length || st.saving || st.saveFailed ? 'disabled' : ''}>Generate wiring</button>${st.generated ? `<button class="btn btn-ghost" id="simple-visio" ${powerBlocked ? 'disabled' : ''}>Download editable draft (Visio)</button><button class="btn btn-ghost" id="simple-svg" ${powerBlocked ? 'disabled' : ''}>Download draft wiring drawing (SVG)</button><button class="btn btn-ghost" id="simple-sheet-svg" ${powerBlocked ? 'disabled' : ''}>Download draft A3 sheet (SVG)</button><button class="btn btn-ghost" id="simple-export" ${powerBlocked ? 'disabled' : ''}>Print draft PDF</button>` : ''}</div>
+        <div class="btn-row"><button class="btn btn-primary" id="simple-generate" ${!cal || !cal.ok || !moduleReady || st.deviceStep || st.portStep || issues.length || st.saving || st.saveFailed ? 'disabled' : ''}>Generate wiring</button>${st.generated ? `<button class="btn btn-ghost" id="simple-visio" ${powerBlocked || st.powerConvention === 'reference-sample' ? 'disabled' : ''}>Download editable draft (Visio)</button><button class="btn btn-ghost" id="simple-svg" ${powerBlocked ? 'disabled' : ''}>Download draft wiring drawing (SVG)</button><button class="btn btn-ghost" id="simple-sheet-svg" ${powerBlocked ? 'disabled' : ''}>Download draft A3 sheet (SVG)</button><button class="btn btn-ghost" id="simple-export" ${powerBlocked || st.powerConvention === 'reference-sample' ? 'disabled' : ''}>Print draft PDF</button>` : ''}</div>
         ${st.generated ? '<p class="muted small">You can change markings here and generate again. Visio edits are separate and do not update this saved project.</p>' : ''}
         ${st.generated && !st.routeEdit ? `<details><summary>Adjust a draft SSC route</summary><p class="muted small">Choose a connection, then click its intermediate points in order on the picture. These straight segments are a draft and require engineering review.</p><div class="btn-row"><label>SSC <select id="route-ssc">${layoutGroups(project).filter(group => pictureDevicePortsComplete(st.devicePorts[group.slot])).map(group => `<option value="${esc(group.slot)}">${esc(group.label)}</option>`).join('')}</select></label><label>Connection <select id="route-key"><option value="stringPos">SSC string + to module</option><option value="stringNeg">SSC string − to module</option><option value="commS">SSC communication S to module</option><option value="commN">SSC communication N to module</option><option value="busPos">SSC bus + to junction box</option><option value="busNeg">SSC bus − to junction box</option></select></label><button class="btn btn-ghost btn-sm" id="route-start">Edit route</button></div></details>` : ''}
         ${st.routeEdit ? `<div class="port-instruction" role="status"><strong>Click each route bend on the picture, in order from the SSC.</strong><span>${st.routeEdit.points.length} intermediate points selected. Save with no points to return to a straight preview.</span><div class="btn-row"><button class="btn btn-ghost btn-sm" id="route-undo" ${st.routeEdit.points.length ? '' : 'disabled'}>Undo point</button><button class="btn btn-ghost btn-sm" id="route-clear" ${st.routeEdit.points.length ? '' : 'disabled'}>Clear points</button><button class="btn btn-primary btn-sm" id="route-save">Save draft route</button><button class="btn btn-ghost btn-sm" id="route-cancel">Cancel</button></div></div>` : ''}
@@ -580,11 +586,17 @@ async function tabSimpleWiring(el, project, ctx) {
       if (result.error) { st.message = result.error; render(); return; }
       st.plan.records.push(result.record); rebuildMarks(); st.generated = false; st.message = ''; await persist();
     };
+    el.querySelector('#simple-power-convention').onchange = async event => {
+      st.powerConvention = event.target.value === 'reference-sample' ? 'reference-sample' : 'legacy';
+      st.generated = false;
+      st.message = 'Power connection choice saved. Generate again and review all routes.';
+      await persist();
+    };
     el.querySelector('#simple-generate').onclick = async () => {
       const missing = markingIssues(st.plan);
       if (missing.length || !pictureModulePortsReady(st.rack ? rackModuleCells(st.rack) : [], st.ports, st.modulePortPoints) || st.saveFailed) { st.message = missing.join(' ') || 'Complete module-port positions and save before generating wiring.'; render(); return; }
       const config = JSON.parse(JSON.stringify(project.config || {}));
-      config.numbering = { rack: st.rack, cal: st.cal, marking: st.plan, modulePorts: st.ports, modulePortPoints: st.modulePortPoints, devicePorts: st.devicePorts };
+      config.numbering = { rack: st.rack, cal: st.cal, marking: st.plan, modulePorts: st.ports, modulePortPoints: st.modulePortPoints, devicePorts: st.devicePorts, powerConvention: st.powerConvention };
       config.layout = markingLayout(st.plan);
       config.rules = Object.assign({}, config.rules, { modulesPerString: Math.max(...st.plan.banks.map(bank => bank.modules)) });
       const candidate = { ...project, config };
@@ -596,11 +608,11 @@ async function tabSimpleWiring(el, project, ctx) {
       await ctx.getValidations(true);
       st.generated = true; st.message = 'Draft generated. Links with missing terminals or invalid draft routes are omitted; review all assignments and routes.'; render();
     };
-    el.querySelector('#simple-export')?.addEventListener('click', () => { if (!powerBlocked) ctx.switchTab(9); });
+    el.querySelector('#simple-export')?.addEventListener('click', () => { if (!powerBlocked && st.powerConvention !== 'reference-sample') ctx.switchTab(9); });
     el.querySelector('#simple-visio')?.addEventListener('click', async () => {
       try {
-        if (powerBlocked) throw new Error('Power cables cross or touch. Correct the routes before exporting.');
-        const wiring = pictureModuleWiring(layoutGroups(project), st.cal, st.ports, st.devicePorts, st.modulePortPoints);
+        if (powerBlocked || st.powerConvention === 'reference-sample') throw new Error('This draft cannot be exported to Visio until its connections and netlist agree.');
+        const wiring = pictureModuleWiring(layoutGroups(project), st.cal, st.ports, st.devicePorts, st.modulePortPoints, st.powerConvention);
         let exportProject = project;
         if (/^data:image\/svg\+xml/i.test(project.underlay.src)) {
           const canvas = document.createElement('canvas');
@@ -616,15 +628,17 @@ async function tabSimpleWiring(el, project, ctx) {
     el.querySelector('#simple-sheet-svg')?.addEventListener('click', () => {
       try {
         if (powerBlocked) throw new Error('Power cables cross or touch. Correct the routes before exporting.');
-        const wiring = pictureModuleWiring(layoutGroups(project), st.cal, st.ports, st.devicePorts, st.modulePortPoints);
-        const sheet = pictureSheetSvg(project, st.cal, wiring, VSDX_LOGO_B64);
+        const wiring = pictureModuleWiring(layoutGroups(project), st.cal, st.ports, st.devicePorts, st.modulePortPoints, st.powerConvention);
+        let sheet = pictureSheetSvg(project, st.cal, wiring, VSDX_LOGO_B64);
+        if (st.powerConvention === 'reference-sample') sheet = sheet.replace('</svg>', '<text x="80" y="140" font-size="16" fill="#b91c1c">EXPERIMENTAL PICTURE - NETLIST DIFFERS - ENGINEERING REVIEW REQUIRED</text></svg>');
         download((project.name || 'wiring') + '-draft-sheet.svg', sheet, 'image/svg+xml');
       } catch (error) { toast('Could not create the draft sheet: ' + error.message, 'error'); }
     });
     el.querySelector('#simple-svg')?.addEventListener('click', () => {
       if (powerBlocked) { toast('Power cables cross or touch. Correct the routes before exporting.', 'error'); return; }
-      const wiring = pictureModuleWiring(layoutGroups(project), st.cal, st.ports, st.devicePorts, st.modulePortPoints);
-      const svgOut = fvSvg(st.cal, { src: project.underlay.src }, wiring, { noGrid: true, sscLabels: true }).replace('</svg>', pictureDeviceLabelsSvg(st.plan, st.cal) + '</svg>');
+      const wiring = pictureModuleWiring(layoutGroups(project), st.cal, st.ports, st.devicePorts, st.modulePortPoints, st.powerConvention);
+      const warning = st.powerConvention === 'reference-sample' ? '<text x="10" y="20" font-size="14" fill="#b91c1c" stroke="white" stroke-width="3" paint-order="stroke">EXPERIMENTAL PICTURE - NETLIST DIFFERS - ENGINEERING REVIEW REQUIRED</text>' : '';
+      const svgOut = fvSvg(st.cal, { src: project.underlay.src }, wiring, { noGrid: true, sscLabels: true }).replace('</svg>', pictureDeviceLabelsSvg(st.plan, st.cal) + warning + '</svg>');
       download((project.name || 'wiring') + '-rack-wiring.svg', svgOut, 'image/svg+xml');
     });
     if (st.routeEdit) el.querySelectorAll('button,input,select').forEach(control => {

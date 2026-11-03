@@ -1673,6 +1673,10 @@ function printDocumentHtml(project, pages, dateLabel) {
 async function tabExport(el, project, ctx) {
   const conns = await ctx.getNetlist();
   const numbering = (project.config && project.config.numbering) || {};
+  if (numbering.powerConvention === 'reference-sample') {
+    el.innerHTML = '<div class="export-screen"><h2>Export unavailable for this experimental picture</h2><p>The picture uses the confirmed 111 rack connections, while the netlist and schedule still use the existing rules. Use the picture draft in Build wiring for review; do not use the netlist or schedule to approve it.</p></div>';
+    return;
+  }
   if (modulePortsValid(numbering.modulePorts)) {
     const page = projectPrintPages(project, conns)[1];
     page.title = 'DRAFT — verify all terminals and cable routes';

@@ -24,6 +24,9 @@ and the limits of the grid and draft cable routing.
 In the picture-first screen, its draft export buttons are blocked when power
 wire centerlines cross or touch; communication/power overlaps are allowed.
 This is a 2D check, not a physical clearance or engineering approval check.
+An opt-in experimental picture connection choice is available for the supplied
+111 rack. It does not update the netlist or schedule; see the workflow limits in
+the guided workspace documentation before using it.
 
 SVG rack drawings remain vector images in the marking canvas. Use the mouse
 wheel or zoom buttons to zoom, the middle mouse button to pan, and left-click
