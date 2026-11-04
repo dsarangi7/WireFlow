@@ -298,6 +298,7 @@ async function renderDashboard() {
       <p>Select the rack layout or wiring drawing, or drop an SVG here.</p>
       <button class="btn btn-primary" id="studio-import-button">Import SVG</button>
       <button class="btn btn-ghost" id="studio-open-session">Open saved session</button>
+      <p><a class="btn btn-ghost" href="http://127.0.0.1:8082/" target="_blank" rel="noopener">111 automatic wiring · local prototype</a></p>
       <input id="studio-import-file" type="file" accept=".svg,image/svg+xml" hidden>
       <input id="studio-session-file" type="file" accept=".json,application/json" hidden>
       <p id="studio-import-status" role="status"></p>

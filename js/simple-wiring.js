@@ -574,7 +574,7 @@ async function tabSimpleWiring(el, project, ctx) {
     devicePorts: JSON.parse(JSON.stringify(saved.devicePorts || {})), deviceStep: 0, deviceSlot: '', pendingDevice: {},
     plan: saved.marking ? JSON.parse(JSON.stringify(saved.marking)) : null,
     banks: saved.marking ? JSON.parse(JSON.stringify(saved.marking.banks)).map((bank, i, all) => ({ ...bank, moduleCounts: markingModuleCounts(bank).slice(), sscNumbers: markingSscNumbers(bank, all.slice(0, i).reduce((sum, b) => sum + b.sscs, 0)).slice() })) : [{ msms: 1, sscs: 5, sscNumbers: [null, null, null, null, null], moduleCounts: [null, null, null, null, null], junctionBoxes: 5, acdps: 2 }],
-    saving: false, saveFailed: false, routeEdit: null, panelCollapsed: false, redoMarks: [], configError: '', portCandidates: null,
+    saving: false, saveFailed: false, routeEdit: null, panelCollapsed: false, redoMarks: [], configError: '', portCandidates: null, autoDetectAttempted: false,
     generated: !!(saved.powerConvention === 'ayk-series' && existingRack && saved.cal && fvCalib(saved.cal).ok && project.config.layout && pictureModulePortsReady(rackModuleCells(existingRack), saved.modulePorts, saved.modulePortPoints)), message: '',
   };
   function rebuildMarks() {
@@ -606,6 +606,7 @@ async function tabSimpleWiring(el, project, ctx) {
     const records = st.plan ? st.plan.records : [];
     const next = steps[records.length];
     const issues = markingIssues(st.plan);
+    const candidateReview = st.portCandidates && st.plan && !issues.length ? aykReviewedPortMap(rackModuleCells(rack), markingLayout(st.plan).sscs, st.portCandidates.candidates) : null;
     const moduleReady = pictureModulePortsReady(rack ? rackModuleCells(rack) : [], st.ports, st.modulePortPoints);
     let svg = '';
     if (cal && cal.ok) {
@@ -685,6 +686,7 @@ async function tabSimpleWiring(el, project, ctx) {
         <div class="btn-row"><button class="btn btn-ghost btn-sm" id="marking-undo" ${!records.length || st.saving ? 'disabled' : ''}>Undo last component mark</button>${st.saveFailed ? '<button class="btn btn-ghost" id="marking-retry">Retry saving</button>' : ''}</div>
         <button class="btn btn-ghost btn-sm" id="detect-module-ports" ${!cal || !cal.ok || !rackModuleCells(rack).length ? 'disabled' : ''}>Detect marked component ports</button><p class="muted small">Matches AYK terminal templates near marked modules, SSCs and junction boxes. Blue circles are unconfirmed candidates and do not change wiring.</p>
         ${st.portCandidates ? `<p role="status">${Object.values(st.portCandidates.candidates).reduce((n, ports) => n + Object.keys(ports).length, 0)} candidate ports found; ${st.portCandidates.missing.length} not found. Inspect the blue circles; these are not confirmed terminals.</p>` : ''}
+        ${candidateReview ? `<button class="btn btn-primary btn-sm" id="use-detected-ports" ${candidateReview.errors.length || st.saving ? 'disabled' : ''}>Use reviewed port candidates</button><p class="muted small">${candidateReview.errors.length ? candidateReview.errors.length + ' terminal positions are unresolved. Refine the component centres or mark the ports manually.' : 'Review every blue marker before using these positions for wiring. This replaces existing port positions and clears route edits.'}</p>` : ''}
         <div class="btn-row"><button class="btn btn-ghost btn-sm" id="simple-ports" ${!cal || !cal.ok || !rackModuleCells(rack).length || (st.plan && issues.length) ? 'disabled' : ''}>${st.ports || st.modulePortPoints ? 'Mark module ports again' : 'Mark four module ports'}</button>
           <button class="btn btn-ghost btn-sm" id="simple-device-ports" ${!cal || !cal.ok || !rackDeviceCells(rack, 'ssc').length || (st.plan && issues.length) ? 'disabled' : ''}>Mark SSC and junction-box ports</button>
           <button class="btn btn-ghost btn-sm" id="simple-zoom-out" type="button" aria-label="Zoom out">−</button><span id="simple-zoom-label">${Math.round(st.zoom * 100)}%</span><button class="btn btn-ghost btn-sm" id="simple-zoom-in" type="button" aria-label="Zoom in">+</button><button class="btn btn-ghost btn-sm" id="simple-zoom-fit" type="button">Fit drawing</button></div>
@@ -810,7 +812,7 @@ async function tabSimpleWiring(el, project, ctx) {
       if (errors.length) { st.configError = errors.join(' '); render(); return; }
       const needed = markingSteps(st.banks).filter(step => step.kind !== 'jb').length;
       if (needed > st.rack.cols * st.rack.rows) { st.configError = 'The declared components need ' + needed + ' grid positions, but this grid has only ' + (st.rack.cols * st.rack.rows) + '. Increase the grid before marking.'; render(); return; }
-      st.configError = ''; st.plan = { version: 1, banks: JSON.parse(JSON.stringify(st.banks)), records: [] }; st.redoMarks = [];
+      st.configError = ''; st.plan = { version: 1, banks: JSON.parse(JSON.stringify(st.banks)), records: [] }; st.redoMarks = []; st.portCandidates = null; st.autoDetectAttempted = false;
       rebuildMarks(); st.ports = null; st.modulePortPoints = null; st.moduleDraftRoutes = {}; st.routeMethodRules = []; st.devicePorts = {}; st.portStep = 0; st.deviceStep = 0; st.generated = false; st.message = '';
       await persist();
     };
@@ -852,6 +854,7 @@ async function tabSimpleWiring(el, project, ctx) {
     newScroll.addEventListener('pointerup', event => { if (event.button === 1) pan = null; });
     newScroll.addEventListener('pointercancel', () => { pan = null; });
     el.querySelector('#detect-module-ports').onclick = async event => {
+      st.autoDetectAttempted = true;
       const button = event.currentTarget; button.disabled = true; button.textContent = 'Detecting terminal shapes…';
       const detectionRack = st.rack, detectionCal = st.cal;
       const detectionRecords = st.plan ? JSON.stringify(st.plan.records) : '';
@@ -892,6 +895,13 @@ async function tabSimpleWiring(el, project, ctx) {
         render();
       } catch (error) { console.error('Port candidate detection failed', error); toast('Could not inspect the drawing: ' + error.message, 'error'); button.disabled=false; button.textContent='Detect marked component ports'; }
     };
+    el.querySelector('#use-detected-ports')?.addEventListener('click', async () => {
+      if(!candidateReview || candidateReview.errors.length || st.saving) return;
+      st.modulePortPoints = candidateReview.modulePortPoints; st.devicePorts = candidateReview.devicePorts;
+      st.ports = null; st.moduleDraftRoutes = {}; st.routeMethodRules = []; st.portStep = 0; st.deviceStep = 0; st.generated = false;
+      st.message = 'Reviewed detected ports saved. Generate wiring and inspect the routes.';
+      st.portCandidates = null; await persist();
+    });
     el.querySelector('#simple-ports').onclick = () => { if (!st.portStep) st.previousPorts = st.ports; st.portCandidates = null; st.portStep = 1; st.deviceStep = 0; st.pendingPorts = {}; st.ports = null; st.generated = false; st.message = ''; render(); };
     el.querySelector('#simple-device-ports').onclick = () => { if (st.portStep) st.ports = st.previousPorts; st.deviceStep = 1; st.portStep = 0; st.pendingDevice = {}; st.generated = false; st.message = ''; render(); };
     el.querySelector('#simple-cancel-ports')?.addEventListener('click', () => { if (st.portStep) st.ports = st.previousPorts; st.portStep = 0; st.deviceStep = 0; st.message = 'Port marking cancelled.'; render(); });
@@ -1117,6 +1127,10 @@ async function tabSimpleWiring(el, project, ctx) {
       if (!['route-undo', 'route-clear', 'route-save', 'route-cancel', 'simple-zoom-in', 'simple-zoom-out', 'simple-zoom-fit'].includes(control.id)) control.disabled = true;
     });
     if (st.saving) el.querySelectorAll('button,input,select').forEach(control => { control.disabled = true; });
+    if(st.plan && !issues.length && !moduleReady && !st.autoDetectAttempted && !st.saving && !st.portStep && !st.deviceStep) {
+      st.autoDetectAttempted = true;
+      requestAnimationFrame(() => { const detect=el.querySelector('#detect-module-ports'); if(detect && !detect.disabled) detect.click(); });
+    }
   }
   render();
 }

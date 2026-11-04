@@ -9,6 +9,8 @@ Thumbs.db
 *.tmp
 .tmp_*
 *.log
+prototype-output/
+__pycache__/
 
 # local env / credentials (never commit secrets)
 .env

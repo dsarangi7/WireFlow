@@ -41,7 +41,7 @@ function aykDetectComponentPorts(gray,width,height,scale,kind,anchor) {
   for(const port of definition.ports) {
     const expected={x:anchor.x*scale+(port.x-definition.anchor.x)*3,y:anchor.y*scale+(port.y-definition.anchor.y)*3};
     let match=null;
-    for(const variant of port.variants || [port.gray]) {
+    for(const variant of [...(port.variants || [port.gray]), ...(port.svgVariants || [])]) {
       const found=aykMatchTerminal(gray,width,height,variant,expected,12,45);
       if(found && (!match || found.score>match.score)) match=found;
     }
@@ -51,4 +51,29 @@ function aykDetectComponentPorts(gray,width,height,scale,kind,anchor) {
   const values=Object.values(points);
   if(values.some((a,i)=>values.some((b,j)=>i<j && Math.hypot(a.x-b.x,a.y-b.y)*scale<8))) return {points:{},missing:definition.ports.map(p=>keys[p.name])};
   return {points,missing};
+}
+
+/* Promote only a complete set after an explicit engineer review action.
+   No shared-offset fallback is allowed for missing detected terminals. */
+function aykReviewedPortMap(moduleSlots, groups, candidates) {
+  const errors=[],modulePortPoints={},devicePorts={};
+  const valid=p=>p && Number.isFinite(p.x) && Number.isFinite(p.y);
+  if(!Array.isArray(moduleSlots) || !moduleSlots.length || !Array.isArray(groups) || !groups.length || !candidates || typeof candidates!=='object') return {errors:['Complete component markings and run port detection first.']};
+  function read(id,keys) {
+    const result={};
+    for(const key of keys) {
+      const p=candidates[id] && candidates[id][key];
+      if(!valid(p)) errors.push(id+': '+key+' is unresolved.');
+      else result[key]={x:p.x,y:p.y};
+    }
+    return result;
+  }
+  for(const slot of moduleSlots) modulePortPoints[slot]=read(slot,['commS','commN','pwrNeg','pwrPos']);
+  for(const group of groups) {
+    const ports=read(group.id,['commS','commN','pwrPos','busPos','busNeg','pwrNeg']);
+    const jb=read(group.jb,['pwrPos','pwrNeg']);
+    if(!group.slot || !group.id || !group.jb) errors.push('SSC or junction-box association is unresolved.');
+    else devicePorts[group.slot]={...ports,jbPos:jb.pwrPos,jbNeg:jb.pwrNeg};
+  }
+  return errors.length ? {errors} : {errors:[],modulePortPoints,devicePorts};
 }
