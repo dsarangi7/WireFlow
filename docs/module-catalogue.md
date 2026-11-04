@@ -12,8 +12,10 @@ Old projects remain unselected until an engineer chooses their module family.
 One selection currently applies to the rack; mixed module families in one rack
 are not modelled by this selector.
 
-Pattern is displayed separately. Module height is not assumed to be vertical
-grid pitch, nor Pattern horizontal grid pitch: mounting gaps and the meaning
-of Pattern have not been confirmed. Existing measured grid calibration and
-terminal detection remain authoritative for drawing coordinates. This catalogue
+Pattern is the horizontal centre-to-centre rack column spacing, confirmed by
+AYK. Selecting a type fills and locks Column spacing to its Pattern value.
+Changing an existing rack's spacing invalidates its calibration, layout and
+delivery status; align the drawing again and regenerate. Module height is not
+assumed to be vertical grid pitch: mounting gaps remain separate. Measured
+terminal detection remains authoritative for port coordinates. This catalogue
 does not supply terminal offsets, SSC/MSM dimensions or cable bend-radius rules.

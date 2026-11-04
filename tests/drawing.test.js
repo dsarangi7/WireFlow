@@ -509,7 +509,7 @@ ok('print title block embeds the AYK logo and drawing details',
 
 const simpleSrc = fs.readFileSync(path.join(ROOT, 'js', 'simple-wiring.js'), 'utf8');
 const portFactory = new Function('slotCell', 'fvSlotCenter', 'fvDist', 'SSC_PALETTE', 'sheetSvgPrimitive', 'sheetEsc', 'fvSvg',
-  simpleSrc + '\nreturn { AYK_MODULE_TYPES, aykModuleType, aykModuleSelection, PICTURE_DEVICE_PORT_STEPS, studioExportIssues, pictureZoomOffset, pictureRefineWiringSvg, pictureWiringSvg, modulePortsValid, pictureFindPortCandidates, pictureModulePortsReady, pictureCopyDraftRoutePoints, pictureDevicePortsComplete, picturePowerCrossings, pictureSuggestedModuleRoute, pictureSuggestBottomCurves, pictureSuggestRoutesForGroups, pictureMethodRulesValid, pictureApplyMethod, pictureModuleRoutesValid, pictureRailRoute, pictureModuleWiring, pictureVisioModel, pictureSheetSvg, portMarkingPrompt, markingModuleCounts, markingPlanErrors, markingSteps, markingIssues, markingRecord, markingLayout, pictureDeviceLabels, pictureDeviceLabelsSvg };');
+  simpleSrc + '\nreturn { AYK_MODULE_TYPES, aykModuleType, aykModuleSelection, aykApplyModuleType, PICTURE_DEVICE_PORT_STEPS, studioExportIssues, pictureZoomOffset, pictureRefineWiringSvg, pictureWiringSvg, modulePortsValid, pictureFindPortCandidates, pictureModulePortsReady, pictureCopyDraftRoutePoints, pictureDevicePortsComplete, picturePowerCrossings, pictureSuggestedModuleRoute, pictureSuggestBottomCurves, pictureSuggestRoutesForGroups, pictureMethodRulesValid, pictureApplyMethod, pictureModuleRoutesValid, pictureRailRoute, pictureModuleWiring, pictureVisioModel, pictureSheetSvg, portMarkingPrompt, markingModuleCounts, markingPlanErrors, markingSteps, markingIssues, markingRecord, markingLayout, pictureDeviceLabels, pictureDeviceLabelsSvg };');
 const portsApi = portFactory(E.slotCell, (cal, c, r) => ({ x: cal.x0 + c * cal.pitchX, y: cal.y0 + r * cal.pitchY }),
   (a, b) => Math.hypot(a.x - b.x, a.y - b.y), E.SSC_PALETTE, E.sheetSvgPrimitive, E.sheetEsc, () => '<svg></svg>');
 {
@@ -698,6 +698,16 @@ const devicePorts = { '1,1': {
   jbNeg: { x: 400, y: 50 }, jbPos: { x: 410, y: 50 },
 } };
 const completeGroups = [{ label: 'SSC-1', slot: '1,1', order: ['0,0', '0,1'] }];
+{
+  const original={numbering:{rack:{pitchX:450,pitchY:250,cells:[{kind:'module'}]},cal:{ok:true,x0:10,pitchX:100}},layout:{saved:true},flow:{deliveredAt:'old',printedAt:'old'}};
+  const changed=portsApi.aykApplyModuleType(original,'A-176A');
+  eq('confirmed Pattern applies as horizontal rack spacing',changed.numbering.rack.pitchX,570);
+  ok('changed spacing invalidates calibration and released output',!changed.numbering.cal.ok && !changed.layout && !changed.flow.deliveredAt && !changed.flow.printedAt);
+  ok('module choice preserves markings and vertical spacing',changed.numbering.rack.cells[0].kind==='module' && changed.numbering.rack.pitchY===250 && changed.numbering.cal.x0===10);
+  ok('module choice does not mutate original project',original.numbering.rack.pitchX===450 && original.numbering.cal.ok && original.layout.saved);
+  ok('unchanged spacing keeps valid existing calibration',portsApi.aykApplyModuleType(original,'A-88A').numbering.cal.ok);
+  eq('choosing a module before grid creation still saves its Pattern',portsApi.aykApplyModuleType({},'polaris-pod').moduleDimensions.pattern,824.5);
+}
 eq('AYK catalogue contains all sixteen supplied module types',portsApi.AYK_MODULE_TYPES.length,16);
 eq('AYK catalogue uses unique type identifiers',new Set(portsApi.AYK_MODULE_TYPES.map(t=>t.id)).size,16);
 eq('OrionAN dimensions retain AYK millimetre values',JSON.stringify(portsApi.aykModuleSelection('A-96AA').moduleDimensions),JSON.stringify({id:'A-96AA',name:'OrionAN',width:450,depth:735,height:200,pattern:500,rackDepth:835,rackDepthTotal:915,minServiceArea:785,recommendedServiceArea:865,note:'',units:'mm'}));

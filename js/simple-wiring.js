@@ -25,6 +25,20 @@ function aykModuleSelection(id) {
   const type=aykModuleType(id);
   return type ? {moduleType:type.id,moduleDimensions:{...type,units:'mm'}} : {moduleType:'',moduleDimensions:null};
 }
+function aykApplyModuleType(config,id) {
+  const next=JSON.parse(JSON.stringify(config || {}));
+  Object.assign(next,aykModuleSelection(id));
+  const type=aykModuleType(id),numbering=next.numbering;
+  if(type && numbering && numbering.rack && numbering.rack.pitchX!==type.pattern) {
+    numbering.rack.pitchX=type.pattern;
+    if(numbering.cal) numbering.cal.ok=false;
+    delete next.layout;
+    delete next.delivered;
+    delete next.printed;
+    if(next.flow) {delete next.flow.deliveredAt;delete next.flow.printedAt;}
+  }
+  return next;
+}
 function pictureZoomOffset(scroll, anchor, oldZoom, newZoom) {
   return (scroll + anchor) * (newZoom / oldZoom) - anchor;
 }
@@ -756,7 +770,7 @@ async function tabSimpleWiring(el, project, ctx) {
         <div class="btn-row">
           <label>Columns <input id="simple-cols" type="number" min="2" max="12" value="${rack ? rack.cols : ''}" style="width:80px"></label>
           <label>Rows <input id="simple-rows" type="number" min="2" max="24" value="${rack ? rack.rows : ''}" style="width:80px"></label>
-          <label>Column spacing (mm) <input id="simple-px" type="number" min="50" value="${rack ? rack.pitchX : ''}" style="width:105px"></label>
+          <label>Column spacing (mm) <input id="simple-px" type="number" min="50" value="${aykModuleType(project.config?.moduleType)?.pattern ?? (rack ? rack.pitchX : '')}" ${aykModuleType(project.config?.moduleType) ? 'readonly title="Fixed by the selected AYK module type"' : ''} style="width:105px"></label>
           <label>Row spacing (mm) <input id="simple-py" type="number" min="50" value="${rack ? rack.pitchY : ''}" style="width:105px"></label>
           <button class="btn btn-ghost" id="simple-grid">Set grid and align</button>
         </div>
@@ -835,8 +849,16 @@ async function tabSimpleWiring(el, project, ctx) {
     const toolbarExport = studio.querySelector('[data-studio-action="export"]');
     el.querySelector('#rack-module-type').onchange = async event => {
       const previous=project.config;
-      const config={...previous,...aykModuleSelection(event.target.value)};
+      const config=aykApplyModuleType(previous,event.target.value);
       if(!await ctx.saveProject({config})) {project.config=previous;toast('Could not save the module type. Please try again.','error');}
+      else {
+        if(config.numbering?.rack) st.rack=config.numbering.rack;
+        if(config.numbering?.cal) st.cal=config.numbering.cal;
+        if(previous?.numbering?.rack?.pitchX!==config.numbering?.rack?.pitchX) {
+          st.generated=false;
+          st.message='Module column spacing applied. Align the drawing again before generating wiring.';
+        }
+      }
       render();
     };
     toolbarExport.disabled = exportIssues.length > 0;
