@@ -19,3 +19,8 @@ delivery status; align the drawing again and regenerate. Module height is not
 assumed to be vertical grid pitch: mounting gaps remain separate. Measured
 terminal detection remains authoritative for port coordinates. This catalogue
 does not supply terminal offsets, SSC/MSM dimensions or cable bend-radius rules.
+
+The stale-calibration flag survives project/session reopen and is respected by
+the alternate print builder. Normalizing numeric coordinates must not silently
+reactivate the previous scale after a Pattern change. Saved tray paths remain
+available for re-alignment on the same drawing.

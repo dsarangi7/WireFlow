@@ -509,7 +509,7 @@ ok('print title block embeds the AYK logo and drawing details',
 
 const simpleSrc = fs.readFileSync(path.join(ROOT, 'js', 'simple-wiring.js'), 'utf8');
 const portFactory = new Function('slotCell', 'fvSlotCenter', 'fvDist', 'SSC_PALETTE', 'sheetSvgPrimitive', 'sheetEsc', 'fvSvg',
-  simpleSrc + '\nreturn { AYK_MODULE_TYPES, aykModuleType, aykModuleSelection, aykApplyModuleType, PICTURE_DEVICE_PORT_STEPS, studioExportIssues, pictureZoomOffset, pictureRefineWiringSvg, pictureWiringSvg, modulePortsValid, pictureFindPortCandidates, pictureModulePortsReady, pictureCopyDraftRoutePoints, pictureDevicePortsComplete, picturePowerCrossings, pictureSuggestedModuleRoute, pictureSuggestBottomCurves, pictureSuggestRoutesForGroups, pictureMethodRulesValid, pictureApplyMethod, pictureModuleRoutesValid, pictureRouteFollowsTray, pictureTrayPathsValid, pictureTrayRoute, pictureRouteHitsPort, pictureRailRoute, pictureModuleWiring, pictureVisioModel, pictureSheetSvg, portMarkingPrompt, markingModuleCounts, markingPlanErrors, markingSteps, markingIssues, markingRecord, markingLayout, pictureDeviceLabels, pictureDeviceLabelsSvg };');
+  simpleSrc + '\nreturn { AYK_MODULE_TYPES, aykModuleType, aykModuleSelection, aykApplyModuleType, pictureRestoreCalibration, PICTURE_DEVICE_PORT_STEPS, studioExportIssues, pictureZoomOffset, pictureRefineWiringSvg, pictureWiringSvg, modulePortsValid, pictureFindPortCandidates, pictureModulePortsReady, pictureCopyDraftRoutePoints, pictureDevicePortsComplete, picturePowerCrossings, pictureSuggestedModuleRoute, pictureSuggestBottomCurves, pictureSuggestRoutesForGroups, pictureMethodRulesValid, pictureApplyMethod, pictureModuleRoutesValid, pictureRouteFollowsTray, pictureTrayPathsValid, pictureTrayRoute, pictureRouteHitsPort, pictureRailRoute, pictureModuleWiring, pictureVisioModel, pictureSheetSvg, portMarkingPrompt, markingModuleCounts, markingPlanErrors, markingSteps, markingIssues, markingRecord, markingLayout, pictureDeviceLabels, pictureDeviceLabelsSvg };');
 const portsApi = portFactory(E.slotCell, (cal, c, r) => ({ x: cal.x0 + c * cal.pitchX, y: cal.y0 + r * cal.pitchY }),
   (a, b) => Math.hypot(a.x - b.x, a.y - b.y), E.SSC_PALETTE, E.sheetSvgPrimitive, E.sheetEsc, () => '<svg></svg>');
 {
@@ -736,6 +736,14 @@ const completeGroups = [{ label: 'SSC-1', slot: '1,1', order: ['0,0', '0,1'] }];
  ok('tray adherence rejects shortcut between separate tray arms',!portsApi.pictureRouteFollowsTray([{x:0,y:20},{x:50,y:80},{x:100,y:20}],cal));
  ok('missing tray map blocks studio export',portsApi.studioExportIssues({generated:true,deviceReady:true,trayReady:false}).some(s=>s.includes('tray')));
 }
+{
+ const config=portsApi.aykApplyModuleType({numbering:{rack:{pitchX:450,pitchY:250},cal:{ok:true,x0:10,y0:20,pitchX:100,pitchY:50,trayPaths:[[{x:0,y:0},{x:100,y:0}]]}},layout:{}},'A-176A');
+ const reopened=portsApi.pictureRestoreCalibration(JSON.parse(JSON.stringify(config.numbering.cal)),c=>({...c,ok:true}));
+ ok('save/reopen cannot reactivate calibration invalidated by changed module spacing',reopened.ok===false);
+ reopened.trayPaths[0][0].x=999;
+ ok('restored calibration retains an independent tray map',config.numbering.cal.trayPaths[0][0].x===0 && reopened.trayPaths[0][1].x===100);
+ ok('legacy calibration without an explicit stale flag retains normalizer verdict',portsApi.pictureRestoreCalibration({},()=>({ok:true})).ok);
+}
 eq('AYK catalogue contains all sixteen supplied module types',portsApi.AYK_MODULE_TYPES.length,16);
 eq('AYK catalogue uses unique type identifiers',new Set(portsApi.AYK_MODULE_TYPES.map(t=>t.id)).size,16);
 eq('OrionAN dimensions retain AYK millimetre values',JSON.stringify(portsApi.aykModuleSelection('A-96AA').moduleDimensions),JSON.stringify({id:'A-96AA',name:'OrionAN',width:450,depth:735,height:200,pattern:500,rackDepth:835,rackDepthTotal:915,minServiceArea:785,recommendedServiceArea:865,note:'',units:'mm'}));
@@ -831,6 +839,12 @@ ok('invalid explicit route is omitted rather than replaced with a direct line', 
 eq('invalid route leaves other SSC connections intact', invalidWires.filter(s => s.kind === 'sscp' || s.kind === 'sscc').length, 5);
 const invalidRoutesObject = { '1,1': { ...devicePorts['1,1'], draftRoutes: [] } };
 eq('invalid route map never silently uses straight device links', portsApi.pictureModuleWiring(completeGroups, measuredCal, ports, invalidRoutesObject).filter(s => s.kind === 'sscp' || s.kind === 'sscc').length, 0);
+
+let stalePrintWired=false;
+const stalePrint=printProjectPages({config:{numbering:{cal:{ok:false},modulePorts:ports}},underlay:{kind:'image',src:'data:image/png;base64,AA'}},[],
+ ()=>({ok:true}),()=>[{order:['0,0','0,1']}],portsApi.modulePortsValid,
+ ()=>{stalePrintWired=true;return [];},()=>'<svg/>',parts=>parts,()=>'<svg/>',()=>'<svg/>',()=>'',portsApi.pictureModuleRoutesValid,svg=>svg);
+ok('alternate print builder cannot draw stale-scale wiring despite normalization',!stalePrintWired && stalePrint.frontSvg.includes('unavailable'));
 
 const verdictBody = fnBody(appSrc, 'vsdxImportVerdict');
 ok('fnBody extracted vsdxImportVerdict()', !!verdictBody,

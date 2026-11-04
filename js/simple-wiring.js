@@ -39,6 +39,14 @@ function aykApplyModuleType(config,id) {
   }
   return next;
 }
+/* Normalizing numeric calibration must not undo an explicit stale-scale flag.
+   Keep tray coordinates independent from normalization and session references. */
+function pictureRestoreCalibration(saved,normalize) {
+  const cal=normalize(saved);
+  if(saved?.ok===false)cal.ok=false;
+  if(saved?.trayPaths!==undefined)cal.trayPaths=JSON.parse(JSON.stringify(saved.trayPaths));
+  return cal;
+}
 function pictureZoomOffset(scroll, anchor, oldZoom, newZoom) {
   return (scroll + anchor) * (newZoom / oldZoom) - anchor;
 }
@@ -734,7 +742,7 @@ async function tabSimpleWiring(el, project, ctx) {
   const existingRack = saved.rack && saved.mode === 'layout' ? rackEnsure(saved.rack) : null;
   const st = {
     rack: existingRack,
-    cal: existingRack ? Object.assign(fvCalib(saved.cal),saved.cal?.trayPaths!==undefined ? {trayPaths:JSON.parse(JSON.stringify(saved.cal.trayPaths))} : {}) : null,
+    cal: existingRack ? pictureRestoreCalibration(saved.cal,fvCalib) : null,
     click: null, calibrating: 0,
     ports: modulePortsValid(saved.modulePorts) ? saved.modulePorts : null,
     modulePortPoints: saved.modulePortPoints === undefined ? null : saved.modulePortPoints,
@@ -746,7 +754,7 @@ async function tabSimpleWiring(el, project, ctx) {
     plan: saved.marking ? JSON.parse(JSON.stringify(saved.marking)) : null,
     banks: saved.marking ? JSON.parse(JSON.stringify(saved.marking.banks)).map((bank, i, all) => ({ ...bank, moduleCounts: markingModuleCounts(bank).slice(), sscNumbers: markingSscNumbers(bank, all.slice(0, i).reduce((sum, b) => sum + b.sscs, 0)).slice() })) : [{ msms: 1, sscs: 5, sscNumbers: [null, null, null, null, null], moduleCounts: [null, null, null, null, null], junctionBoxes: 5, acdps: 2 }],
     saving: false, saveFailed: false, routeEdit: null, panelCollapsed: false, redoMarks: [], configError: '', portCandidates: null, autoDetectAttempted: false,
-    generated: !!(saved.powerConvention === 'ayk-series' && existingRack && saved.cal && fvCalib(saved.cal).ok && project.config.layout && pictureModulePortsReady(rackModuleCells(existingRack), saved.modulePorts, saved.modulePortPoints)), message: '',
+    generated: !!(saved.powerConvention === 'ayk-series' && existingRack && saved.cal && saved.cal.ok!==false && fvCalib(saved.cal).ok && project.config.layout && pictureModulePortsReady(rackModuleCells(existingRack), saved.modulePorts, saved.modulePortPoints)), message: '',
   };
   function rebuildMarks() {
     st.rack.cells.forEach(cell => { cell.kind = 'empty'; cell.label = ''; });
