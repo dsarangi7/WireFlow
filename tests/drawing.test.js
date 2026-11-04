@@ -509,7 +509,7 @@ ok('print title block embeds the AYK logo and drawing details',
 
 const simpleSrc = fs.readFileSync(path.join(ROOT, 'js', 'simple-wiring.js'), 'utf8');
 const portFactory = new Function('slotCell', 'fvSlotCenter', 'fvDist', 'SSC_PALETTE', 'sheetSvgPrimitive', 'sheetEsc', 'fvSvg',
-  simpleSrc + '\nreturn { AYK_MODULE_TYPES, aykModuleType, aykModuleSelection, aykApplyModuleType, PICTURE_DEVICE_PORT_STEPS, studioExportIssues, pictureZoomOffset, pictureRefineWiringSvg, pictureWiringSvg, modulePortsValid, pictureFindPortCandidates, pictureModulePortsReady, pictureCopyDraftRoutePoints, pictureDevicePortsComplete, picturePowerCrossings, pictureSuggestedModuleRoute, pictureSuggestBottomCurves, pictureSuggestRoutesForGroups, pictureMethodRulesValid, pictureApplyMethod, pictureModuleRoutesValid, pictureRouteHitsPort, pictureRailRoute, pictureModuleWiring, pictureVisioModel, pictureSheetSvg, portMarkingPrompt, markingModuleCounts, markingPlanErrors, markingSteps, markingIssues, markingRecord, markingLayout, pictureDeviceLabels, pictureDeviceLabelsSvg };');
+  simpleSrc + '\nreturn { AYK_MODULE_TYPES, aykModuleType, aykModuleSelection, aykApplyModuleType, PICTURE_DEVICE_PORT_STEPS, studioExportIssues, pictureZoomOffset, pictureRefineWiringSvg, pictureWiringSvg, modulePortsValid, pictureFindPortCandidates, pictureModulePortsReady, pictureCopyDraftRoutePoints, pictureDevicePortsComplete, picturePowerCrossings, pictureSuggestedModuleRoute, pictureSuggestBottomCurves, pictureSuggestRoutesForGroups, pictureMethodRulesValid, pictureApplyMethod, pictureModuleRoutesValid, pictureRouteFollowsTray, pictureTrayPathsValid, pictureTrayRoute, pictureRouteHitsPort, pictureRailRoute, pictureModuleWiring, pictureVisioModel, pictureSheetSvg, portMarkingPrompt, markingModuleCounts, markingPlanErrors, markingSteps, markingIssues, markingRecord, markingLayout, pictureDeviceLabels, pictureDeviceLabelsSvg };');
 const portsApi = portFactory(E.slotCell, (cal, c, r) => ({ x: cal.x0 + c * cal.pitchX, y: cal.y0 + r * cal.pitchY }),
   (a, b) => Math.hypot(a.x - b.x, a.y - b.y), E.SSC_PALETTE, E.sheetSvgPrimitive, E.sheetEsc, () => '<svg></svg>');
 {
@@ -717,6 +717,24 @@ const completeGroups = [{ label: 'SSC-1', slot: '1,1', order: ['0,0', '0,1'] }];
  const detour=portsApi.pictureRailRoute(a,b,{pitchX:100,pitchY:100},[],[],[obstacle]);
  ok('automatic route detours around an unrelated port',detour.length>2 && !portsApi.pictureRouteHitsPort(detour,[obstacle],2.5));
  ok('port collision blocks export even without a power crossing',!portsApi.picturePowerCrossings([{kind:'comm',pts:[a,b],portBlocked:true}]).valid);
+}
+{
+ const a={x:0,y:0},b={x:100,y:100};
+ const cal={pitchX:100,pitchY:100,trayPaths:[[{x:0,y:20},{x:100,y:20}],[{x:80,y:0},{x:80,y:100}]]};
+ const route=portsApi.pictureTrayRoute(a,b,cal,()=>true);
+ ok('marked tray intersections form a connected routing network',route.length>4 && route[0].x===a.x && route.at(-1).y===b.y);
+ eq('tray network routing is deterministic',JSON.stringify(route),JSON.stringify(portsApi.pictureTrayRoute(a,b,cal,()=>true)));
+ ok('tray paths require finite distinct consecutive points',!portsApi.pictureTrayPathsValid([[a,a]]) && !portsApi.pictureTrayPathsValid([[a,{x:NaN,y:3}]]));
+ eq('disconnected distant tray networks never create a long diagonal',portsApi.pictureTrayRoute(a,{x:1000,y:1000},{pitchX:100,pitchY:100,trayPaths:[[{x:0,y:0},{x:0,y:50}],[{x:1000,y:950},{x:1000,y:1000}]]},()=>true).length,0);
+ eq('blocked tray edges fail closed',portsApi.pictureTrayRoute(a,b,cal,()=>false).length,0);
+ eq('missing tray geometry has no tray-routing fallback',portsApi.pictureTrayRoute(a,b,{pitchX:100,pitchY:100},()=>true).length,0);
+}
+{
+ const cal={pitchX:100,pitchY:100,trayPaths:[[{x:0,y:20},{x:100,y:20}]]};
+ ok('tray adherence accepts short terminal branches and a tray run',portsApi.pictureRouteFollowsTray([{x:0,y:0},{x:0,y:20},{x:100,y:20},{x:100,y:0}],cal));
+ ok('tray adherence rejects long off-tray diagonal',!portsApi.pictureRouteFollowsTray([{x:0,y:0},{x:100,y:100}],cal));
+ ok('tray adherence rejects shortcut between separate tray arms',!portsApi.pictureRouteFollowsTray([{x:0,y:20},{x:50,y:80},{x:100,y:20}],cal));
+ ok('missing tray map blocks studio export',portsApi.studioExportIssues({generated:true,deviceReady:true,trayReady:false}).some(s=>s.includes('tray')));
 }
 eq('AYK catalogue contains all sixteen supplied module types',portsApi.AYK_MODULE_TYPES.length,16);
 eq('AYK catalogue uses unique type identifiers',new Set(portsApi.AYK_MODULE_TYPES.map(t=>t.id)).size,16);

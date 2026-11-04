@@ -44,6 +44,7 @@ function pictureZoomOffset(scroll, anchor, oldZoom, newZoom) {
 }
 function studioExportIssues(input) {
   const issues = [];
+  if(input.trayReady===false) issues.push('Mark and save the cable-tray paths.');
   if (!input.generated) issues.push('Generate wiring first.');
   if (!input.deviceReady) issues.push('Mark all SSC and junction-box terminals.');
   if (input.failedChecks) issues.push('Resolve the failed engineering checks.');
@@ -463,6 +464,51 @@ function pictureRouteHitsPort(pts, ports, radius) {
     });
   });
 }
+function pictureTrayPathsValid(paths) {
+  return Array.isArray(paths) && paths.length>0 && paths.length<=100 && paths.every(path=>Array.isArray(path) && path.length>=2 && path.length<=200 && path.every(p=>p && Number.isFinite(p.x) && Number.isFinite(p.y)) && path.slice(1).every((p,i)=>Math.hypot(p.x-path[i].x,p.y-path[i].y)>1e-6)) && paths.reduce((n,p)=>n+p.length-1,0)<=500;
+}
+function pictureRouteFollowsTray(pts,cal) {
+  if(!pictureTrayPathsValid(cal.trayPaths) || pts.length<2)return false;
+  const tolerance=Math.min(Math.abs(cal.pitchX),Math.abs(cal.pitchY))*.04;
+  const near=p=>cal.trayPaths.some(path=>path.slice(1).some((b,i)=>{const a=path[i],dx=b.x-a.x,dy=b.y-a.y,t=Math.max(0,Math.min(1,((p.x-a.x)*dx+(p.y-a.y)*dy)/(dx*dx+dy*dy)));return Math.hypot(p.x-a.x-t*dx,p.y-a.y-t*dy)<=tolerance;}));
+  const first=pts.findIndex(near),last=pts.length-1-[...pts].reverse().findIndex(near);
+  if(first<0 || last<first)return false;
+  const length=path=>path.slice(1).reduce((n,p,i)=>n+Math.hypot(p.x-path[i].x,p.y-path[i].y),0);
+  const reach=Math.hypot(cal.pitchX,cal.pitchY)*.65;
+  if(length(pts.slice(0,first+1))>reach || length(pts.slice(last))>reach)return false;
+  return pts.slice(first,last+1).every(near) && pts.slice(first+1,last+1).every((p,i)=>near({x:(p.x+pts[first+i].x)/2,y:(p.y+pts[first+i].y)/2}));
+}
+/* Build a network from marked tray segments. Intersections join automatically.
+   Terminal branches are bounded; no direct long-run fallback is allowed. */
+function pictureTrayRoute(a,b,cal,valid) {
+  if(!pictureTrayPathsValid(cal.trayPaths)) return [];
+  const lines=cal.trayPaths.flatMap(path=>path.slice(1).map((p,i)=>({a:path[i],b:p,points:[path[i],p]})));
+  const cross=(u,v)=>u.x*v.y-u.y*v.x;
+  const sub=(u,v)=>({x:u.x-v.x,y:u.y-v.y});
+  const projection=(p,l)=>{const d=sub(l.b,l.a),v=sub(p,l.a),t=Math.max(0,Math.min(1,(v.x*d.x+v.y*d.y)/(d.x*d.x+d.y*d.y)));return {x:l.a.x+d.x*t,y:l.a.y+d.y*t};};
+  for(let i=0;i<lines.length;i++) for(let j=i+1;j<lines.length;j++) {
+    const l=lines[i],m=lines[j],u=sub(l.b,l.a),v=sub(m.b,m.a),den=cross(u,v),w=sub(m.a,l.a);
+    if(Math.abs(den)>1e-9) {const t=cross(w,v)/den,s=cross(w,u)/den;if(t>=0 && t<=1 && s>=0 && s<=1){const p={x:l.a.x+t*u.x,y:l.a.y+t*u.y};l.points.push(p);m.points.push(p);}}
+    else for(const p of [l.a,l.b,m.a,m.b]) if(Math.hypot(p.x-projection(p,l).x,p.y-projection(p,l).y)<1e-6 && Math.hypot(p.x-projection(p,m).x,p.y-projection(p,m).y)<1e-6){l.points.push(p);m.points.push(p);}
+  }
+  const nodes=[],edges=[],ids=new Map();
+  const node=p=>{const key=p.x.toFixed(6)+','+p.y.toFixed(6);if(!ids.has(key)){ids.set(key,nodes.length);nodes.push(p);edges.push([]);}return ids.get(key);};
+  const join=(u,v)=>{if(u!==v && valid([nodes[u],nodes[v]])){const d=Math.hypot(nodes[u].x-nodes[v].x,nodes[u].y-nodes[v].y);edges[u].push([v,d]);edges[v].push([u,d]);}};
+  const start=node(a),end=node(b),branches=[];
+  const reach=Math.hypot(cal.pitchX,cal.pitchY)*.65;
+  for(const l of lines) for(const [p,id] of [[a,start],[b,end]]) {const q=projection(p,l);if(Math.hypot(p.x-q.x,p.y-q.y)<=reach && valid([p,q])) {l.points.push(q);branches.push([id,node(q)]);}}
+  for(const l of lines){const d=sub(l.b,l.a);l.points.sort((p,q)=>(p.x-q.x)*d.x+(p.y-q.y)*d.y);const list=[...new Set(l.points.map(node))];for(let i=1;i<list.length;i++) join(list[i-1],list[i]);}
+  branches.forEach(([u,v])=>join(u,v));
+  const dist=nodes.map(()=>Infinity),prev=[],done=new Set();dist[start]=0;
+  while(done.size<nodes.length){let u=-1;for(let i=0;i<nodes.length;i++)if(!done.has(i) && (u<0 || dist[i]<dist[u]))u=i;if(u<0 || !Number.isFinite(dist[u]))break;if(u===end)break;done.add(u);for(const [v,d] of edges[u])if(dist[u]+d<dist[v]){dist[v]=dist[u]+d;prev[v]=u;}}
+  if(!Number.isFinite(dist[end]))return [];
+  const pts=[];for(let u=end;u!==undefined;u=prev[u]){pts.unshift(nodes[u]);if(u===start)break;}
+  if(pts.length<2 || !valid(pts))return [];
+  // Small rounded corners retain the marked tray geometry within a visual fillet.
+  const rounded=[pts[0]],radius=Math.min(Math.abs(cal.pitchX),Math.abs(cal.pitchY))*.025;
+  for(let i=1;i<pts.length-1;i++){const p=pts[i],a=pts[i-1],b=pts[i+1],d1=Math.hypot(a.x-p.x,a.y-p.y),d2=Math.hypot(b.x-p.x,b.y-p.y),r=Math.min(radius,d1/3,d2/3);if(!d1 || !d2)continue;const s={x:p.x+(a.x-p.x)*r/d1,y:p.y+(a.y-p.y)*r/d1},e={x:p.x+(b.x-p.x)*r/d2,y:p.y+(b.y-p.y)*r/d2};rounded.push(s,...pictureCurvePoints(s,e,[p]).slice(1));}
+  rounded.push(pts[pts.length-1]);return valid(rounded) ? rounded : [];
+}
 function pictureRailRoute(a, b, cal, faces, powerSegments, portObstacles) {
   const px=Math.abs(cal.pitchX), py=Math.abs(cal.pitchY);
   if (!(px>0 && py>0)) return [];
@@ -484,6 +530,7 @@ function pictureRailRoute(a, b, cal, faces, powerSegments, portObstacles) {
     return audit.valid && !audit.pairs.length;
   };
   if(Math.abs(a.x-b.x)<px*.22 && Math.abs(a.y-b.y)<py*1.4 && valid([a,b])) return [a,b];
+  if(cal.trayPaths!==undefined) return pictureTrayRoute(a,b,cal,valid);
   const xs=[a.x,b.x,a.x-px*.12,a.x+px*.12];
   faces.forEach(f=>{for(const gap of [.04,.08,.12,.18]) xs.push(f.left-px*gap,f.right+px*gap);});
   const candidates=[];
@@ -590,6 +637,11 @@ function pictureModuleWiring(groups, cal, ports, devicePorts, modulePortPoints, 
   });
   segments.filter(s=>s.kind!=='label').forEach(s=>{
     s.portBlocked=pictureRouteHitsPort(s.pts,knownPorts,Math.min(Math.abs(cal.pitchX),Math.abs(cal.pitchY))*.025);
+    if(cal.trayPaths!==undefined && s.pts.length>=2) {
+      const a=s.pts[0],b=s.pts[s.pts.length-1];
+      const directVertical=s.pts.length===2 && Math.abs(a.x-b.x)<Math.abs(cal.pitchX)*.22 && Math.abs(a.y-b.y)<Math.abs(cal.pitchY)*1.4;
+      if(!directVertical && !pictureRouteFollowsTray(s.pts,cal))s.portBlocked=true;
+    }
   });
   return segments;
 }
@@ -682,7 +734,7 @@ async function tabSimpleWiring(el, project, ctx) {
   const existingRack = saved.rack && saved.mode === 'layout' ? rackEnsure(saved.rack) : null;
   const st = {
     rack: existingRack,
-    cal: existingRack ? fvCalib(saved.cal) : null,
+    cal: existingRack ? Object.assign(fvCalib(saved.cal),saved.cal?.trayPaths!==undefined ? {trayPaths:JSON.parse(JSON.stringify(saved.cal.trayPaths))} : {}) : null,
     click: null, calibrating: 0,
     ports: modulePortsValid(saved.modulePorts) ? saved.modulePorts : null,
     modulePortPoints: saved.modulePortPoints === undefined ? null : saved.modulePortPoints,
@@ -752,7 +804,8 @@ async function tabSimpleWiring(el, project, ctx) {
       const deviceMarks = st.deviceStep >= 2 ? Object.entries(st.pendingDevice).map(([name, point]) =>
         `<circle cx="${point.x}" cy="${point.y}" r="${Math.max(3, Math.min(cal.pitchX, cal.pitchY) * .045)}" fill="${name.startsWith('comm') ? '#00a651' : '#e02020'}" stroke="white" stroke-width="1" pointer-events="none"/>`).join('') : '';
       const candidateMarks = st.portCandidates ? Object.values(st.portCandidates.candidates).flatMap(ports => Object.values(ports).map(point => `<circle cx="${point.x}" cy="${point.y}" r="${Math.max(3, Math.min(cal.pitchX, cal.pitchY) * .07)}" fill="none" stroke="#008cff" stroke-width="2" pointer-events="none"/>`)).join('') : '';
-      svg = pictureWiringSvg(cal, { src: project.underlay.src }, wiring, { width, height, noGrid: true, sscLabels: true }).replace('</svg>', (st.generated ? pictureDeviceLabelsSvg(st.plan, cal, wiring) : marks) + portMarks + deviceMarks + candidateMarks + '</svg>');
+      const trayMarks=[...(Array.isArray(cal.trayPaths) ? cal.trayPaths : []),...(st.trayEdit ? [st.trayEdit] : [])].map(path=>`<polyline points="${path.map(p=>p.x+','+p.y).join(' ')}" fill="none" stroke="#00b8d9" stroke-width="2" stroke-dasharray="5 3" pointer-events="none"/>`).join('');
+      svg = pictureWiringSvg(cal, { src: project.underlay.src }, wiring, { width, height, noGrid: true, sscLabels: true }).replace('</svg>', (st.generated ? pictureDeviceLabelsSvg(st.plan, cal, wiring) : marks) + portMarks + deviceMarks + candidateMarks + trayMarks + '</svg>');
     } else {
       svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${image.naturalWidth} ${image.naturalHeight}"><image width="${image.naturalWidth}" height="${image.naturalHeight}" href="${esc(project.underlay.src)}"/></svg>`;
     }
@@ -761,7 +814,7 @@ async function tabSimpleWiring(el, project, ctx) {
     const powerAudit = st.generated ? picturePowerCrossings(pictureModuleWiring(layoutGroups(project), cal, st.ports, st.devicePorts, st.modulePortPoints, st.powerConvention, st.moduleDraftRoutes)) : { valid: true, pairs: [] };
     const powerBlocked = !pictureModuleRoutesValid(st.moduleDraftRoutes) || !powerAudit.valid || powerAudit.pairs.length > 0;
     const deviceReady = !!rack && rackDeviceCells(rack, 'ssc').length > 0 && rackDeviceCells(rack, 'ssc').every(slot => pictureDevicePortsComplete(st.devicePorts[slot]));
-    const exportIssues = studioExportIssues({ generated: st.generated, deviceReady, failedChecks: failed.length, powerBlocked, experimental: false });
+    const exportIssues = studioExportIssues({ generated: st.generated, deviceReady, failedChecks: failed.length, powerBlocked, experimental: false, trayReady:pictureTrayPathsValid(cal?.trayPaths) });
     const prompt = portMarkingPrompt(st.portStep, st.deviceStep);
     if (prompt && st.deviceStep && st.plan && !issues.length) {
       const groups = markingLayout(st.plan).sscs;
@@ -787,6 +840,7 @@ async function tabSimpleWiring(el, project, ctx) {
       </div>
       <div class="card" style="margin-bottom:16px">
         <h3>1 · Set the rack grid</h3><p class="muted small">Enter the number of evenly spaced grid columns and rows, including empty positions. Enter the actual centre-to-centre distances in millimetres.</p>
+        <div><h4>Cable-tray paths</h4><p class="muted small">Click along each allowed tray boundary, including bends. Paths join where they intersect. Short terminal branches are automatic.</p><p>${Array.isArray(cal?.trayPaths) ? cal.trayPaths.length : 0} tray paths saved${st.trayEdit ? ' · '+st.trayEdit.length+' points in current path' : ''}</p><button class="btn btn-ghost" id="tray-start" ${!cal?.ok || st.trayEdit ? 'disabled' : ''}>Mark a tray path</button>${st.trayEdit ? '<button class="btn btn-primary" id="tray-save">Save tray path</button><button class="btn btn-ghost" id="tray-undo">Undo point</button><button class="btn btn-ghost" id="tray-cancel">Cancel</button>' : '<button class="btn btn-ghost" id="tray-remove">Remove last tray path</button>'}</div>
         <div class="btn-row">
           <label>Columns <input id="simple-cols" type="number" min="2" max="12" value="${rack ? rack.cols : ''}" style="width:80px"></label>
           <label>Rows <input id="simple-rows" type="number" min="2" max="24" value="${rack ? rack.rows : ''}" style="width:80px"></label>
@@ -822,7 +876,7 @@ async function tabSimpleWiring(el, project, ctx) {
         <p class="muted small">AYK series sequence: SSC + → highest module +; higher module − → next lower module +; M1 − → SSC −. Regenerate saved drawings to apply this sequence.</p>
         <p class="muted small">${rack ? Object.keys(st.devicePorts).filter(slot => rackIsModule(rack, slot) === false && rackDeviceCells(rack, 'ssc').includes(slot) && pictureDevicePortsComplete(st.devicePorts[slot])).length : 0} of ${rack ? rackDeviceCells(rack, 'ssc').length : 0} SSCs have their ports marked. Links with missing terminals or invalid draft routes are omitted. Check assignments and routes; lines are direct previews, not approved cable routes.</p>
         ${st.modulePortPoints !== null && !moduleReady ? '<p class="warn" role="status">Some individual module ports are missing or invalid. Complete them, or mark module ports again to replace these positions.</p>' : ''}
-        ${st.generated && powerBlocked ? '<p class="warn" role="alert">Some routes are unavailable, pass through an unrelated known port, or power cables cross or touch. Adjust the routes before exporting. This check does not verify physical clearance.</p>' : ''}
+        ${st.generated && powerBlocked ? '<p class="warn" role="alert">Some routes are unavailable, leave the marked trays, pass through an unrelated known port, or power cables cross or touch. Adjust the routes before exporting. This check does not verify physical clearance.</p>' : ''}
         <div class="btn-row"><button class="btn btn-primary" id="simple-generate" ${!cal || !cal.ok || !moduleReady || st.deviceStep || st.portStep || issues.length || st.saving || st.saveFailed ? 'disabled' : ''}>Generate wiring</button>${st.generated ? `<button class="btn btn-ghost" id="simple-visio" ${exportIssues.length ? 'disabled' : ''}>Download editable draft (Visio)</button><button class="btn btn-ghost" id="simple-svg" ${exportIssues.length ? 'disabled' : ''}>Download draft wiring drawing (SVG)</button><button class="btn btn-ghost" id="simple-sheet-svg" ${exportIssues.length ? 'disabled' : ''}>Download draft A3 sheet (SVG)</button><button class="btn btn-ghost" id="simple-export" ${exportIssues.length ? 'disabled' : ''}>Print draft PDF</button>` : ''}</div>
         ${st.generated && exportIssues.length ? '<ul class="marking-warnings">' + exportIssues.map(issue => '<li>' + esc(issue) + '</li>').join('') + '</ul>' : ''}
         ${st.generated ? '<p class="muted small">You can change markings here and generate again. Visio edits are separate and do not update this saved project.</p>' : ''}
@@ -867,6 +921,14 @@ async function tabSimpleWiring(el, project, ctx) {
       st.message = 'Component mark restored. Terminal positions still require review.'; await persist();
     };
     const toolbarExport = studio.querySelector('[data-studio-action="export"]');
+    el.querySelector('#tray-start').onclick=()=>{st.trayEdit=[];st.routeEdit=null;st.portStep=0;st.deviceStep=0;st.message='Click the tray boundary in order, including each bend, then Save tray path.';render();};
+    el.querySelector('#tray-cancel')?.addEventListener('click',()=>{st.trayEdit=null;render();});
+    el.querySelector('#tray-undo')?.addEventListener('click',()=>{st.trayEdit.pop();render();});
+    el.querySelector('#tray-save')?.addEventListener('click',async()=>{
+      if(!pictureTrayPathsValid([...(st.cal.trayPaths || []),st.trayEdit])){st.message='Mark distinct tray points; limit the network to 100 paths and 500 segments.';render();return;}
+      st.cal.trayPaths=[...(st.cal.trayPaths || []),st.trayEdit.map(p=>({...p}))];st.trayEdit=null;st.generated=false;st.message='Tray path saved. Generate wiring to use the updated tray network.';await persist();
+    });
+    el.querySelector('#tray-remove')?.addEventListener('click',async()=>{if(!st.cal?.trayPaths?.length)return;st.cal.trayPaths=st.cal.trayPaths.slice(0,-1);st.generated=false;await persist();});
     el.querySelector('#rack-module-type').onchange = async event => {
       const previous=project.config;
       const config=aykApplyModuleType(previous,event.target.value);
@@ -963,7 +1025,9 @@ async function tabSimpleWiring(el, project, ctx) {
       const cells = [];
       for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) cells.push({ c, r, kind: 'empty', label: '' });
       st.rack = rackEnsure({ cols, rows, pitchX: px, pitchY: py, cells });
+      const existingTrays=st.cal?.trayPaths;
       st.cal = fvCalib({ imgW: image.naturalWidth, imgH: image.naturalHeight, cols, rows });
+      if(existingTrays!==undefined)st.cal.trayPaths=existingTrays;
       st.plan = null; st.portCandidates = null; st.redoMarks = []; st.calibrating = 1; st.click = null; st.generated = false; st.ports = null; st.modulePortPoints = null; st.moduleDraftRoutes = {}; st.routeMethodRules = []; st.portStep = 0; st.devicePorts = {}; st.deviceStep = 0; st.message = ''; render();
     };
     const picture = el.querySelector('#simple-picture');
@@ -1150,6 +1214,7 @@ async function tabSimpleWiring(el, project, ctx) {
       if (st.saving || st.saveFailed) return;
       const svgEl = event.currentTarget.querySelector('svg'), rect = svgEl.getBoundingClientRect();
       const p = { x: (event.clientX - rect.left) * image.naturalWidth / rect.width, y: (event.clientY - rect.top) * image.naturalHeight / rect.height };
+      if(st.trayEdit){st.trayEdit.push(p);render();return;}
       if (st.routeEdit) { st.routeEdit.points.push(p); render(); return; }
       if (st.calibrating === 1) { st.click = p; st.calibrating = 2; render(); return; }
       if (st.calibrating === 2) {
@@ -1195,6 +1260,7 @@ async function tabSimpleWiring(el, project, ctx) {
       st.portCandidates = null; st.redoMarks = []; st.plan.records.push(result.record); rebuildMarks(); st.generated = false; st.message = ''; await persist();
     };
     el.querySelector('#simple-generate').onclick = async () => {
+      if(st.trayEdit || !pictureTrayPathsValid(st.cal?.trayPaths)){st.message='Save the cable-tray paths before generating wiring.';render();return;}
       const missing = markingIssues(st.plan);
       if (missing.length || !pictureModulePortsReady(st.rack ? rackModuleCells(st.rack) : [], st.ports, st.modulePortPoints) || st.saveFailed) { st.message = missing.join(' ') || 'Complete module-port positions and save before generating wiring.'; render(); return; }
       const config = JSON.parse(JSON.stringify(project.config || {}));
@@ -1206,7 +1272,7 @@ async function tabSimpleWiring(el, project, ctx) {
       const groups = layoutGroups(candidate);
       layoutApply(candidate, groups);
       const initialWires = pictureModuleWiring(groups, st.cal, st.ports, st.devicePorts, st.modulePortPoints, st.powerConvention, st.moduleDraftRoutes);
-      const bottomSuggestion = pictureSuggestBottomCurves(groups, initialWires, st.moduleDraftRoutes);
+      const bottomSuggestion = st.cal.trayPaths!==undefined ? null : pictureSuggestBottomCurves(groups, initialWires, st.moduleDraftRoutes);
       if (bottomSuggestion) candidate.config.numbering.moduleDraftRoutes = bottomSuggestion.routes;
       const ok = await ctx.saveProject({ config: candidate.config, modules_per_string: candidate.modules_per_string });
       if (!ok) { st.message = 'Could not save the wiring configuration.'; render(); return; }
@@ -1258,6 +1324,7 @@ async function tabSimpleWiring(el, project, ctx) {
       const svgOut = pictureWiringSvg(st.cal, { src: project.underlay.src }, wiring, { noGrid: true, sscLabels: true }).replace('</svg>', pictureDeviceLabelsSvg(st.plan, st.cal, wiring) + warning + '</svg>');
       download((project.name || 'wiring') + '-rack-wiring.svg', svgOut, 'image/svg+xml');
     });
+    if(st.trayEdit)el.querySelectorAll('button,input,select').forEach(control=>{if(!['tray-save','tray-undo','tray-cancel','simple-zoom-in','simple-zoom-out','simple-zoom-fit'].includes(control.id))control.disabled=true;});
     if (st.routeEdit) el.querySelectorAll('button,input,select').forEach(control => {
       if (!['route-undo', 'route-clear', 'route-save', 'route-cancel', 'simple-zoom-in', 'simple-zoom-out', 'simple-zoom-fit'].includes(control.id)) control.disabled = true;
     });

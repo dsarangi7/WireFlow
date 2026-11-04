@@ -18,6 +18,9 @@ Live site: https://dsarangi7.github.io/WireFlow/
   measured terminals and inferred module boundaries to choose rounded rack-side
   routes. Module links between columns also use rounded corridors; unrelated
   known port hits block export. See [routing behavior and limits](docs/automatic-rail-routing.md).
+- **Marked cable trays:** Mark tray boundaries once in Align the drawing.
+  Generation uses the saved network for long runs and blocks invalid off-tray
+  output. See [marking and routing limits](docs/marked-cable-trays.md).
 
 - **SVG-first entry (early version):** Import an SVG without entering project
   metadata, then continue in the existing wiring workspace. See

@@ -1746,6 +1746,7 @@ function schedulePrintSvg(conns) {
 function projectPrintPages(project, conns) {
   const numbering = (project.config && project.config.numbering) || {};
   const cal = fvCalib(numbering.cal);
+  if(numbering.cal?.trayPaths!==undefined) cal.trayPaths=numbering.cal.trayPaths;
   const groups = layoutGroups(project);
   const canDraw = !!(cal.ok && project.underlay && project.underlay.kind === 'image' && project.underlay.src);
   const moduleSlots = groups.flatMap(group => group.order || []);
