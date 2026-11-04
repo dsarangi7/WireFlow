@@ -16,7 +16,8 @@ Live site: https://dsarangi7.github.io/WireFlow/
 
 - **General automatic rail routing:** SSC and junction-box connections use
   measured terminals and inferred module boundaries to choose rounded rack-side
-  routes. See [routing behavior and limits](docs/automatic-rail-routing.md).
+  routes. Module links between columns also use rounded corridors; unrelated
+  known port hits block export. See [routing behavior and limits](docs/automatic-rail-routing.md).
 
 - **SVG-first entry (early version):** Import an SVG without entering project
   metadata, then continue in the existing wiring workspace. See

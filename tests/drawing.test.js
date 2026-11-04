@@ -509,7 +509,7 @@ ok('print title block embeds the AYK logo and drawing details',
 
 const simpleSrc = fs.readFileSync(path.join(ROOT, 'js', 'simple-wiring.js'), 'utf8');
 const portFactory = new Function('slotCell', 'fvSlotCenter', 'fvDist', 'SSC_PALETTE', 'sheetSvgPrimitive', 'sheetEsc', 'fvSvg',
-  simpleSrc + '\nreturn { AYK_MODULE_TYPES, aykModuleType, aykModuleSelection, aykApplyModuleType, PICTURE_DEVICE_PORT_STEPS, studioExportIssues, pictureZoomOffset, pictureRefineWiringSvg, pictureWiringSvg, modulePortsValid, pictureFindPortCandidates, pictureModulePortsReady, pictureCopyDraftRoutePoints, pictureDevicePortsComplete, picturePowerCrossings, pictureSuggestedModuleRoute, pictureSuggestBottomCurves, pictureSuggestRoutesForGroups, pictureMethodRulesValid, pictureApplyMethod, pictureModuleRoutesValid, pictureRailRoute, pictureModuleWiring, pictureVisioModel, pictureSheetSvg, portMarkingPrompt, markingModuleCounts, markingPlanErrors, markingSteps, markingIssues, markingRecord, markingLayout, pictureDeviceLabels, pictureDeviceLabelsSvg };');
+  simpleSrc + '\nreturn { AYK_MODULE_TYPES, aykModuleType, aykModuleSelection, aykApplyModuleType, PICTURE_DEVICE_PORT_STEPS, studioExportIssues, pictureZoomOffset, pictureRefineWiringSvg, pictureWiringSvg, modulePortsValid, pictureFindPortCandidates, pictureModulePortsReady, pictureCopyDraftRoutePoints, pictureDevicePortsComplete, picturePowerCrossings, pictureSuggestedModuleRoute, pictureSuggestBottomCurves, pictureSuggestRoutesForGroups, pictureMethodRulesValid, pictureApplyMethod, pictureModuleRoutesValid, pictureRouteHitsPort, pictureRailRoute, pictureModuleWiring, pictureVisioModel, pictureSheetSvg, portMarkingPrompt, markingModuleCounts, markingPlanErrors, markingSteps, markingIssues, markingRecord, markingLayout, pictureDeviceLabels, pictureDeviceLabelsSvg };');
 const portsApi = portFactory(E.slotCell, (cal, c, r) => ({ x: cal.x0 + c * cal.pitchX, y: cal.y0 + r * cal.pitchY }),
   (a, b) => Math.hypot(a.x - b.x, a.y - b.y), E.SSC_PALETTE, E.sheetSvgPrimitive, E.sheetEsc, () => '<svg></svg>');
 {
@@ -707,6 +707,16 @@ const completeGroups = [{ label: 'SSC-1', slot: '1,1', order: ['0,0', '0,1'] }];
   ok('module choice does not mutate original project',original.numbering.rack.pitchX===450 && original.numbering.cal.ok && original.layout.saved);
   ok('unchanged spacing keeps valid existing calibration',portsApi.aykApplyModuleType(original,'A-88A').numbering.cal.ok);
   eq('choosing a module before grid creation still saves its Pattern',portsApi.aykApplyModuleType({},'polaris-pod').moduleDimensions.pattern,824.5);
+}
+{
+ const a={x:0,y:0},b={x:100,y:0},obstacle={x:50,y:0};
+ ok('wire through an unrelated terminal is rejected',portsApi.pictureRouteHitsPort([a,b],[a,b,obstacle],2));
+ ok('wire may terminate at its own two terminals',!portsApi.pictureRouteHitsPort([a,b],[a,b],2));
+ ok('near-port guard catches wires beside the terminal centre',portsApi.pictureRouteHitsPort([a,b],[{x:50,y:1}],2));
+ ok('clear bent wire avoids the unrelated terminal',!portsApi.pictureRouteHitsPort([a,{x:0,y:20},{x:100,y:20},b],[obstacle],2));
+ const detour=portsApi.pictureRailRoute(a,b,{pitchX:100,pitchY:100},[],[],[obstacle]);
+ ok('automatic route detours around an unrelated port',detour.length>2 && !portsApi.pictureRouteHitsPort(detour,[obstacle],2.5));
+ ok('port collision blocks export even without a power crossing',!portsApi.picturePowerCrossings([{kind:'comm',pts:[a,b],portBlocked:true}]).valid);
 }
 eq('AYK catalogue contains all sixteen supplied module types',portsApi.AYK_MODULE_TYPES.length,16);
 eq('AYK catalogue uses unique type identifiers',new Set(portsApi.AYK_MODULE_TYPES.map(t=>t.id)).size,16);

@@ -16,6 +16,22 @@ This uses no sample filename, fixed rack module count or 111-specific positions.
 Existing automatic bottom-transition curve suggestions remain in generation.
 Press Generate wiring again in an older project to refresh automatic routes.
 
+## Port avoidance
+
+Module links between different grid columns now use rounded corridor routing
+instead of a default diagonal. Even within a column, a direct link that hits an
+unrelated known terminal is rerouted. All generated and explicit edited paths
+are checked against known module and device terminal centres, with a geometric
+guard radius of 2.5% of the smaller calibrated pixel pitch. Only the wire's own
+two endpoints are exempt. This guard is not a certified physical clearance.
+Blocked routes prevent export, including communication routes.
+
+The check includes all finite named point fields supplied in device-port maps,
+so additional MSM terminal maps can be protected too. The current detector
+does not identify MSM terminals automatically; unknown terminals cannot be
+protected. Component rotation and physical port radii are not inferred by this
+rule. Marked components still require reviewed correct terminal coordinates.
+
 An unavailable power route is left empty so the existing invalid-route gate
 blocks export rather than silently drawing a diagonal. The greedy candidate
 search can fail even if a different joint routing exists. It is not a global
