@@ -509,7 +509,7 @@ ok('print title block embeds the AYK logo and drawing details',
 
 const simpleSrc = fs.readFileSync(path.join(ROOT, 'js', 'simple-wiring.js'), 'utf8');
 const portFactory = new Function('slotCell', 'fvSlotCenter', 'fvDist', 'SSC_PALETTE', 'sheetSvgPrimitive', 'sheetEsc', 'fvSvg',
-  simpleSrc + '\nreturn { PICTURE_DEVICE_PORT_STEPS, studioExportIssues, pictureZoomOffset, pictureRefineWiringSvg, pictureWiringSvg, modulePortsValid, pictureFindPortCandidates, pictureModulePortsReady, pictureCopyDraftRoutePoints, pictureDevicePortsComplete, picturePowerCrossings, pictureSuggestedModuleRoute, pictureSuggestBottomCurves, pictureSuggestRoutesForGroups, pictureMethodRulesValid, pictureApplyMethod, pictureModuleRoutesValid, pictureRailRoute, pictureModuleWiring, pictureVisioModel, pictureSheetSvg, portMarkingPrompt, markingModuleCounts, markingPlanErrors, markingSteps, markingIssues, markingRecord, markingLayout, pictureDeviceLabels, pictureDeviceLabelsSvg };');
+  simpleSrc + '\nreturn { AYK_MODULE_TYPES, aykModuleType, aykModuleSelection, PICTURE_DEVICE_PORT_STEPS, studioExportIssues, pictureZoomOffset, pictureRefineWiringSvg, pictureWiringSvg, modulePortsValid, pictureFindPortCandidates, pictureModulePortsReady, pictureCopyDraftRoutePoints, pictureDevicePortsComplete, picturePowerCrossings, pictureSuggestedModuleRoute, pictureSuggestBottomCurves, pictureSuggestRoutesForGroups, pictureMethodRulesValid, pictureApplyMethod, pictureModuleRoutesValid, pictureRailRoute, pictureModuleWiring, pictureVisioModel, pictureSheetSvg, portMarkingPrompt, markingModuleCounts, markingPlanErrors, markingSteps, markingIssues, markingRecord, markingLayout, pictureDeviceLabels, pictureDeviceLabelsSvg };');
 const portsApi = portFactory(E.slotCell, (cal, c, r) => ({ x: cal.x0 + c * cal.pitchX, y: cal.y0 + r * cal.pitchY }),
   (a, b) => Math.hypot(a.x - b.x, a.y - b.y), E.SSC_PALETTE, E.sheetSvgPrimitive, E.sheetEsc, () => '<svg></svg>');
 {
@@ -698,6 +698,14 @@ const devicePorts = { '1,1': {
   jbNeg: { x: 400, y: 50 }, jbPos: { x: 410, y: 50 },
 } };
 const completeGroups = [{ label: 'SSC-1', slot: '1,1', order: ['0,0', '0,1'] }];
+eq('AYK catalogue contains all sixteen supplied module types',portsApi.AYK_MODULE_TYPES.length,16);
+eq('AYK catalogue uses unique type identifiers',new Set(portsApi.AYK_MODULE_TYPES.map(t=>t.id)).size,16);
+eq('OrionAN dimensions retain AYK millimetre values',JSON.stringify(portsApi.aykModuleSelection('A-96AA').moduleDimensions),JSON.stringify({id:'A-96AA',name:'OrionAN',width:450,depth:735,height:200,pattern:500,rackDepth:835,rackDepthTotal:915,minServiceArea:785,recommendedServiceArea:865,note:'',units:'mm'}));
+eq('Polaris fractional height and pattern are preserved',portsApi.aykModuleType('polaris-pod').height+'/'+portsApi.aykModuleType('polaris-pod').pattern,'244.9/824.5');
+eq('service notes remain attached to their supplied rows only',portsApi.AYK_MODULE_TYPES.filter(t=>t.note).map(t=>t.id+':'+t.note).join(','),'A-88A:122mm,B-96AA:110mm');
+ok('unknown module type does not silently select another family',portsApi.aykModuleType('invalid')===null && portsApi.aykModuleSelection('invalid').moduleDimensions===null);
+const catalogueCopy=portsApi.aykModuleSelection('A-88A');catalogueCopy.moduleDimensions.width=999;
+ok('catalogue dimensions are immutable and selection snapshots are independent',Object.isFrozen(portsApi.AYK_MODULE_TYPES) && Object.isFrozen(portsApi.aykModuleType('A-88A')) && portsApi.aykModuleType('A-88A').width===400);
 const fullWires = portsApi.pictureModuleWiring(completeGroups, measuredCal, ports, devicePorts);
 {
   const a={x:300,y:20},b={x:60,y:260},cal={pitchX:100,pitchY:100};

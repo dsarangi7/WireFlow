@@ -10,6 +10,10 @@ deterministic rule engine implementing the Wiring Diagram Tool Engineering Rules
 
 Live site: https://dsarangi7.github.io/WireFlow/
 
+- **AYK module catalogue:** Choose one of the sixteen supplied module types in
+  rack configuration to load and save its fixed millimetre dimensions. See
+  [module catalogue](docs/module-catalogue.md).
+
 - **General automatic rail routing:** SSC and junction-box connections use
   measured terminals and inferred module boundaries to choose rounded rack-side
   routes. See [routing behavior and limits](docs/automatic-rail-routing.md).

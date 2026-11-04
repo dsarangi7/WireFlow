@@ -1,5 +1,30 @@
 /* Declared counts and click identities are separate from the planner's grid.
    In particular, junction boxes can sit above the calibrated module grid. */
+/* AYK supplied catalogue. All numerical dimensions are millimetres.
+   Pattern is retained verbatim; it is not an inferred centre-to-centre pitch. */
+const AYK_MODULE_TYPES = Object.freeze([
+  ['A-88A','Aries',400,550,234.75,450,650,730,600,680,'122mm'],
+  ['A-88AA','AriesA',400,550,234.75,450,650,730,600,680,''],
+  ['A-176A','Aries+',520,690,234.75,570,790,870,740,820,''],
+  ['A-176AA','AriesA+',520,690,234.75,570,790,870,740,820,''],
+  ['B-176A','Aries+ S',400,880,234.75,450,980,1060,930,1010,''],
+  ['B-176AA','AriesA+ S',400,880,234.75,450,980,1060,930,1010,''],
+  ['A-69A','Orion',315,660,234.75,365,760,840,710,790,''],
+  ['A-69AA','OrionA',315,660,234.75,365,760,840,710,790,''],
+  ['A-103A','Orion+',315,880,234.75,365,980,1060,930,1010,''],
+  ['A-103AA','OrionA+',315,880,234.75,365,980,1060,930,1010,''],
+  ['A-241A','Pisces +',520,880,234.75,570,980,1060,930,1010,''],
+  ['A-241AA','Pisces A+',520,880,234.75,570,980,1060,930,1010,''],
+  ['B-96AA','OrionANS',450,635,200,500,735,815,685,765,'110mm'],
+  ['A-96AA','OrionAN',450,735,200,500,835,915,785,865,''],
+  ['A-144AA','OrionAN+',450,835,200,500,935,1015,885,965,''],
+  ['polaris-pod','Polaris Pod',760,850,244.9,824.5,900,1000,900,1200,'']
+].map(r=>Object.freeze(Object.fromEntries(['id','name','width','depth','height','pattern','rackDepth','rackDepthTotal','minServiceArea','recommendedServiceArea','note'].map((k,i)=>[k,r[i]])))));
+function aykModuleType(id) { return AYK_MODULE_TYPES.find(t=>t.id===id) || null; }
+function aykModuleSelection(id) {
+  const type=aykModuleType(id);
+  return type ? {moduleType:type.id,moduleDimensions:{...type,units:'mm'}} : {moduleType:'',moduleDimensions:null};
+}
 function pictureZoomOffset(scroll, anchor, oldZoom, newZoom) {
   return (scroll + anchor) * (newZoom / oldZoom) - anchor;
 }
@@ -715,6 +740,8 @@ async function tabSimpleWiring(el, project, ctx) {
     el.innerHTML = `
       <div class="page-head slim"><div><h2>Build wiring</h2><p class="muted">Mark the components on your rack drawing, then generate the wiring.</p></div></div>
       <div class="card marking-counts" style="margin-bottom:16px"><h3>Declare the banks and component counts</h3>
+        <label>Module type <select id="rack-module-type"><option value="">Select module type</option>${AYK_MODULE_TYPES.map(t=>`<option value="${t.id}" ${project.config?.moduleType===t.id ? 'selected' : ''}>${t.name}${t.id==='polaris-pod' ? '' : ' ('+t.id+')'}</option>`).join('')}</select></label>
+        ${aykModuleType(project.config?.moduleType) ? (()=>{const t=aykModuleType(project.config.moduleType);return `<div class="muted small" role="status"><p>Module: ${t.width} W × ${t.depth} D × ${t.height} H mm · Pattern: ${t.pattern} mm</p><p>Rack depth: ${t.rackDepth} mm excluding cable trunk · ${t.rackDepthTotal} mm total</p><p>Service area: ${t.minServiceArea} mm minimum · ${t.recommendedServiceArea} mm recommended, measured from front pillar${t.note ? ' · Note: '+t.note : ''}</p></div>`;})() : '<p class="muted small">Select the module family to load its fixed AYK dimensions in millimetres.</p>'}
         <p class="muted small">Confirm these counts from the imported drawing. Click order sets the SSC identities and each chain’s M1, M2 and so on. ACDPs are marked last for identification only.</p>
         <div class="btn-row"><label>Banks <input id="marking-bank-count" type="number" min="1" max="8" value="${st.banks.length}" style="width:80px"></label><button class="btn btn-ghost btn-sm" id="marking-banks">Update bank rows</button></div>
         <div class="marking-table"><table><thead><tr><th>Bank</th><th>MSMs</th><th>SSCs</th><th>Junction boxes</th><th>ACDPs</th></tr></thead><tbody>${st.banks.map((bank, i) => `<tr><th>${i + 1}</th>${['msms','sscs','junctionBoxes','acdps'].map(key => `<td><input aria-label="Bank ${i + 1} ${key}" data-bank="${i}" data-count="${key}" type="number" min="${key === 'acdps' ? 0 : 1}" max="${key === 'msms' ? 12 : 24}" value="${bank[key]}"></td>`).join('')}</tr>`).join('')}</tbody></table></div>
@@ -806,6 +833,12 @@ async function tabSimpleWiring(el, project, ctx) {
       st.message = 'Component mark restored. Terminal positions still require review.'; await persist();
     };
     const toolbarExport = studio.querySelector('[data-studio-action="export"]');
+    el.querySelector('#rack-module-type').onchange = async event => {
+      const previous=project.config;
+      const config={...previous,...aykModuleSelection(event.target.value)};
+      if(!await ctx.saveProject({config})) {project.config=previous;toast('Could not save the module type. Please try again.','error');}
+      render();
+    };
     toolbarExport.disabled = exportIssues.length > 0;
     toolbarExport.onclick = () => {
       st.panelCollapsed = false; studio.classList.remove('studio-panel-collapsed');
