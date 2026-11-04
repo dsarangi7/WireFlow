@@ -10,10 +10,9 @@ deterministic rule engine implementing the Wiring Diagram Tool Engineering Rules
 
 Live site: https://dsarangi7.github.io/WireFlow/
 
-- **111 automatic prototype:** Reproduce the curved sample output from the exact
-  supplied `111.vsdx` through a local Node service. See [launch instructions and
-  limitations](docs/111-automatic-prototype.md). This service is separate from
-  the general SVG editor and is not hosted by GitHub Pages.
+- **General automatic rail routing:** SSC and junction-box connections use
+  measured terminals and inferred module boundaries to choose rounded rack-side
+  routes. See [routing behavior and limits](docs/automatic-rail-routing.md).
 
 - **SVG-first entry (early version):** Import an SVG without entering project
   metadata, then continue in the existing wiring workspace. See

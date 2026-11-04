@@ -509,7 +509,7 @@ ok('print title block embeds the AYK logo and drawing details',
 
 const simpleSrc = fs.readFileSync(path.join(ROOT, 'js', 'simple-wiring.js'), 'utf8');
 const portFactory = new Function('slotCell', 'fvSlotCenter', 'fvDist', 'SSC_PALETTE', 'sheetSvgPrimitive', 'sheetEsc', 'fvSvg',
-  simpleSrc + '\nreturn { PICTURE_DEVICE_PORT_STEPS, studioExportIssues, pictureZoomOffset, pictureRefineWiringSvg, pictureWiringSvg, modulePortsValid, pictureFindPortCandidates, pictureModulePortsReady, pictureCopyDraftRoutePoints, pictureDevicePortsComplete, picturePowerCrossings, pictureSuggestedModuleRoute, pictureSuggestBottomCurves, pictureSuggestRoutesForGroups, pictureMethodRulesValid, pictureApplyMethod, pictureModuleRoutesValid, pictureModuleWiring, pictureVisioModel, pictureSheetSvg, portMarkingPrompt, markingModuleCounts, markingPlanErrors, markingSteps, markingIssues, markingRecord, markingLayout, pictureDeviceLabels, pictureDeviceLabelsSvg };');
+  simpleSrc + '\nreturn { PICTURE_DEVICE_PORT_STEPS, studioExportIssues, pictureZoomOffset, pictureRefineWiringSvg, pictureWiringSvg, modulePortsValid, pictureFindPortCandidates, pictureModulePortsReady, pictureCopyDraftRoutePoints, pictureDevicePortsComplete, picturePowerCrossings, pictureSuggestedModuleRoute, pictureSuggestBottomCurves, pictureSuggestRoutesForGroups, pictureMethodRulesValid, pictureApplyMethod, pictureModuleRoutesValid, pictureRailRoute, pictureModuleWiring, pictureVisioModel, pictureSheetSvg, portMarkingPrompt, markingModuleCounts, markingPlanErrors, markingSteps, markingIssues, markingRecord, markingLayout, pictureDeviceLabels, pictureDeviceLabelsSvg };');
 const portsApi = portFactory(E.slotCell, (cal, c, r) => ({ x: cal.x0 + c * cal.pitchX, y: cal.y0 + r * cal.pitchY }),
   (a, b) => Math.hypot(a.x - b.x, a.y - b.y), E.SSC_PALETTE, E.sheetSvgPrimitive, E.sheetEsc, () => '<svg></svg>');
 {
@@ -699,6 +699,22 @@ const devicePorts = { '1,1': {
 } };
 const completeGroups = [{ label: 'SSC-1', slot: '1,1', order: ['0,0', '0,1'] }];
 const fullWires = portsApi.pictureModuleWiring(completeGroups, measuredCal, ports, devicePorts);
+{
+  const a={x:300,y:20},b={x:60,y:260},cal={pitchX:100,pitchY:100};
+  const faces=[{left:100,right:180,top:80,bottom:220},{left:0,right:80,top:200,bottom:280}];
+  const route=portsApi.pictureRailRoute(a,b,cal,faces,[]);
+  ok('general SSC rail routing curves around intervening module faces',route.length>5 && route.every(p=>!(p.x>100 && p.x<180 && p.y>80 && p.y<220)));
+  eq('rail routing preserves exact measured terminals',JSON.stringify([route[0],route.at(-1)]),JSON.stringify([a,b]));
+  eq('rail routing is deterministic',JSON.stringify(route),JSON.stringify(portsApi.pictureRailRoute(a,b,cal,faces,[])));
+  const scale=p=>({x:p.x*3,y:p.y*3});
+  const scaled=portsApi.pictureRailRoute(scale(a),scale(b),{pitchX:300,pitchY:300},faces.map(f=>Object.fromEntries(Object.entries(f).map(([k,v])=>[k,v*3]))),[]);
+  ok('routing adapts to drawing scale without project-specific coordinates',scaled.length===route.length && scaled.every((p,i)=>Math.hypot(p.x-route[i].x*3,p.y-route[i].y*3)<1e-6));
+  eq('nearby aligned terminals retain their short direct connection',portsApi.pictureRailRoute({x:20,y:0},{x:20,y:60},cal,[],[]).length,2);
+  eq('no safe candidate never falls back to a crossing straight cable',portsApi.pictureRailRoute(a,b,cal,faces,[{kind:'sscp',pts:[{x:-100000,y:100},{x:100000,y:100}]}]).length,0);
+  ok('unrouted communication links block draft release',!portsApi.picturePowerCrossings([{kind:'sscc',pts:[]}]).valid);
+  const buses=fullWires.filter(s=>s.routeKey==='busPos' || s.routeKey==='busNeg');
+  ok('junction-box routes avoid the inferred SSC body',buses.length===2 && buses.every(s=>s.pts.length>2 && s.pts.every(p=>!(p.x>290 && p.x<360 && p.y>23 && p.y<96.2))));
+}
 const bottomKey='1,1|1|power';
 const shapeA={x:0,y:0}, shapeB={x:100,y:0};
 ok('one-click C choices bend in opposite directions', portsApi.pictureSuggestedModuleRoute(shapeA,shapeB,'c-above').points[0].y<0 && portsApi.pictureSuggestedModuleRoute(shapeA,shapeB,'c-below').points[0].y>0);
@@ -726,9 +742,9 @@ const referenceWires = portsApi.pictureModuleWiring(completeGroups, measuredCal,
 eq('saved picture convention flags cannot diverge from the universal power sequence', JSON.stringify(referenceWires), JSON.stringify(fullWires));
 eq('sample convention connects lower positive to higher negative', JSON.stringify(referenceWires.find(s => s.kind === 'power').pts), JSON.stringify([{x:130,y:218},{x:120,y:277}]));
 const referenceSsc = referenceWires.filter(s => s.kind === 'sscp');
-eq('sample convention connects SSC positive to last module positive', JSON.stringify(referenceSsc[0].pts), JSON.stringify([devicePorts['1,1'].pwrPos,{x:130,y:278}]));
-eq('sample convention connects SSC negative to first module negative', JSON.stringify(referenceSsc[1].pts), JSON.stringify([devicePorts['1,1'].pwrNeg,{x:120,y:217}]));
-const actualDeviceWires = fullWires.filter(s => s.kind === 'sscp' || s.kind === 'sscc').map(s => [s.kind, s.pts]);
+eq('sample convention connects SSC positive to last module positive', JSON.stringify([referenceSsc[0].pts[0],referenceSsc[0].pts.at(-1)]), JSON.stringify([devicePorts['1,1'].pwrPos,{x:130,y:278}]));
+eq('sample convention connects SSC negative to first module negative', JSON.stringify([referenceSsc[1].pts[0],referenceSsc[1].pts.at(-1)]), JSON.stringify([devicePorts['1,1'].pwrNeg,{x:120,y:217}]));
+const actualDeviceWires = fullWires.filter(s => s.kind === 'sscp' || s.kind === 'sscc').map(s => [s.kind, [s.pts[0],s.pts.at(-1)]]);
 eq('measured SSC and junction-box ports connect using the six approved endpoint rules', JSON.stringify(actualDeviceWires), JSON.stringify([
   ['sscp', [devicePorts['1,1'].pwrPos, { x: 130, y: 278 }]],
   ['sscp', [devicePorts['1,1'].pwrNeg, { x: 120, y: 217 }]],
@@ -1205,7 +1221,7 @@ function vsdxParts(bytes) {
     Math.abs(model.underlay.h / measuredCal.imgH - scale) < 1e-10 &&
     Math.abs(lines[0].x1 - (model.underlay.x + firstWire.pts[0].x * scale)) < 1e-10 &&
     Math.abs(lines[0].y2 - (model.underlay.y + firstWire.pts[1].y * scale)) < 1e-10);
-  eq('Visio draft emits one editable line for each marked connection', lines.length, fullWires.filter(s => s.kind !== 'label').length);
+  eq('Visio draft emits one editable line for each marked connection', lines.length, fullWires.filter(s => s.kind !== 'label').reduce((n,s)=>n+Math.max(0,s.pts.length-1),0));
   const parts = vsdxParts(E.vsdxExport([], input, model));
   const draftPage = parts.get('visio/pages/page1.xml') || '';
   ok('Visio draft contains editable wire endpoints and embedded rack and logo',

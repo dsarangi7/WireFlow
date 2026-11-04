@@ -263,6 +263,7 @@ function pictureDevicePortsComplete(ports) {
 /* Screen-space power centreline check: crossings, touches and overlaps are
  * unsafe to export as a draft. It cannot determine physical cable clearance. */
 function picturePowerCrossings(segments) {
+  if((segments || []).some(s=>s.kind==='sscc' && (!Array.isArray(s.pts) || s.pts.length<2))) return {valid:false,pairs:[]};
   const paths = (segments || []).filter(s => s.kind === 'power' || s.kind === 'sscp');
   const valid = p => p && Number.isFinite(p.x) && Number.isFinite(p.y);
   if (paths.some(s => !Array.isArray(s.pts) || s.pts.length < 2 || !s.pts.every(valid))) return { valid: false, pairs: [] };
@@ -408,6 +409,47 @@ function pictureApplyMethod(groups,wires,routes,rules) {
   return next;
 }
 
+/* Deterministic shortest candidate in inferred rack corridors. Bounds are
+   inferred from measured module terminals, not a physical clearance model. */
+function pictureRailRoute(a, b, cal, faces, powerSegments) {
+  const px=Math.abs(cal.pitchX), py=Math.abs(cal.pitchY);
+  if (!(px>0 && py>0)) return [];
+  const target=faces.filter(f=>b.x>=f.left && b.x<=f.right && b.y>=f.top && b.y<=f.bottom);
+  const obstacles=faces.filter(f=>!target.includes(f));
+  const clear=pts=>pts.slice(1).every((p,i)=>obstacles.every(f=>{
+    const q=pts[i]; let lo=0,hi=1;
+    for(const [v,d,min,max] of [[q.x,p.x-q.x,f.left,f.right],[q.y,p.y-q.y,f.top,f.bottom]]) {
+      if(Math.abs(d)<1e-9) { if(v<=min || v>=max) return true; }
+      else {const t1=(min-v)/d,t2=(max-v)/d;lo=Math.max(lo,Math.min(t1,t2));hi=Math.min(hi,Math.max(t1,t2));}
+    }
+    return hi<=lo || hi<=0 || lo>=1;
+  }));
+  const valid=pts=>{
+    if(!clear(pts)) return false;
+    if(!powerSegments) return true;
+    const audit=picturePowerCrossings([...powerSegments.filter(s=>s.pts.length>=2),{kind:'sscp',pts}]);
+    return audit.valid && !audit.pairs.length;
+  };
+  if(Math.abs(a.x-b.x)<px*.22 && Math.abs(a.y-b.y)<py*1.4 && valid([a,b])) return [a,b];
+  const xs=[a.x,b.x,a.x-px*.12,a.x+px*.12];
+  faces.forEach(f=>{for(const gap of [.04,.08,.12,.18]) xs.push(f.left-px*gap,f.right+px*gap);});
+  const candidates=[];
+  for(const x of [...new Set(xs)]) for(const entry of [b.y,b.y-py*.12,b.y+py*.12]) for(const departure of [a.y-py*.04,a.y-py*.18,a.y+py*.08,a.y+py*.18,a.y+py*.32]) {
+    const bends=[{x:a.x,y:departure},{x,y:departure},{x,y:entry},{x:b.x,y:entry}];
+    const raw=[a,...bends,b],pts=[a];
+    bends.forEach((corner,i)=>{
+      const prev=raw[i],next=raw[i+2],d1=Math.hypot(prev.x-corner.x,prev.y-corner.y),d2=Math.hypot(next.x-corner.x,next.y-corner.y),r=Math.min(px*.025,py*.08,d1/2,d2/2);
+      const start=d1 ? {x:corner.x+(prev.x-corner.x)*r/d1,y:corner.y+(prev.y-corner.y)*r/d1} : corner;
+      const end=d2 ? {x:corner.x+(next.x-corner.x)*r/d2,y:corner.y+(next.y-corner.y)*r/d2} : corner;
+      pts.push(start,...pictureCurvePoints(start,end,[corner]).slice(1));
+    });
+    pts.push(b);
+    candidates.push(pts);
+  }
+  const length=pts=>pts.slice(1).reduce((n,p,i)=>n+Math.hypot(p.x-pts[i].x,p.y-pts[i].y),0);
+  candidates.sort((p,q)=>Math.round(length(p)/px*1e8)-Math.round(length(q)/px*1e8));
+  return candidates.find(valid) || [];
+}
 function pictureModuleWiring(groups, cal, ports, devicePorts, modulePortPoints, powerConvention, moduleRoutes) {
   // Universal AYK sequence confirmed by the user: SSC+ to highest module+,
   // higher module- to next lower module+, and M1- to SSC-.
@@ -417,6 +459,20 @@ function pictureModuleWiring(groups, cal, ports, devicePorts, modulePortPoints, 
   if (!cal || !cal.ok || !pictureModuleRoutesValid(moduleRoutes) || (hasPoints && (typeof modulePortPoints !== 'object' || Array.isArray(modulePortPoints))) || (!hasPoints && !modulePortsValid(ports))) return [];
   const validPoint = p => p && Number.isFinite(p.x) && Number.isFinite(p.y);
   const segments = [];
+  const faces=[];
+  (groups || []).forEach(g=>g.order.forEach(id=>{
+    const s=slotCell(id),centre=fvSlotCenter(cal,s.c,s.r);
+    const p=hasPoints ? modulePortPoints[id] : Object.fromEntries(Object.keys(ports).map(k=>[k,{x:centre.x+ports[k].x,y:centre.y+ports[k].y}]));
+    if(!modulePortsValid(p)) return;
+    const xs=Object.values(p).map(v=>v.x),ys=Object.values(p).map(v=>v.y);
+    faces.push({left:Math.min(...xs)-Math.abs(cal.pitchX)*.06,right:Math.max(...xs)+Math.abs(cal.pitchX)*.06,top:Math.min(...ys)-Math.abs(cal.pitchY)*.65,bottom:Math.max(...ys)+Math.abs(cal.pitchY)*.04});
+  }));
+  Object.values(devicePorts || {}).forEach(d=>{
+    const terminals=['commS','commN','pwrPos','pwrNeg','busPos','busNeg'].map(k=>d[k]);
+    if(!terminals.every(validPoint)) return;
+    const xs=terminals.map(p=>p.x),ys=terminals.map(p=>p.y);
+    faces.push({left:Math.min(...xs)-Math.abs(cal.pitchX)*.10,right:Math.max(...xs)+Math.abs(cal.pitchX)*.10,top:Math.min(...ys)-Math.abs(cal.pitchY)*1.3,bottom:Math.min(...ys)-Math.abs(cal.pitchY)*.08});
+  });
   (groups || []).forEach((group, gi) => {
     const slots = group.order.map(slotCell);
     const tag = { group: gi, groupLabel: group.label, groupColor: SSC_PALETTE[gi % SSC_PALETTE.length] };
@@ -454,7 +510,9 @@ function pictureModuleWiring(groups, cal, ports, devicePorts, modulePortPoints, 
         ['busPos', 'sscp', d.busPos, d.jbPos],
         ['busNeg', 'sscp', d.busNeg, d.jbNeg],
       ];
-      connections.forEach(([key, kind, a, b]) => {
+      const startIndex=segments.length;
+      const routingOrder=[connections[5],connections[4],connections[0],connections[1],connections[2],connections[3]];
+      routingOrder.forEach(([key, kind, a, b]) => {
         if (!validPoint(a) || !validPoint(b)) return;
         const routes = d.draftRoutes;
         if (routes !== undefined && (!routes || typeof routes !== 'object' || Array.isArray(routes))) return;
@@ -466,10 +524,12 @@ function pictureModuleWiring(groups, cal, ports, devicePorts, modulePortPoints, 
         const curves = d.draftCurveRoutes;
         if (curves !== undefined && (!curves || typeof curves !== 'object' || Array.isArray(curves))) return;
         if (curves && Object.prototype.hasOwnProperty.call(curves, key) && typeof curves[key] !== 'boolean') return;
-        const pts = curves && curves[key] ? pictureCurvePoints(a,b,waypoints) : [a, ...waypoints, b];
+        const pts = !supplied ? pictureRailRoute(a,b,cal,faces,kind==='sscp' ? segments.filter(s=>s.kind==='power' || s.kind==='sscp') : null) : curves && curves[key] ? pictureCurvePoints(a,b,waypoints) : [a, ...waypoints, b];
         const lenMm = pts.slice(1).reduce((sum, point, i) => sum + fvDist(pts[i], point), 0) * cal.mmPerPx;
-        segments.push({ ...tag, kind, pts, lenMm });
+        segments.push({ ...tag, kind, pts, lenMm, routeKey:key });
       });
+      const routed=segments.splice(startIndex).sort((a,b)=>connections.findIndex(c=>c[0]===a.routeKey)-connections.findIndex(c=>c[0]===b.routeKey));
+      segments.push(...routed);
     }
   });
   return segments;
@@ -701,7 +761,7 @@ async function tabSimpleWiring(el, project, ctx) {
         <p class="muted small">AYK series sequence: SSC + → highest module +; higher module − → next lower module +; M1 − → SSC −. Regenerate saved drawings to apply this sequence.</p>
         <p class="muted small">${rack ? Object.keys(st.devicePorts).filter(slot => rackIsModule(rack, slot) === false && rackDeviceCells(rack, 'ssc').includes(slot) && pictureDevicePortsComplete(st.devicePorts[slot])).length : 0} of ${rack ? rackDeviceCells(rack, 'ssc').length : 0} SSCs have their ports marked. Links with missing terminals or invalid draft routes are omitted. Check assignments and routes; lines are direct previews, not approved cable routes.</p>
         ${st.modulePortPoints !== null && !moduleReady ? '<p class="warn" role="status">Some individual module ports are missing or invalid. Complete them, or mark module ports again to replace these positions.</p>' : ''}
-        ${st.generated && powerBlocked ? '<p class="warn" role="alert">Power cables cross or touch in this drawing. Correct the routes before exporting. This check does not verify physical clearance.</p>' : ''}
+        ${st.generated && powerBlocked ? '<p class="warn" role="alert">Some routes are unavailable or power cables cross or touch. Adjust the routes before exporting. This check does not verify physical clearance.</p>' : ''}
         <div class="btn-row"><button class="btn btn-primary" id="simple-generate" ${!cal || !cal.ok || !moduleReady || st.deviceStep || st.portStep || issues.length || st.saving || st.saveFailed ? 'disabled' : ''}>Generate wiring</button>${st.generated ? `<button class="btn btn-ghost" id="simple-visio" ${exportIssues.length ? 'disabled' : ''}>Download editable draft (Visio)</button><button class="btn btn-ghost" id="simple-svg" ${exportIssues.length ? 'disabled' : ''}>Download draft wiring drawing (SVG)</button><button class="btn btn-ghost" id="simple-sheet-svg" ${exportIssues.length ? 'disabled' : ''}>Download draft A3 sheet (SVG)</button><button class="btn btn-ghost" id="simple-export" ${exportIssues.length ? 'disabled' : ''}>Print draft PDF</button>` : ''}</div>
         ${st.generated && exportIssues.length ? '<ul class="marking-warnings">' + exportIssues.map(issue => '<li>' + esc(issue) + '</li>').join('') + '</ul>' : ''}
         ${st.generated ? '<p class="muted small">You can change markings here and generate again. Visio edits are separate and do not update this saved project.</p>' : ''}
