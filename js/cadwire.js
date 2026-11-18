@@ -192,8 +192,10 @@ function cadWirePlan(comps, sscs, opts) {
   const jbFor = new Map();
   for (const s of sscs) {
     const col = cols[s.comp._col];
-    const jb = col && col.jbs.filter(j => j.y0 >= s.comp.y1 - 1).sort((a, b) => a.y0 - b.y0)[0];
-    if (!jb) errors.push(`${s.name}: no junction box found at the top of its column.`);
+    /* the junction box of the SSC's own column: usually at the top, on some racks at the bottom */
+    const cy = (s.comp.y0 + s.comp.y1) / 2;
+    const jb = col && col.jbs.slice().sort((a, b) => Math.abs((a.y0 + a.y1) / 2 - cy) - Math.abs((b.y0 + b.y1) / 2 - cy))[0];
+    if (!jb) errors.push(`${s.name}: no junction box found in its column (top or bottom). Teach the junction box, or check that every SSC column has one.`);
     else if (need.jb.some(r => !cadwTerm(jb, r))) errors.push(`${s.name}: the junction box has no ${pair} terminals. Teach the junction box and click its four connectors (+, −, +, −).`);
     else jbFor.set(s, jb);
   }

@@ -648,6 +648,7 @@ async function renderCadPage(id) {
   let fromLibrary = false;
   /* generated wiring (plain data, saved with the drawing) */
   let wiring = cad.wiring && cad.wiring.plan ? cad.wiring.plan : null;
+  let focusKey = null;   /* part highlighted by Show / rename */
   let showWiring = true;
 
   shell(`
@@ -666,6 +667,7 @@ async function renderCadPage(id) {
           <div class="cad-readout" id="cad-readout" aria-live="polite">—</div>
           <div class="cad-prompt" id="cad-prompt" hidden></div>
         </div>
+        <div class="wf-split" role="separator" aria-orientation="vertical" aria-label="Drag to resize the side panel" tabindex="0"></div>
         <aside class="cad-info">
           <section class="cad-parts">
             <h3>Parts</h3>
@@ -713,6 +715,7 @@ async function renderCadPage(id) {
   const say = (msg, kind) => { statusEl.textContent = msg || ''; statusEl.className = 'small ' + (kind || ''); };
   const prompt = (msg) => { promptEl.hidden = !msg; promptEl.textContent = msg || ''; };
 
+  wfResizableSide(document.querySelector('.cad-body'));
   /* teaching state: null | {step:'box', kind} | {step:'terminals', kind, box, sig, hits, roles, picked} */
   let teach = null;
 
@@ -723,7 +726,58 @@ async function renderCadPage(id) {
     onBox: onBox,
     onPick: onPick,
     onCancel: cancelTeach,
+    onClick: (pt, sx, sy) => openRename(pt, sx, sy),
   });
+
+  /* ---- rename on the rack: click an SSC / ACDP / MSM ---- */
+  function openRename(pt, sx, sy) {
+    closeRename();
+    if (teach) return;
+    const hit = components.filter(c => cadNamed(c.kind) && pt[0] >= c.x0 && pt[0] <= c.x1 && pt[1] >= c.y0 && pt[1] <= c.y1)
+      .sort((a, b) => (a.x1 - a.x0) * (a.y1 - a.y0) - (b.x1 - b.x0) * (b.y1 - b.y0))[0];
+    if (!hit) return;
+    const k = cadKind(hit.kind), key = cadCompKey(hit), saved = cad.labels[key] || {};
+    focusKey = key; viewer.redraw();
+    const pop = document.createElement('form');
+    pop.className = 'cad-pop'; pop.id = 'cad-pop';
+    pop.innerHTML = `<b style="color:${k.color}">${esc(k.label)}</b>
+      <label>Name <input name="label" value="${esc(cadCompLabel(hit, cad.labels))}" maxlength="24" autocomplete="off"></label>
+      ${hit.kind === 'ssc' ? `<label>Modules <input name="modules" type="number" min="1" step="1" value="${saved.modules || ''}"></label>` : ''}
+      <p class="muted small">Using a name another ${esc(k.label)} has swaps the two names.</p>
+      <div><button class="btn btn-primary btn-xs" type="submit">Save</button> <button class="btn btn-ghost btn-xs" type="button" data-x>Cancel</button></div>`;
+    const stage = $('cad-stage');
+    stage.appendChild(pop);
+    pop.style.left = Math.min(Math.max(8, sx + 12), stage.clientWidth - pop.offsetWidth - 8) + 'px';
+    pop.style.top = Math.min(Math.max(8, sy - 20), stage.clientHeight - pop.offsetHeight - 8) + 'px';
+    pop.querySelector('input').select();
+    pop.querySelector('[data-x]').onclick = closeRename;
+    pop.addEventListener('keydown', e => { if (e.key === 'Escape') { e.stopPropagation(); closeRename(); } });
+    pop.onsubmit = async e => {
+      e.preventDefault();
+      const name = pop.label.value.trim();
+      if (!name) { say('The name cannot be empty.', 'warn'); return; }
+      const other = components.find(c => c !== hit && cadNamed(c.kind) && cadCompLabel(c, cad.labels) === name);
+      if (other && other.kind !== hit.kind) { say(`${name} is already the name of a ${cadKind(other.kind).label}.`, 'warn'); return; }
+      const old = cadCompLabel(hit, cad.labels);
+      const entry = { label: name, confirmed: false };
+      if (hit.kind === 'ssc') {
+        const m = pop.modules.value.trim();
+        if (m && !/^[1-9][0-9]*$/.test(m)) { say('Modules must be a whole number, 1 or more.', 'warn'); return; }
+        if (m) entry.modules = +m; else if (saved.modules) entry.modules = saved.modules;
+      }
+      if (other) {
+        const ok = cadCompKey(other);
+        cad.labels[ok] = Object.assign({}, cad.labels[ok] || {}, { label: old, confirmed: false });
+      }
+      cad.labels[key] = entry;
+      closeRename();
+      await persist();
+      renderFound();
+      viewer.redraw();
+      say(`${other ? `Swapped: ${name} ↔ ${old}` : `${old} renamed to ${name}`}. Press Confirm in the ${k.label} card when all names are right.`, 'cad-ok');
+    };
+  }
+  function closeRename() { const p = document.getElementById('cad-pop'); if (p) p.remove(); if (focusKey) { focusKey = null; viewer.redraw(); } }
 
   function drawOverlay(ctx, toScreen, scale) {
     const list = teach && teach.hits ? teach.hits.map(h => Object.assign({ kind: teach.kind, preview: true }, h)) : components;
@@ -737,19 +791,48 @@ async function renderCadPage(id) {
       ctx.fillStyle = col + '1f';
       ctx.fillRect(a[0], a[1], b[0] - a[0], b[1] - a[1]);
       const unwired = cadKind(c.kind).wired === false;
-      if (c.id && (b[0] - a[0] > 46 || unwired) && !(c.kind === 'module' && wiring && showWiring && !teach)) {
+      const named = cadNamed(c.kind);
+      if (c.id && (b[0] - a[0] > 46 || named) && !(c.kind === 'module' && wiring && showWiring && !teach)) {
         const saved = cad.labels[cadCompKey(c)];
-        const text = cadCompLabel(c, cad.labels) + (cadNamed(c.kind) && !(saved && saved.confirmed) ? ' ?' : '') +
-          (c.kind === 'ssc' && saved && saved.modules ? ' · ' + saved.modules + ' modules' : '');
-        ctx.fillStyle = col;
-        ctx.font = (unwired ? '700 ' + Math.round(Math.max(12, Math.min(28, 40 * scale))) + 'px' : '600 12px') + ' Inter, system-ui, sans-serif';
-        if (unwired) { ctx.textAlign = 'center'; ctx.fillText(text, (a[0] + b[0]) / 2, (a[1] + b[1]) / 2); ctx.textAlign = 'start'; }
-        else ctx.fillText(text, a[0] + 4, a[1] + 14);
+        const text = cadCompLabel(c, cad.labels) + (named && !(saved && saved.confirmed) ? ' ?' : '');
+        if (named && !c.preview) {
+          /* SSC / ACDP / MSM names: large, centred, on a dark plate so they stay readable */
+          const fs = Math.round(Math.max(14, Math.min(30, 44 * scale)));
+          const sub = c.kind === 'ssc' && saved && saved.modules ? saved.modules + ' modules' : '';
+          ctx.font = '800 ' + fs + 'px Inter, system-ui, sans-serif';
+          const tw = ctx.measureText(text).width;
+          ctx.font = '600 ' + Math.round(fs * 0.55) + 'px Inter, system-ui, sans-serif';
+          const sw = sub ? ctx.measureText(sub).width : 0;
+          const cx = (a[0] + b[0]) / 2, cy = (a[1] + b[1]) / 2 - (unwired ? 0 : (b[1] - a[1]) * 0.12);
+          const pw = Math.max(tw, sw) + fs * 0.8, ph = fs * (sub ? 1.75 : 1.25);
+          ctx.fillStyle = 'rgba(8,13,29,.82)';
+          ctx.beginPath(); ctx.roundRect(cx - pw / 2, cy - ph / 2, pw, ph, 6); ctx.fill();
+          ctx.strokeStyle = col; ctx.lineWidth = 1.5; ctx.stroke();
+          ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+          ctx.fillStyle = col;
+          ctx.font = '800 ' + fs + 'px Inter, system-ui, sans-serif';
+          ctx.fillText(text, cx, sub ? cy - fs * 0.32 : cy);
+          if (sub) { ctx.fillStyle = '#d6deeb'; ctx.font = '600 ' + Math.round(fs * 0.55) + 'px Inter, system-ui, sans-serif'; ctx.fillText(sub, cx, cy + fs * 0.5); }
+          ctx.textAlign = 'start'; ctx.textBaseline = 'alphabetic';
+        } else {
+          ctx.fillStyle = col;
+          ctx.font = '600 12px Inter, system-ui, sans-serif';
+          ctx.fillText(text, a[0] + 4, a[1] + 14);
+        }
       }
       for (const t of c.terminals || []) {
         const p = toScreen(t.x, t.y);
         ctx.fillStyle = cadTerminalColor(t.role);
         ctx.beginPath(); ctx.arc(p[0], p[1], Math.max(2.5, Math.min(6, 3 * scale)), 0, Math.PI * 2); ctx.fill();
+      }
+    }
+    if (focusKey) {
+      const f = components.find(c => cadCompKey(c) === focusKey);
+      if (f) {
+        const a = toScreen(f.x0, f.y1), b = toScreen(f.x1, f.y0);
+        ctx.save(); ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 4; ctx.setLineDash([]);
+        ctx.shadowColor = '#00a8ff'; ctx.shadowBlur = 14;
+        ctx.strokeRect(a[0] - 4, a[1] - 4, b[0] - a[0] + 8, b[1] - a[1] + 8); ctx.restore();
       }
     }
     if (!teach && wiring && showWiring) drawWiring(ctx, toScreen, scale);
@@ -916,7 +999,7 @@ async function renderCadPage(id) {
           <span class="chip ${done ? 'chip-ok' : 'chip-warn'}">${done ? 'Confirmed' : 'Please confirm'}</span></h4>
         <p class="muted small">${k.id === 'ssc'
           ? `${components.some(c => c.kind === 'msm') ? 'SSC1 is the one closest to the MSM, then the next closest. ' : 'Numbered left to right (no MSM on this drawing). '}Enter how many battery modules each SSC controls. ${modulesFound} modules were found on the drawing.`
-          : `No wiring (connected at the back of the rack). ${k.id === 'acdp' ? 'ACDP1 is the one closest to the MSM, then the next closest. ' : ''}Check each one on the drawing and confirm its name.`}</p>
+          : `No wiring (connected at the back of the rack). ${k.id === 'acdp' ? 'ACDP1 is the one closest to the MSM, then the next closest. ' : ''}Check each one on the drawing and confirm its name.`} <b>Tip:</b> click a ${esc(k.label)} on the drawing to rename it.</p>
         ${ruleWarning(k.id, list)}
         ${list.map(c => {
           const saved = cad.labels[cadCompKey(c)] || {};
@@ -927,12 +1010,20 @@ async function renderCadPage(id) {
         </div>`;
         }).join('')}
         ${k.id === 'ssc' ? `<p class="small muted" data-total>Total entered: <b>${list.reduce((n, c) => n + (+((cad.labels[cadCompKey(c)] || {}).modules) || 0), 0)}</b> of ${modulesFound}</p>` : ''}
+        <p class="cad-card-msg" role="alert" hidden></p>
         <button class="btn btn-primary btn-sm" data-confirm="${k.id}">Confirm ${k.id === 'ssc' ? 'SSC numbers and modules' : esc(k.label) + ' labels'}</button>
       </div>`;
     }).join('');
     box.querySelectorAll('[data-show]').forEach(b => b.onclick = () => {
       const c = components.find(x => cadCompKey(x) === b.dataset.show);
-      if (c) viewer.zoomTo(c.x0 - 150, c.y0 - 150, c.x1 + 150, c.y1 + 150);
+      if (!c) return;
+      /* zoom to it, highlight it, and open the rename box beside it */
+      const w = c.x1 - c.x0, h = c.y1 - c.y0;
+      viewer.zoomTo(c.x0 - w * 1.2, c.y0 - h * 1.2, c.x1 + w * 1.2, c.y1 + h * 1.2);
+      focusKey = cadCompKey(c);
+      viewer.redraw();
+      const q = viewer.toScreen(c.x1, (c.y0 + c.y1) / 2);
+      openRename([(c.x0 + c.x1) / 2, (c.y0 + c.y1) / 2], q[0], q[1]);
     });
     box.querySelectorAll('input[data-key], input[data-modules]').forEach(inp => inp.oninput = () => {
       const card = inp.closest('.cad-label-card');
@@ -949,18 +1040,28 @@ async function renderCadPage(id) {
       const inputs = [...card.querySelectorAll('input[data-key]')];
       const names = inputs.map(i => i.value.trim());
       const others = components.filter(c => cadNamed(c.kind) && c.kind !== card.dataset.kind).map(c => cadCompLabel(c, cad.labels));
-      if (names.some(n => !n)) { say('Every label needs a name.', 'warn'); return; }
-      const dup = names.find((n, i) => names.indexOf(n) !== i || others.includes(n));
-      if (dup) { say(`The label ${dup} is used twice.`, 'warn'); return; }
+      /* why a confirm is refused is shown in the card itself, next to the button */
+      const msg = card.querySelector('.cad-card-msg');
+      card.querySelectorAll('.cad-bad').forEach(x => x.classList.remove('cad-bad'));
+      const refuse = (text, el) => {
+        msg.hidden = false; msg.textContent = text;
+        if (el) { el.classList.add('cad-bad'); el.focus(); }
+        say(text, 'warn');
+      };
+      msg.hidden = true;
+      const empty = names.findIndex(n => !n);
+      if (empty >= 0) { refuse('Every label needs a name.' + (inputs.length > 3 ? ` If there are more ${cadKind(card.dataset.kind).label}s here than on the rack, the part was taught wrongly: use Remove in the Parts list and teach it again.` : ''), inputs[empty]); return; }
+      const di = names.findIndex((n, i) => names.indexOf(n) !== i || others.includes(n));
+      if (di >= 0) { refuse(`The label ${names[di]} is used twice.`, inputs[di]); return; }
       let counts = null;
       if (card.dataset.kind === 'ssc') {
         counts = inputs.map(i => card.querySelector(`input[data-modules="${CSS.escape(i.dataset.key)}"]`).value.trim());
         const bad = counts.findIndex(v => !/^[1-9][0-9]*$/.test(v));
-        if (bad >= 0) { say(`Enter the number of modules for ${names[bad]} (a whole number, 1 or more).`, 'warn'); return; }
+        if (bad >= 0) { refuse(`Enter the number of modules for ${names[bad]} (a whole number, 1 or more).`, card.querySelector(`input[data-modules="${CSS.escape(inputs[bad].dataset.key)}"]`)); return; }
         counts = counts.map(Number);
         const total = counts.reduce((a, b) => a + b, 0);
         if (total !== modulesFound) {
-          say(`The SSC module counts add up to ${total}, but ${modulesFound} modules were found on the drawing. Check the counts, or teach any missing modules first.`, 'warn');
+          refuse(`The SSC module counts add up to ${total}, but ${modulesFound} modules were found on the drawing. Check the counts, or teach any missing modules first.`, card.querySelector('input[data-modules]'));
           return;
         }
       }
@@ -984,10 +1085,19 @@ async function renderCadPage(id) {
     const terms = components.reduce((n, c) => n + (c.terminals || []).length, 0);
     $('cad-found').innerHTML = components.length
       ? `<ul class="cad-found-list">${CAD_KINDS.filter(k => by[k.id]).map(k =>
-          `<li><span class="cad-swatch" style="background:${k.color}"></span>${esc(k.label)}<b>${by[k.id]}</b></li>`).join('')}
+          `<li><span class="cad-swatch" style="background:${k.color}"></span>${esc(k.label)}<b>${by[k.id]}</b><button class="btn btn-ghost btn-xs cad-kind-remove" data-remove-kind="${k.id}" title="Remove ${esc(k.label)} from this drawing so you can teach it again">Remove</button></li>`).join('')}
           <li><span class="cad-swatch cad-swatch-dot"></span>Terminals<b>${terms}</b></li></ul>
           ${fromLibrary ? '<p class="muted small">Found with saved parts. Check every copy on the drawing.</p>' : ''}`
       : '<p class="muted small">No parts taught yet.</p>';
+    $('cad-found').querySelectorAll('[data-remove-kind]').forEach(b => b.onclick = async () => {
+      const kind = b.dataset.removeKind;
+      const before = cad.signatures.length;
+      cad.signatures = cad.signatures.filter(s => s.kind !== kind);
+      fromLibrary = false;
+      recognise();
+      await persist();
+      say(`${cadKind(kind).label} removed from this drawing (${before - cad.signatures.length} taught pattern${before - cad.signatures.length === 1 ? '' : 's'}). Teach it again with a box around one copy.`);
+    });
     $('cad-sigs').innerHTML = cad.signatures.length ? `<ul class="cad-sig-list">${cad.signatures.map((s, i) =>
       `<li><span class="cad-swatch" style="background:${cadKind(s.kind).color}"></span><span>${esc(s.name || cadKind(s.kind).label)}<small>${s.features.length} features · ${s.terminals.length} terminals</small></span>
         <span class="cad-sig-actions">
@@ -1011,7 +1121,7 @@ async function renderCadPage(id) {
       await persist();
       say(`Part forgotten on this drawing${keep.length < lib.length ? ' and deleted from this device' : ''}.`);
     });
-    $('cad-taught').querySelector('summary').textContent = `Taught parts (${cad.signatures.length})`;
+    $('cad-taught').querySelector('summary').textContent = `Taught parts (${cad.signatures.length}) · remove or forget`;
   }
 
   async function persist() {
@@ -1031,19 +1141,29 @@ async function renderCadPage(id) {
   }
 
   function cancelTeach() {
-    if (!teach) return;
+    if (!teach) return false;
     teach = null;
     prompt('');
     viewer.setMode('pan');
-    $('cad-teach').disabled = false;
+    teachButton(false);
     viewer.redraw();
-    say('Teaching cancelled.');
+    say('Teaching cancelled. Nothing was saved.');
+    return true;
+  }
+  /* while teaching, the teach button becomes Cancel */
+  function teachButton(busy) {
+    const b = $('cad-teach');
+    b.disabled = false;
+    b.textContent = busy ? 'Cancel' : 'Box one example';
+    b.classList.toggle('btn-primary', !busy);
+    b.classList.toggle('btn-ghost', busy);
   }
 
   $('cad-teach').onclick = () => {
+    if (teach) { cancelTeach(); return; }
     const kind = $('cad-kind').value;
     teach = { step: 'box', kind: kind };
-    $('cad-teach').disabled = true;
+    teachButton(true);
     viewer.setMode('box');
     const name = cadKind(kind).label;
     prompt(`Drag a box around ONE complete ${name === name.toUpperCase() ? name : name.toLowerCase()} · Esc cancels`);
@@ -1061,20 +1181,33 @@ async function renderCadPage(id) {
     } catch (e) { say(e.message, 'warn'); return; }
     const hits = cadFindMatches(index, sig);
     teach.box = box; teach.sig = sig; teach.hits = hits;
+    /* copies that overlap parts of another kind mean the box caught a neighbour */
+    const overlap = (a, b) => {
+      const w = Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0), h = Math.min(a.y1, b.y1) - Math.max(a.y0, b.y0);
+      if (w <= 0 || h <= 0) return 0;
+      return (w * h) / Math.min((a.x1 - a.x0) * (a.y1 - a.y0), (b.x1 - b.x0) * (b.y1 - b.y0));
+    };
+    const clash = new Map();
+    for (const h of hits) for (const c of components) {
+      if (c.kind === teach.kind || overlap(h, c) < 0.3) continue;
+      clash.set(c.kind, (clash.get(c.kind) || new Set()).add(h));
+    }
+    const warn = clash.size ? ` · ⚠ ${Math.max(...[...clash.values()].map(v => v.size))} of them overlap ${[...clash.keys()].map(k => cadKind(k).label + 's').join(' and ')}: the box probably caught a neighbouring part. Press Esc and draw a tighter box` : '';
     if (cadKind(teach.kind).wired === false) {
       /* back-wired part: nothing to click, just check the count and save */
       teach.step = 'terminals'; teach.roles = null; teach.picked = []; teach.noTerminals = true;
       viewer.setMode('pan');
-      prompt(`Found ${hits.length} ${cadKind(teach.kind).label}. No wiring needed. Press Enter to save · Wrong count? Esc and box again`);
+      prompt(`Found ${hits.length} ${cadKind(teach.kind).label}. No wiring needed. Press Enter to save · Wrong count? Esc and box again${warn}`);
     } else if (CAD_TERMINAL_ROLES[teach.kind]) {
       teach.step = 'terminals'; teach.roles = CAD_TERMINAL_ROLES[teach.kind].slice(); teach.picked = [];
       viewer.setMode('pick');
-      prompt(`Found ${hits.length} copies. Click its ${teach.roles.length} terminals left to right (${teach.roles.join(', ')}). First: ${teach.roles[0]} (inside the white box) · Wrong count? Esc and box again`);
+      prompt(`Found ${hits.length} copies. Click its ${teach.roles.length} terminals left to right (${teach.roles.join(', ')}). First: ${teach.roles[0]} (inside the white box) · Wrong count? Esc and box again${warn}`);
     } else {
       teach.step = 'terminals'; teach.roles = null; teach.picked = [];
       viewer.setMode('pick');
-      prompt(`Found ${hits.length} copies. Click its terminals if needed (T1, T2 …), then press Enter to finish · If a copy is missing, the box probably cut the part or caught a neighbour: press Esc and box again`);
+      prompt(`Found ${hits.length} copies. Click its terminals if needed (T1, T2 …), then press Enter to finish · If a copy is missing, the box probably cut the part or caught a neighbour: press Esc and box again${warn}`);
     }
+    if (warn) say('The new part overlaps parts already taught. Press Esc and draw a tighter box around one copy only.', 'warn');
     viewer.redraw();
   }
 
@@ -1097,19 +1230,29 @@ async function renderCadPage(id) {
     if (!teach || teach.step !== 'terminals') return;
     const t = teach;
     t.sig.terminals = t.picked.map(p => ({ role: p.role, dx: +(p.x - t.sig.x0).toFixed(4), dy: +(p.y - t.sig.y0).toFixed(4) }));
+    /* an earlier pattern of the same kind that finds any of the same copies is replaced
+       (it was taught wrongly); one that finds other copies stays (a second variant) */
+    const near = (a, b) => Math.min(a.x1, b.x1) > Math.max(a.x0, b.x0) && Math.min(a.y1, b.y1) > Math.max(a.y0, b.y0);
+    const replaced = cad.signatures.filter(s => s.kind === t.sig.kind &&
+      cadFindMatches(index, s).some(m => t.hits.some(h => near(m, h))));
+    cad.signatures = cad.signatures.filter(s => !replaced.includes(s));
+    if (replaced.length) {
+      const gone = new Set(replaced.map(cadSigId));
+      cadLibrarySave(cadLibraryLoad().filter(x => !gone.has(cadSigId(x))));
+    }
     cad.signatures.push(t.sig);
     teach = null;
     fromLibrary = false;
     prompt('');
     viewer.setMode('pan');
-    $('cad-teach').disabled = false;
+    teachButton(false);
     recognise();
     await persist();
     const lib = cadLibraryLoad();
     lib.push(cadLibraryEntry(t.sig));
     const saved = cadLibrarySave(lib);
     const n = components.filter(c => c.kind === t.sig.kind).length;
-    say(`${cadKind(t.sig.kind).label}: ${n} found${saved ? ' · saved on this device for other racks' : ''}.`, 'cad-ok');
+    say(`${cadKind(t.sig.kind).label}: ${n} found${replaced.length ? ' · replaced the earlier ' + cadKind(t.sig.kind).label : ''}${saved ? ' · saved on this device for other racks' : ''}.`, 'cad-ok');
   }
   viewer.onEnter = () => { if (teach && teach.step === 'terminals' && !teach.roles) finishTeach(); };
 
@@ -1140,28 +1283,58 @@ async function renderCadPage(id) {
 /** Canvas viewer for flattened CAD geometry: wheel zoom at the cursor, drag to
  *  pan, live coordinates in drawing units, two-point measure that snaps to
  *  circle centres, and teaching modes (box / pick) with an overlay hook. */
-
-/* ============================================================
- * Wiring sheet editor (A3, AYK DWG2396 format) -> PDF
- * The rack is painted on a canvas; the sheet (frame, title block,
- * wiring, labels) is SVG on top so parts of it can be dragged.
- * ============================================================ */
-const SHEET_PX = 7;   // canvas pixels per sheet millimetre
-let sheetLogoCache = null;
-async function sheetLogo() {
-  if (sheetLogoCache) return sheetLogoCache;
-  const img = new Image();
-  img.src = 'assets/ayk-logo-sheet.png';
-  await img.decode();
-  const c = document.createElement('canvas');
-  c.width = img.naturalWidth; c.height = img.naturalHeight;
-  const x = c.getContext('2d');
-  x.fillStyle = '#ffffff'; x.fillRect(0, 0, c.width, c.height); x.drawImage(img, 0, 0);
-  const blob = await new Promise(r => c.toBlob(r, 'image/jpeg', 0.92));
-  sheetLogoCache = { bytes: new Uint8Array(await blob.arrayBuffer()), w: c.width, h: c.height, src: 'assets/ayk-logo-sheet.png' };
-  return sheetLogoCache;
-}
-
+
+/* ============================================================
+ * Wiring sheet editor (A3, AYK DWG2396 format) -> PDF
+ * The rack is painted on a canvas; the sheet (frame, title block,
+ * wiring, labels) is SVG on top so parts of it can be dragged.
+ * ============================================================ */
+/** Side panel width: drag the bar between the drawing and the panel (kept per browser). */
+const WF_SIDE_KEY = 'wireflow-side-panel-width';
+function wfResizableSide(body) {
+  const bar = body && body.querySelector('.wf-split');
+  if (!bar) return;
+  const set = w => {
+    const max = Math.max(320, body.clientWidth - 320);
+    w = Math.max(260, Math.min(max, Math.round(w)));
+    body.style.setProperty('--side-w', w + 'px');
+    return w;
+  };
+  try { const saved = +localStorage.getItem(WF_SIDE_KEY); if (saved) set(saved); } catch (e) {}
+  let drag = null;
+  bar.addEventListener('pointerdown', e => { try { bar.setPointerCapture(e.pointerId); } catch (err) {} drag = true; bar.classList.add('on'); e.preventDefault(); });
+  bar.addEventListener('pointermove', e => { if (drag) set(body.getBoundingClientRect().right - e.clientX); });
+  const end = () => {
+    if (!drag) return;
+    drag = null; bar.classList.remove('on');
+    try { localStorage.setItem(WF_SIDE_KEY, parseInt(body.style.getPropertyValue('--side-w'), 10)); } catch (e) {}
+  };
+  bar.addEventListener('pointerup', end); bar.addEventListener('pointercancel', end);
+  bar.addEventListener('keydown', e => {
+    const now = parseInt(getComputedStyle(body).getPropertyValue('--side-w'), 10) || 340;
+    if (e.key === 'ArrowLeft') { set(now + 30); e.preventDefault(); }
+    if (e.key === 'ArrowRight') { set(now - 30); e.preventDefault(); }
+    try { localStorage.setItem(WF_SIDE_KEY, parseInt(body.style.getPropertyValue('--side-w'), 10)); } catch (err) {}
+  });
+  bar.addEventListener('dblclick', () => { body.style.removeProperty('--side-w'); try { localStorage.removeItem(WF_SIDE_KEY); } catch (e) {} });
+}
+
+const SHEET_PX = 7;   // canvas pixels per sheet millimetre
+let sheetLogoCache = null;
+async function sheetLogo() {
+  if (sheetLogoCache) return sheetLogoCache;
+  const img = new Image();
+  img.src = 'assets/ayk-logo-sheet.png';
+  await img.decode();
+  const c = document.createElement('canvas');
+  c.width = img.naturalWidth; c.height = img.naturalHeight;
+  const x = c.getContext('2d');
+  x.fillStyle = '#ffffff'; x.fillRect(0, 0, c.width, c.height); x.drawImage(img, 0, 0);
+  const blob = await new Promise(r => c.toBlob(r, 'image/jpeg', 0.92));
+  sheetLogoCache = { bytes: new Uint8Array(await blob.arrayBuffer()), w: c.width, h: c.height, src: 'assets/ayk-logo-sheet.png' };
+  return sheetLogoCache;
+}
+
 /** The example rack (AYK rack 111) with its parts taught and labels confirmed,
     opened as a normal drawing so people can try every step. One copy per browser. */
 async function openExampleRack() {
@@ -1190,222 +1363,224 @@ async function openExampleRack() {
   location.replace('#/cad/' + project.id);
 }
 
-async function renderSheetPage(id) {
-  shell('<div class="loading">Opening the wiring sheet…</div>', 'dash');
-  let project, record;
-  try { project = await localProject(id); record = await localGetUnderlay(id); } catch (e) {}
-  const back = `<a class="btn btn-primary" href="#/cad/${id}">Back to the drawing</a>`;
-  if (!project || !record || !record.blob) { shell(`<div class="empty"><h3>Drawing not found</h3>${back}</div>`, 'dash'); return; }
-  const cad = (project.config && project.config.cad) || {};
-  const wiring = cad.wiring && cad.wiring.plan;
-  if (!wiring) { shell(`<div class="empty"><h3>No wiring yet</h3><p>Generate the wiring on the drawing first.</p>${back}</div>`, 'dash'); return; }
-  let flat;
-  try { flat = cadFlatten(cadParseDxf(await record.blob.text())); } catch (e) { shell(`<div class="empty"><h3>Could not read the drawing</h3><p>${esc(e.message)}</p>${back}</div>`, 'dash'); return; }
-  const jbs = (cad.components || []).filter(c => c.kind === 'jb');
-  const st = sheetSettings(cad.sheet, project.name);
-  const logo = await sheetLogo().catch(() => null);
-  const F = st.fields;
-  const fieldRow = (key, label) => `<label class="sh-field"><span>${label}</span><input type="text" data-f="${key}" value="${esc(F[key] || '')}" maxlength="60"></label>`;
-  const revRows = () => F.revs.map((r, i) => `<tr>${['rev', 'date', 'desn', 'dran', 'chkd', 'states', 'notes'].map(k =>
-    `<td><input type="text" data-rev="${i}" data-k="${k}" value="${esc(r[k] || '')}" maxlength="${k === 'notes' ? 24 : 12}" aria-label="${k}"></td>`).join('')}
-    <td>${F.revs.length > 1 ? `<button class="btn btn-ghost btn-xs" data-rev-del="${i}" title="Remove this revision row">×</button>` : ''}</td></tr>`).join('');
-
-  shell(`
-    <div class="cad-page sh-page">
-      <header class="cad-head">
-        <a class="back" href="#/cad/${id}">← Drawing</a>
-        <h1>${esc(project.name)} · wiring sheet</h1>
-        <span class="chip">A3 · PDF</span>
-        <div class="cad-tools">
-          <button class="btn btn-ghost btn-sm" id="sh-zoom-out" title="Zoom out">−</button>
-          <button class="btn btn-ghost btn-sm" id="sh-zoom-fit">Fit</button>
-          <button class="btn btn-ghost btn-sm" id="sh-zoom-in" title="Zoom in">+</button>
-          <button class="btn btn-primary btn-sm" id="sh-pdf">Download PDF</button>
-        </div>
-      </header>
-      <div class="sh-body">
-        <div class="sh-stage" id="sh-stage"><div class="sh-paper" id="sh-paper"><canvas id="sh-rack"></canvas><svg id="sh-svg" viewBox="0 0 ${A3_W} ${A3_H}" xmlns="http://www.w3.org/2000/svg"><g id="sh-g" transform="translate(0 ${A3_H}) scale(1 -1)"></g></svg></div></div>
-        <aside class="cad-info sh-side">
-          <section>
-            <h3>On the sheet</h3>
-            <label class="cad-wire-show"><input type="checkbox" id="sh-plugs" ${st.plugs ? 'checked' : ''}> Customer power plugs A / B (Note 2) on every junction box</label>
-            <label class="sh-field"><span>Scale</span><select id="sh-scale"><option value="auto">Automatic</option>${SHEET_SCALES.map(v => `<option value="${v}" ${String(F.scale) === String(v) ? 'selected' : ''}>1:${v}</option>`).join('')}</select></label>
-            <p class="muted small">Drag a cable's middle section, a module label, the plug labels or the grounding-point label to move it. Curved jumps stay as drawn.</p>
-            <button class="btn btn-ghost btn-sm" id="sh-reset">Undo all moves</button>
-          </section>
-          <section>
-            <h3>Title block</h3>
-            ${fieldRow('docNumber', 'Document Number')}${fieldRow('docType', 'Document Type')}
-            ${fieldRow('designNumber', 'Design Number')}${fieldRow('designName', 'Design Name')}
-            ${fieldRow('bankSize', 'Bank Size')}${fieldRow('bankWeight', 'Bank Weight')}
-            ${fieldRow('sheet', 'Sheet')}
-            <h4>Revisions</h4>
-            <div class="sh-revs"><table><thead><tr><th>REV.</th><th>DATE</th><th>DESN BY</th><th>DRAN BY</th><th>CHKD BY</th><th>STATES</th><th>NOTES</th><th></th></tr></thead><tbody id="sh-revs">${revRows()}</tbody></table></div>
-            <button class="btn btn-ghost btn-sm" id="sh-rev-add">Add revision</button>
-          </section>
-          <p class="small" id="sh-status" role="status"></p>
-        </aside>
-      </div>
-    </div>`, 'dash');
-
-  const $ = q => document.getElementById(q);
-  const say = (m, k) => { $('sh-status').textContent = m || ''; $('sh-status').className = 'small ' + (k || ''); };
-  const model = () => ({ flat: flat, bounds: flat.bounds, jbs: jbs, wiring: wiring, settings: st, logo: logo });
-  let zoom = 1, P = null, rackKey = '';
-  const save = async () => {
-    cad.sheet = { fields: Object.assign({}, F, { scaleText: undefined }), plugs: st.plugs, edits: st.edits };
-    project.updated_at = new Date().toISOString();
-    try { await localPutProject(project); } catch (e) { say('Could not save: ' + e.message, 'warn'); }
-  };
-
-  function paintRack() {
-    const key = P.scale + '|' + P.X(0) + '|' + P.Y(0);
-    if (key === rackKey) return;
-    rackKey = key;
-    const cv = $('sh-rack');
-    cv.width = A3_W * SHEET_PX; cv.height = A3_H * SHEET_PX;
-    const ctx = cv.getContext('2d');
-    ctx.clearRect(0, 0, cv.width, cv.height);
-    ctx.strokeStyle = '#374151'; ctx.lineWidth = 0.6;
-    const X = x => P.X(x) * SHEET_PX, Y = y => (A3_H - P.Y(y)) * SHEET_PX;
-    const path = new Path2D();
-    for (const pl of flat.polylines) {
-      const a = pl.pts;
-      path.moveTo(X(a[0]), Y(a[1]));
-      for (let i = 2; i < a.length; i += 2) path.lineTo(X(a[i]), Y(a[i + 1]));
-      if (pl.closed) path.closePath();
-    }
-    for (const c of flat.circles) { path.moveTo(X(c.cx + c.r), Y(c.cy)); path.arc(X(c.cx), Y(c.cy), c.r * P.k * SHEET_PX, 0, Math.PI * 2); }
-    ctx.stroke(path);
-  }
-  function render() {
-    const svg = sheetSvgTarget();
-    P = sheetDraw(svg, Object.assign(model(), { rack: false, interactive: true, logo: logo ? { src: logo.src, w: logo.w, h: logo.h } : null }));
-    $('sh-g').innerHTML = svg.svg();
-    paintRack();
-  }
-  function applyZoom() {
-    const stage = $('sh-stage');
-    const fit = Math.min((stage.clientWidth - 24) / A3_W, (stage.clientHeight - 24) / A3_H);
-    const pxmm = Math.max(0.5, fit * zoom);
-    $('sh-paper').style.width = A3_W * pxmm + 'px';
-    $('sh-paper').style.height = A3_H * pxmm + 'px';
-  }
-  render(); applyZoom();
-  new ResizeObserver(applyZoom).observe($('sh-stage'));
-  $('sh-zoom-in').onclick = () => { zoom = Math.min(6, zoom * 1.4); applyZoom(); };
-  $('sh-zoom-out').onclick = () => { zoom = Math.max(0.6, zoom / 1.4); applyZoom(); };
-  $('sh-zoom-fit').onclick = () => { zoom = 1; applyZoom(); };
-
-  /* ---- title block and options ---- */
-  const side = document.querySelector('.sh-side');
-  side.addEventListener('input', e => {
-    const t = e.target;
-    if (t.dataset.f) F[t.dataset.f] = t.value;
-    else if (t.dataset.rev != null) F.revs[+t.dataset.rev][t.dataset.k] = t.value;
-    else return;
-    render(); save();
-  });
-  $('sh-plugs').onchange = e => { st.plugs = e.target.checked; render(); save(); };
-  $('sh-scale').onchange = e => { F.scale = e.target.value; render(); save(); };
-  const bindRevs = () => {
-    $('sh-revs').innerHTML = revRows();
-    $('sh-revs').querySelectorAll('[data-rev-del]').forEach(b => b.onclick = () => { F.revs.splice(+b.dataset.revDel, 1); bindRevs(); render(); save(); });
-  };
-  bindRevs();
-  $('sh-rev-add').onclick = () => {
-    if (F.revs.length >= 4) { say('The title block has room for 4 revision rows.', 'warn'); return; }
-    const last = F.revs[F.revs.length - 1] || {};
-    F.revs.push({ rev: String((+last.rev || 0) + 1), date: sheetDefaults().revs[0].date, desn: last.desn || '', dran: last.dran || '', chkd: last.chkd || '', states: '', notes: '' });
-    bindRevs(); render(); save();
-  };
-  $('sh-reset').onclick = () => { st.edits = { cables: {}, labels: {}, ground: null, plugLabel: null }; render(); save(); say('All moves undone.'); };
-
-  /* ---- dragging on the sheet ---- */
-  const svgEl = $('sh-svg');
-  const toSheet = (ev) => {
-    const pt = svgEl.createSVGPoint(); pt.x = ev.clientX; pt.y = ev.clientY;
-    const q = pt.matrixTransform($('sh-g').getScreenCTM().inverse());
-    return [q.x, q.y];
-  };
-  let drag = null;
-  svgEl.addEventListener('pointerdown', ev => {
-    const s0 = toSheet(ev);
-    const dEl = ev.target.closest('[data-drag]');
-    const cEl = ev.target.closest('.sh-cable, .sh-hit');
-    if (dEl) {
-      const kind = dEl.dataset.drag;
-      const lab = kind === 'label' ? wiring.strings.flatMap(s => s.labels).find(l => l.id === dEl.dataset.id) : null;
-      drag = { kind: kind, start: s0, el: dEl, id: dEl.dataset.id,
-        orig: kind === 'label' ? (st.edits.labels[dEl.dataset.id] || [lab.x, lab.y]).slice()
-          : kind === 'plug' ? (st.edits.plugLabel || [-30, -2]).slice() : (st.edits.ground || [0, 0]).slice() };
-    } else if (cEl) {
-      const cab = wiring.cables.find(c => c.id === cEl.dataset.id);
-      if (!cab) return;
-      if (cab.curve) { say('Curved jumps between side-by-side modules stay as drawn.'); return; }
-      const pts = (st.edits.cables[cab.id] || cab.pts).map(p => p.slice());
-      /* nearest middle section (not the first or last stub into a terminal) */
-      const d = [(s0[0] - P.X(0)) / P.k, (s0[1] - P.Y(0)) / P.k];
-      let best = -1, bd = Infinity;
-      for (let i = 1; i < pts.length - 2; i++) {
-        const a = pts[i], b = pts[i + 1];
-        const len2 = (b[0] - a[0]) ** 2 + (b[1] - a[1]) ** 2 || 1;
-        const t = Math.max(0, Math.min(1, ((d[0] - a[0]) * (b[0] - a[0]) + (d[1] - a[1]) * (b[1] - a[1])) / len2));
-        const dist = Math.hypot(d[0] - a[0] - t * (b[0] - a[0]), d[1] - a[1] - t * (b[1] - a[1]));
-        if (dist < bd) { bd = dist; best = i; }
-      }
-      if (best < 0) { say('This cable runs straight between two terminals; there is no middle section to move.'); return; }
-      const a = pts[best], b = pts[best + 1];
-      drag = { kind: 'cable', start: s0, el: cEl, cab: cab, pts: pts, seg: best, horiz: Math.abs(b[1] - a[1]) < Math.abs(b[0] - a[0]), orig: pts.map(p => p.slice()) };
-    } else return;
-    svgEl.setPointerCapture(ev.pointerId);
-    ev.preventDefault();
-  });
-  svgEl.addEventListener('pointermove', ev => {
-    if (!drag) return;
-    const s1 = toSheet(ev);
-    const dx = s1[0] - drag.start[0], dy = s1[1] - drag.start[1];
-    if (drag.kind === 'cable') {
-      const i = drag.seg, o = drag.orig, p = drag.pts;
-      if (drag.horiz) { p[i][1] = o[i][1] + dy / P.k; p[i + 1][1] = o[i + 1][1] + dy / P.k; }
-      else { p[i][0] = o[i][0] + dx / P.k; p[i + 1][0] = o[i + 1][0] + dx / P.k; }
+async function renderSheetPage(id) {
+  shell('<div class="loading">Opening the wiring sheet…</div>', 'dash');
+  let project, record;
+  try { project = await localProject(id); record = await localGetUnderlay(id); } catch (e) {}
+  const back = `<a class="btn btn-primary" href="#/cad/${id}">Back to the drawing</a>`;
+  if (!project || !record || !record.blob) { shell(`<div class="empty"><h3>Drawing not found</h3>${back}</div>`, 'dash'); return; }
+  const cad = (project.config && project.config.cad) || {};
+  const wiring = cad.wiring && cad.wiring.plan;
+  if (!wiring) { shell(`<div class="empty"><h3>No wiring yet</h3><p>Generate the wiring on the drawing first.</p>${back}</div>`, 'dash'); return; }
+  let flat;
+  try { flat = cadFlatten(cadParseDxf(await record.blob.text())); } catch (e) { shell(`<div class="empty"><h3>Could not read the drawing</h3><p>${esc(e.message)}</p>${back}</div>`, 'dash'); return; }
+  const jbs = (cad.components || []).filter(c => c.kind === 'jb');
+  const st = sheetSettings(cad.sheet, project.name);
+  const logo = await sheetLogo().catch(() => null);
+  const F = st.fields;
+  const fieldRow = (key, label) => `<label class="sh-field"><span>${label}</span><input type="text" data-f="${key}" value="${esc(F[key] || '')}" maxlength="60"></label>`;
+  const revRows = () => F.revs.map((r, i) => `<tr>${['rev', 'date', 'desn', 'dran', 'chkd', 'states', 'notes'].map(k =>
+    `<td><input type="text" data-rev="${i}" data-k="${k}" value="${esc(r[k] || '')}" maxlength="${k === 'notes' ? 24 : 12}" aria-label="${k}"></td>`).join('')}
+    <td>${F.revs.length > 1 ? `<button class="btn btn-ghost btn-xs" data-rev-del="${i}" title="Remove this revision row">×</button>` : ''}</td></tr>`).join('');
+
+  shell(`
+    <div class="cad-page sh-page">
+      <header class="cad-head">
+        <a class="back" href="#/cad/${id}">← Drawing</a>
+        <h1>${esc(project.name)} · wiring sheet</h1>
+        <span class="chip">A3 · PDF</span>
+        <div class="cad-tools">
+          <button class="btn btn-ghost btn-sm" id="sh-zoom-out" title="Zoom out">−</button>
+          <button class="btn btn-ghost btn-sm" id="sh-zoom-fit">Fit</button>
+          <button class="btn btn-ghost btn-sm" id="sh-zoom-in" title="Zoom in">+</button>
+          <button class="btn btn-primary btn-sm" id="sh-pdf">Download PDF</button>
+        </div>
+      </header>
+      <div class="sh-body">
+        <div class="sh-stage" id="sh-stage"><div class="sh-paper" id="sh-paper"><canvas id="sh-rack"></canvas><svg id="sh-svg" viewBox="0 0 ${A3_W} ${A3_H}" xmlns="http://www.w3.org/2000/svg"><g id="sh-g" transform="translate(0 ${A3_H}) scale(1 -1)"></g></svg></div></div>
+        <div class="wf-split" role="separator" aria-orientation="vertical" aria-label="Drag to resize the side panel" tabindex="0"></div>
+        <aside class="cad-info sh-side">
+          <section>
+            <h3>On the sheet</h3>
+            <label class="cad-wire-show"><input type="checkbox" id="sh-plugs" ${st.plugs ? 'checked' : ''}> Customer power plugs A / B (Note 2) on every junction box</label>
+            <label class="sh-field"><span>Scale</span><select id="sh-scale"><option value="auto">Automatic</option>${SHEET_SCALES.map(v => `<option value="${v}" ${String(F.scale) === String(v) ? 'selected' : ''}>1:${v}</option>`).join('')}</select></label>
+            <p class="muted small">Drag a cable's middle section, a module label, the plug labels or the grounding-point label to move it. Curved jumps stay as drawn.</p>
+            <button class="btn btn-ghost btn-sm" id="sh-reset">Undo all moves</button>
+          </section>
+          <section>
+            <h3>Title block</h3>
+            ${fieldRow('docNumber', 'Document Number')}${fieldRow('docType', 'Document Type')}
+            ${fieldRow('designNumber', 'Design Number')}${fieldRow('designName', 'Design Name')}
+            ${fieldRow('bankSize', 'Bank Size')}${fieldRow('bankWeight', 'Bank Weight')}
+            ${fieldRow('sheet', 'Sheet')}
+            <h4>Revisions</h4>
+            <div class="sh-revs"><table><thead><tr><th>REV.</th><th>DATE</th><th>DESN BY</th><th>DRAN BY</th><th>CHKD BY</th><th>STATES</th><th>NOTES</th><th></th></tr></thead><tbody id="sh-revs">${revRows()}</tbody></table></div>
+            <button class="btn btn-ghost btn-sm" id="sh-rev-add">Add revision</button>
+          </section>
+          <p class="small" id="sh-status" role="status"></p>
+        </aside>
+      </div>
+    </div>`, 'dash');
+
+  const $ = q => document.getElementById(q);
+  const say = (m, k) => { $('sh-status').textContent = m || ''; $('sh-status').className = 'small ' + (k || ''); };
+  const model = () => ({ flat: flat, bounds: flat.bounds, jbs: jbs, wiring: wiring, settings: st, logo: logo });
+  let zoom = 1, P = null, rackKey = '';
+  const save = async () => {
+    cad.sheet = { fields: Object.assign({}, F, { scaleText: undefined }), plugs: st.plugs, edits: st.edits };
+    project.updated_at = new Date().toISOString();
+    try { await localPutProject(project); } catch (e) { say('Could not save: ' + e.message, 'warn'); }
+  };
+
+  function paintRack() {
+    const key = P.scale + '|' + P.X(0) + '|' + P.Y(0);
+    if (key === rackKey) return;
+    rackKey = key;
+    const cv = $('sh-rack');
+    cv.width = A3_W * SHEET_PX; cv.height = A3_H * SHEET_PX;
+    const ctx = cv.getContext('2d');
+    ctx.clearRect(0, 0, cv.width, cv.height);
+    ctx.strokeStyle = '#374151'; ctx.lineWidth = 0.6;
+    const X = x => P.X(x) * SHEET_PX, Y = y => (A3_H - P.Y(y)) * SHEET_PX;
+    const path = new Path2D();
+    for (const pl of flat.polylines) {
+      const a = pl.pts;
+      path.moveTo(X(a[0]), Y(a[1]));
+      for (let i = 2; i < a.length; i += 2) path.lineTo(X(a[i]), Y(a[i + 1]));
+      if (pl.closed) path.closePath();
+    }
+    for (const c of flat.circles) { path.moveTo(X(c.cx + c.r), Y(c.cy)); path.arc(X(c.cx), Y(c.cy), c.r * P.k * SHEET_PX, 0, Math.PI * 2); }
+    ctx.stroke(path);
+  }
+  function render() {
+    const svg = sheetSvgTarget();
+    P = sheetDraw(svg, Object.assign(model(), { rack: false, interactive: true, logo: logo ? { src: logo.src, w: logo.w, h: logo.h } : null }));
+    $('sh-g').innerHTML = svg.svg();
+    paintRack();
+  }
+  function applyZoom() {
+    const stage = $('sh-stage');
+    const fit = Math.min((stage.clientWidth - 24) / A3_W, (stage.clientHeight - 24) / A3_H);
+    const pxmm = Math.max(0.5, fit * zoom);
+    $('sh-paper').style.width = A3_W * pxmm + 'px';
+    $('sh-paper').style.height = A3_H * pxmm + 'px';
+  }
+  render(); applyZoom();
+  wfResizableSide(document.querySelector('.sh-body'));
+  new ResizeObserver(applyZoom).observe($('sh-stage'));
+  $('sh-zoom-in').onclick = () => { zoom = Math.min(6, zoom * 1.4); applyZoom(); };
+  $('sh-zoom-out').onclick = () => { zoom = Math.max(0.6, zoom / 1.4); applyZoom(); };
+  $('sh-zoom-fit').onclick = () => { zoom = 1; applyZoom(); };
+
+  /* ---- title block and options ---- */
+  const side = document.querySelector('.sh-side');
+  side.addEventListener('input', e => {
+    const t = e.target;
+    if (t.dataset.f) F[t.dataset.f] = t.value;
+    else if (t.dataset.rev != null) F.revs[+t.dataset.rev][t.dataset.k] = t.value;
+    else return;
+    render(); save();
+  });
+  $('sh-plugs').onchange = e => { st.plugs = e.target.checked; render(); save(); };
+  $('sh-scale').onchange = e => { F.scale = e.target.value; render(); save(); };
+  const bindRevs = () => {
+    $('sh-revs').innerHTML = revRows();
+    $('sh-revs').querySelectorAll('[data-rev-del]').forEach(b => b.onclick = () => { F.revs.splice(+b.dataset.revDel, 1); bindRevs(); render(); save(); });
+  };
+  bindRevs();
+  $('sh-rev-add').onclick = () => {
+    if (F.revs.length >= 4) { say('The title block has room for 4 revision rows.', 'warn'); return; }
+    const last = F.revs[F.revs.length - 1] || {};
+    F.revs.push({ rev: String((+last.rev || 0) + 1), date: sheetDefaults().revs[0].date, desn: last.desn || '', dran: last.dran || '', chkd: last.chkd || '', states: '', notes: '' });
+    bindRevs(); render(); save();
+  };
+  $('sh-reset').onclick = () => { st.edits = { cables: {}, labels: {}, ground: null, plugLabel: null }; render(); save(); say('All moves undone.'); };
+
+  /* ---- dragging on the sheet ---- */
+  const svgEl = $('sh-svg');
+  const toSheet = (ev) => {
+    const pt = svgEl.createSVGPoint(); pt.x = ev.clientX; pt.y = ev.clientY;
+    const q = pt.matrixTransform($('sh-g').getScreenCTM().inverse());
+    return [q.x, q.y];
+  };
+  let drag = null;
+  svgEl.addEventListener('pointerdown', ev => {
+    const s0 = toSheet(ev);
+    const dEl = ev.target.closest('[data-drag]');
+    const cEl = ev.target.closest('.sh-cable, .sh-hit');
+    if (dEl) {
+      const kind = dEl.dataset.drag;
+      const lab = kind === 'label' ? wiring.strings.flatMap(s => s.labels).find(l => l.id === dEl.dataset.id) : null;
+      drag = { kind: kind, start: s0, el: dEl, id: dEl.dataset.id,
+        orig: kind === 'label' ? (st.edits.labels[dEl.dataset.id] || [lab.x, lab.y]).slice()
+          : kind === 'plug' ? (st.edits.plugLabel || [-30, -2]).slice() : (st.edits.ground || [0, 0]).slice() };
+    } else if (cEl) {
+      const cab = wiring.cables.find(c => c.id === cEl.dataset.id);
+      if (!cab) return;
+      if (cab.curve) { say('Curved jumps between side-by-side modules stay as drawn.'); return; }
+      const pts = (st.edits.cables[cab.id] || cab.pts).map(p => p.slice());
+      /* nearest middle section (not the first or last stub into a terminal) */
+      const d = [(s0[0] - P.X(0)) / P.k, (s0[1] - P.Y(0)) / P.k];
+      let best = -1, bd = Infinity;
+      for (let i = 1; i < pts.length - 2; i++) {
+        const a = pts[i], b = pts[i + 1];
+        const len2 = (b[0] - a[0]) ** 2 + (b[1] - a[1]) ** 2 || 1;
+        const t = Math.max(0, Math.min(1, ((d[0] - a[0]) * (b[0] - a[0]) + (d[1] - a[1]) * (b[1] - a[1])) / len2));
+        const dist = Math.hypot(d[0] - a[0] - t * (b[0] - a[0]), d[1] - a[1] - t * (b[1] - a[1]));
+        if (dist < bd) { bd = dist; best = i; }
+      }
+      if (best < 0) { say('This cable runs straight between two terminals; there is no middle section to move.'); return; }
+      const a = pts[best], b = pts[best + 1];
+      drag = { kind: 'cable', start: s0, el: cEl, cab: cab, pts: pts, seg: best, horiz: Math.abs(b[1] - a[1]) < Math.abs(b[0] - a[0]), orig: pts.map(p => p.slice()) };
+    } else return;
+    try { svgEl.setPointerCapture(ev.pointerId); } catch (err) {}
+    ev.preventDefault();
+  });
+  svgEl.addEventListener('pointermove', ev => {
+    if (!drag) return;
+    const s1 = toSheet(ev);
+    const dx = s1[0] - drag.start[0], dy = s1[1] - drag.start[1];
+    if (drag.kind === 'cable') {
+      const i = drag.seg, o = drag.orig, p = drag.pts;
+      if (drag.horiz) { p[i][1] = o[i][1] + dy / P.k; p[i + 1][1] = o[i + 1][1] + dy / P.k; }
+      else { p[i][0] = o[i][0] + dx / P.k; p[i + 1][0] = o[i + 1][0] + dx / P.k; }
       const pts = p.map(q => P.X(q[0]).toFixed(3) + ',' + P.Y(q[1]).toFixed(3)).join(' ');
-      svgEl.querySelectorAll(`[data-id="${CSS.escape(drag.cab.id)}"]`).forEach(el => el.setAttribute('points', pts));
-      drag.moved = true;
-    } else {
-      /* sheet units, Y up inside the flipped group */
-      if (drag.t0 == null) drag.t0 = drag.el.getAttribute('transform') || '';
-      drag.el.setAttribute('transform', `translate(${dx} ${dy}) ${drag.t0}`);
-      drag.dx = dx; drag.dy = dy; drag.moved = true;
-    }
-  });
-  const end = () => {
-    if (!drag) return;
-    const d = drag; drag = null;
-    if (!d.moved) return;
-    if (d.kind === 'cable') st.edits.cables[d.cab.id] = d.pts.map(p => [Math.round(p[0] * 100) / 100, Math.round(p[1] * 100) / 100]);
-    else if (d.kind === 'label') st.edits.labels[d.id] = [d.orig[0] + d.dx / P.k, d.orig[1] + d.dy / P.k];
-    else if (d.kind === 'plug') st.edits.plugLabel = [d.orig[0] + d.dx, d.orig[1] + d.dy];
-    else if (d.kind === 'ground') st.edits.ground = [d.orig[0] + d.dx, d.orig[1] + d.dy];
-    render(); save();
-  };
-  svgEl.addEventListener('pointerup', end);
-  svgEl.addEventListener('pointercancel', end);
-
-  /* ---- PDF ---- */
-  $('sh-pdf').onclick = async () => {
-    const btn = $('sh-pdf');
-    btn.disabled = true; btn.textContent = 'Making the PDF…';
-    try {
-      const bytes = await sheetPdf(model());
-      const name = ((F.docNumber ? F.docNumber + ' ' : '') + (F.designNumber ? F.designNumber + ' ' : '') + 'Wiring Diagram').replace(/[\\/:*?"<>|]+/g, '-');
-      download(name + '.pdf', bytes, 'application/pdf');
-      say(`PDF ready: ${(bytes.length / 1e6).toFixed(1)} MB, A3, scale 1:${P.scale}.`, 'cad-ok');
-    } catch (e) { say('Could not make the PDF: ' + e.message, 'warn'); }
-    btn.disabled = false; btn.textContent = 'Download PDF';
-  };
-}
-
+      svgEl.querySelectorAll(`[data-id="${CSS.escape(drag.cab.id)}"]`).forEach(el => el.setAttribute('points', pts));
+      drag.moved = true;
+    } else {
+      /* sheet units, Y up inside the flipped group */
+      if (drag.t0 == null) drag.t0 = drag.el.getAttribute('transform') || '';
+      drag.el.setAttribute('transform', `translate(${dx} ${dy}) ${drag.t0}`);
+      drag.dx = dx; drag.dy = dy; drag.moved = true;
+    }
+  });
+  const end = () => {
+    if (!drag) return;
+    const d = drag; drag = null;
+    if (!d.moved) return;
+    if (d.kind === 'cable') st.edits.cables[d.cab.id] = d.pts.map(p => [Math.round(p[0] * 100) / 100, Math.round(p[1] * 100) / 100]);
+    else if (d.kind === 'label') st.edits.labels[d.id] = [d.orig[0] + d.dx / P.k, d.orig[1] + d.dy / P.k];
+    else if (d.kind === 'plug') st.edits.plugLabel = [d.orig[0] + d.dx, d.orig[1] + d.dy];
+    else if (d.kind === 'ground') st.edits.ground = [d.orig[0] + d.dx, d.orig[1] + d.dy];
+    render(); save();
+  };
+  svgEl.addEventListener('pointerup', end);
+  svgEl.addEventListener('pointercancel', end);
+
+  /* ---- PDF ---- */
+  $('sh-pdf').onclick = async () => {
+    const btn = $('sh-pdf');
+    btn.disabled = true; btn.textContent = 'Making the PDF…';
+    try {
+      const bytes = await sheetPdf(model());
+      const name = ((F.docNumber ? F.docNumber + ' ' : '') + (F.designNumber ? F.designNumber + ' ' : '') + 'Wiring Diagram').replace(/[\\/:*?"<>|]+/g, '-');
+      download(name + '.pdf', bytes, 'application/pdf');
+      say(`PDF ready: ${(bytes.length / 1e6).toFixed(1)} MB, A3, scale 1:${P.scale}.`, 'cad-ok');
+    } catch (e) { say('Could not make the PDF: ' + e.message, 'warn'); }
+    btn.disabled = false; btn.textContent = 'Download PDF';
+  };
+}
+
 function cadViewer(stage, flat, opts) {
   const canvas = stage.querySelector('canvas');
   const ctx = canvas.getContext('2d');
@@ -1537,6 +1712,7 @@ function cadViewer(stage, flat, opts) {
       if (!mA || mB) { mA = s; mB = null; } else mB = s;
       draw(); readout();
     } else if (mode === 'pick' && opts.onPick) opts.onPick(s);
+    else if (mode === 'pan' && opts.onClick) opts.onClick(w, e.offsetX, e.offsetY);
   });
   canvas.addEventListener('wheel', e => {
     e.preventDefault();
@@ -1562,8 +1738,9 @@ function cadViewer(stage, flat, opts) {
     else if ((e.key === 'm' || e.key === 'M') && (mode === 'pan' || mode === 'measure')) setMode(mode === 'measure' ? 'pan' : 'measure');
     else if (e.key === 'Enter' && api.onEnter) api.onEnter();
     else if (e.key === 'Escape') {
-      if (mode === 'box' || mode === 'pick') { if (opts.onCancel) opts.onCancel(); }
-      else setMode('pan');
+      /* always offer the cancel (a back-wired part waits for Enter in pan mode) */
+      if (opts.onCancel && opts.onCancel()) return;
+      setMode('pan');
     }
   };
   window.addEventListener('keydown', onKey);

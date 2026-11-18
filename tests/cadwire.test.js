@@ -108,6 +108,13 @@ const uneven = W.cadWirePlan(comps, sscList(comps, [10, 14, 12, 12, 12]), { pair
 ok('uneven counts 10/14/12/12/12 planned', uneven.ok, uneven.errors.join(' | '));
 ok('uneven counts: no power crossings', uneven.crossings.length === 0, uneven.crossings.length);
 
+/* a junction box at the BOTTOM of an SSC column is used too */
+const low = rack111().map(c => c.kind === 'jb' && c.id === 'jb-3' ? Object.assign({}, c, { y0: 120, y1: 222.18, terminals: c.terminals.map(t => Object.assign({}, t, { y: 160.5 })) }) : c);
+const lowRows = low.filter(c => !(c.kind === 'module' && c._dummy));
+const lp = W.cadWirePlan(lowRows, sscList(lowRows), { pair: 'P1' });
+const s3 = lp.ok && lp.strings.find(s => s.ssc.id === 'ssc-3');
+ok('junction box at the bottom of its column is found', lp.ok && s3 && s3.jb.id === 'jb-3', lp.errors.join(' | '));
+
 /* refusals: wrong total, missing JB terminals */
 const bad = W.cadWirePlan(comps, sscList(comps, [12, 12, 12, 12, 11]), {});
 ok('refused: counts do not add up to the modules', !bad.ok && /add up to 59/.test(bad.errors[0]), bad.errors[0]);

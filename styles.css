@@ -562,3 +562,22 @@ body:has(.sh-page) .topbar { display: none; }
 .cad-taught { margin-top: 12px; }
 .cad-taught > summary { cursor: pointer; font-weight: 600; font-size: 13px; padding: 6px 0; }
 @media (max-width: 900px) { .sh-body { grid-template-columns: 1fr; grid-template-rows: 60vh auto; } .sh-side { border-left: 0; } .sh-page { height: auto; } }
+.cad-found-list li .cad-kind-remove { margin-left: 4px; padding: 2px 8px; font-size: 11px; opacity: .75; }
+.cad-found-list li .cad-kind-remove:hover { opacity: 1; }
+
+/* resizable side panel (CAD view, sheet editor) */
+.cad-body { grid-template-columns: minmax(0, 1fr) 6px var(--side-w, 340px); }
+.sh-body { grid-template-columns: minmax(0, 1fr) 6px var(--side-w, 380px); }
+.wf-split { cursor: col-resize; background: rgba(120,145,185,.14); position: relative; touch-action: none; }
+.wf-split::after { content: ""; position: absolute; left: 2px; top: 50%; width: 2px; height: 36px; margin-top: -18px; border-radius: 2px; background: rgba(160,180,210,.55); }
+.wf-split:hover, .wf-split.on, .wf-split:focus-visible { background: #00a8ff; outline: none; }
+.cad-body .cad-info { border-left: 0; }
+@media (max-width: 800px) { .cad-body, .sh-body { grid-template-columns: 1fr; } .wf-split { display: none; } }
+/* rename a part on the rack */
+.cad-pop { position: absolute; z-index: 5; display: grid; gap: 8px; width: 230px; padding: 12px; border-radius: 10px; background: #0d1528; border: 1px solid rgba(120,145,185,.35); box-shadow: 0 12px 30px rgba(0,0,0,.5); color: #d6deeb; font-size: 13px; }
+.cad-pop label { display: grid; grid-template-columns: 70px 1fr; gap: 8px; align-items: center; }
+.cad-pop input { min-width: 0; }
+.cad-pop p { margin: 0; }
+
+.cad-card-msg { margin: 8px 0; padding: 8px 10px; border-radius: 8px; background: rgba(239,68,68,.12); border: 1px solid rgba(239,68,68,.45); color: #fecaca; font-size: 13px; }
+.cad-label-row input.cad-bad { border-color: #ef4444 !important; box-shadow: 0 0 0 2px rgba(239,68,68,.35); }
