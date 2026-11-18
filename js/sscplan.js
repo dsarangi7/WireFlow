@@ -229,7 +229,7 @@ function groupMetrics(rack, rules, sscSlot, order) {
   const ids = (order || []).filter((id) => rackIsModule(rack, id));
   const capP = cat.reduce((m, h) => (h.network === 'power' ? Math.max(m, h.length) : m), 0);
   const capC = cat.reduce((m, h) => (h.network === 'comm' ? Math.max(m, h.length) : m), 0);
-  let bomMm = 0, geomMm = 0, longHops = 0, shortMm = 0, maxHopMm = 0, overflow = 0;
+  let geomMm = 0, longHops = 0, shortMm = 0, maxHopMm = 0, overflow = 0;
 
   if (sscSlot && ids.length) {
     const first = ids[0], last = ids[ids.length - 1];
@@ -238,7 +238,6 @@ function groupMetrics(rack, rules, sscSlot, order) {
       rackSpan(rack, sscSlot, first, 'comm'), rackSpan(rack, sscSlot, last, 'comm'),
     ];
     geomMm += spans.reduce((a, b) => a + b, 0);
-    bomMm += 2 * (+r.m2sPowerLen || 0) + 2 * (+r.m2sCommLen || 0);
     if (Math.max.apply(null, spans) > Math.max(+r.m2sPowerLen || 0, +r.m2sCommLen || 0)) overflow++;
   }
   for (let k = 0; k + 1 < ids.length; k++) {
@@ -249,7 +248,6 @@ function groupMetrics(rack, rules, sscSlot, order) {
     const hp = pickHarness(cat, 'power', routedP, r);
     const hc = pickHarness(cat, 'comm', routedC, r);
     const lenP = hp ? hp.length : routedP, lenC = hc ? hc.length : routedC;
-    bomMm += lenP + lenC;
     if (kind === 'adjacent') shortMm += lenP + lenC; else longHops++;
     if (!hp || !hc) overflow++;
     const sp = rackSpan(rack, a, b, 'power'), sc = rackSpan(rack, a, b, 'comm');
@@ -262,7 +260,6 @@ function groupMetrics(rack, rules, sscSlot, order) {
     hops: Math.max(0, ids.length - 1),
     longHops: longHops,
     shortMm: Math.round(shortMm),
-    bomMm: Math.round(bomMm),
     geomMm: Math.round(geomMm),
     maxHopMm: Math.round(maxHopMm),
     overflow: overflow,
@@ -271,9 +268,8 @@ function groupMetrics(rack, rules, sscSlot, order) {
 
 function groupPlanCompare(a, b) {
   if (a.metrics.overflow !== b.metrics.overflow) return a.metrics.overflow - b.metrics.overflow;
-  if (a.metrics.bomMm !== b.metrics.bomMm) return a.metrics.bomMm - b.metrics.bomMm;
-  if (a.metrics.longHops !== b.metrics.longHops) return a.metrics.longHops - b.metrics.longHops;
-  return a.metrics.geomMm - b.metrics.geomMm;
+  if (a.metrics.geomMm !== b.metrics.geomMm) return a.metrics.geomMm - b.metrics.geomMm;
+  return a.metrics.longHops - b.metrics.longHops;
 }
 
 /** Best chain for one SSC across the traversal patterns + optimised tours.
@@ -378,13 +374,12 @@ function layoutAssignmentRows(project) {
 
 /** Sum of the per-SSC metrics.
  *  @param {Array<Object>} groups Groups from layoutGroups.
- *  @return {Object} {sscs, modules, bomMm, geomMm, longHops, hops, overflow, maxHopMm}. */
+ *  @return {Object} {sscs, modules, geomMm, longHops, hops, overflow, maxHopMm}. */
 function layoutTotals(groups) {
-  const t = { sscs: 0, modules: 0, bomMm: 0, geomMm: 0, longHops: 0, hops: 0, overflow: 0, maxHopMm: 0 };
+  const t = { sscs: 0, modules: 0, geomMm: 0, longHops: 0, hops: 0, overflow: 0, maxHopMm: 0 };
   for (const g of groups || []) {
     t.sscs++;
     t.modules += g.metrics.moduleCount;
-    t.bomMm += g.metrics.bomMm;
     t.geomMm += g.metrics.geomMm;
     t.longHops += g.metrics.longHops;
     t.hops += g.metrics.hops;

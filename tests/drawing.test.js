@@ -441,7 +441,8 @@ const sigChecks = [
   ['Diagram tab fetches the netlist', /await ctx\.getNetlist\(\)/.test(tabBody)],
   ['Diagram tab passes that netlist to renderDiagramSVG', /renderDiagramSVG\(project,\s*conns\)/.test(tabBody)],
   ['Diagram tab no longer passes an empty array', !/renderDiagramSVG\(project,\s*\[\]\)/.test(tabBody)],
-  ['root route opens the projects dashboard', /case '#\/'[\s\S]*renderDashboard\(\)/.test(internalRouteBody)],
+  ['#/app opens the drawings dashboard', /case '#\/app'[\s\S]*renderDashboard\(\)/.test(internalRouteBody)],
+  ['root and page anchors show the static product page', /const isApp = h\.startsWith\('#\/'\) && h !== '#\/'/.test(internalRouteBody) && /landing\.hidden = isApp/.test(internalRouteBody)],
 ];
 for (const [label, condValue] of sigChecks) ok('app.js call site: ' + label, condValue);
 
@@ -482,13 +483,13 @@ const printBuilderBody = fnBody(appSrc, 'buildPrintDocument');
 ok('fnBody extracted buildPrintDocument()', !!printBuilderBody,
   printBuilderBody ? printBuilderBody.length + ' chars' : 'not found');
 const buildPrintPages = new Function('parts', printBuilderBody || 'return [];');
-const printPages = buildPrintPages({ sheetSvg: '<svg id="sheet"/>', frontSvg: '<svg id="front"/>', scheduleSvg: '<svg id="schedule"/>' });
+const printPages = buildPrintPages({ sheetSvg: '<svg id="sheet"/>', frontSvg: '<svg id="front"/>' });
 eq('print-document builder keeps the required A3 page order',
   printPages.map(page => page.title).join(' | '),
-  'Generated wiring sheet | Rack front-view wiring | Cable schedule & BOM');
+  'Generated wiring sheet | Rack front-view wiring');
 eq('print-document builder returns ordered title/svg page records',
   JSON.stringify(printPages.map(page => ({ title: typeof page.title, svg: page.svg }))),
-  JSON.stringify([{ title: 'string', svg: '<svg id="sheet"/>' }, { title: 'string', svg: '<svg id="front"/>' }, { title: 'string', svg: '<svg id="schedule"/>' }]));
+  JSON.stringify([{ title: 'string', svg: '<svg id="sheet"/>' }, { title: 'string', svg: '<svg id="front"/>' }]));
 
 const projectPrintBody = fnBody(appSrc, 'projectPrintPages');
 let printWiringOptions = null;
@@ -1491,9 +1492,9 @@ eq('serpentine numbers every required module', snakeM.unnumbered, 0);
 const raster = E.rackTraverse(RACK24, { major: 'col', colDir: 1, rowDir: 1, serpentine: false });
 const rasterM = E.numberMetrics(RACK24, N24, raster);
 ok('straight raster costs more cable than the serpentine',
-  rasterM.longHops > snakeM.longHops && rasterM.bomMm > snakeM.bomMm,
-  'raster ' + rasterM.longHops + ' long hops / ' + rasterM.bomMm + ' mm vs snake ' +
-  snakeM.longHops + ' / ' + snakeM.bomMm + ' mm');
+  rasterM.longHops > snakeM.longHops && rasterM.geomMm > snakeM.geomMm,
+  'raster ' + rasterM.longHops + ' long hops / ' + rasterM.geomMm + ' mm vs snake ' +
+  snakeM.longHops + ' / ' + snakeM.geomMm + ' mm');
 
 eq('hop classification: vertical neighbour', E.numberingHopKind(RACK24, '0,0', '0,1'), 'adjacent');
 eq('hop classification: horizontal neighbour', E.numberingHopKind(RACK24, '0,0', '1,0'), 'adjacent');
@@ -1503,16 +1504,16 @@ eq('hop classification: skipped slot', E.numberingHopKind(RACK24, '0,0', '0,3'),
 const plans = E.numberingPlans(RACK24, N24, { limit: 6 });
 ok('automatic mode offers several scored options', plans.length >= 4 && plans.length <= 6,
   plans.length + ' options');
-ok('options are ranked cheapest cable first',
+ok('options are ranked shortest physical span first',
   plans.every((p, i) => i === 0 ||
     (plans[i - 1].metrics.overflow <= p.metrics.overflow &&
-      plans[i - 1].metrics.bomMm <= p.metrics.bomMm)),
-  plans.map(p => p.metrics.bomMm).join(' <= '));
+      plans[i - 1].metrics.geomMm <= p.metrics.geomMm)),
+  plans.map(p => p.metrics.geomMm).join(' <= '));
 ok('every option only numbers module slots (devices skipped)',
   plans.every(p => p.order.every(id => E.rackIsModule(RACK24, id))), 'all slots are modules');
 ok('the best option is at least as good as the naive reading order',
-  plans[0].metrics.bomMm <= E.numberMetrics(RACK24, N24, E.rackModuleCells(RACK24)).bomMm,
-  plans[0].metrics.bomMm + ' mm');
+  plans[0].metrics.geomMm <= E.numberMetrics(RACK24, N24, E.rackModuleCells(RACK24)).geomMm,
+  plans[0].metrics.geomMm + ' mm');
 ok('every option numbers all 24 modules',
   plans.every(p => p.order.length === 24), '24 each');
 ok('option previews are SVG', plans.every(p =>
@@ -1659,12 +1660,11 @@ ok('an incomplete custom order falls back to the cheapest automatic plan',
   const flat = groups.reduce((a, g) => a.concat(g.order), []);
   ok('variable layout: every module lands in exactly one SSC chain',
     flat.length === 12 && new Set(flat).size === 12, `${groups.map(g => g.label + ':' + g.order.length).join(' ')}`);
-  ok('variable layout: each chain is scored with its own harness cable',
+  ok('variable layout: each chain is scored on its own physical span',
     groups.every(g => g.metrics.moduleCount === g.order.length && g.metrics.hops === g.order.length - 1),
-    groups.map(g => `${g.label} ${g.metrics.bomMm}mm`).join(' '));
-  const m2sFix = 2 * RULES2.m2sPowerLen + 2 * RULES2.m2sCommLen;
-  ok('variable layout: chain cable includes the four M2S harnesses',
-    groups.every(g => g.metrics.bomMm >= m2sFix), `fixed part ${m2sFix}mm`);
+    groups.map(g => `${g.label} ${g.metrics.geomMm}mm`).join(' '));
+  ok('variable layout: chain metrics no longer carry a BOM length',
+    groups.every(g => !('bomMm' in g.metrics)), 'no bomMm');
 
   /* chain quality: the optimised chain must beat the reading order on
      physical span (the whole point of the planner) */
@@ -1774,8 +1774,8 @@ ok('an incomplete custom order falls back to the cheapest automatic plan',
   /* layoutTotals reconciles with the chains */
   const tot = E.layoutTotals(groups);
   ok('variable layout: totals reconcile with the per-SSC metrics',
-    tot.sscs === 2 && tot.modules === 12 && tot.bomMm === groups.reduce((a, g) => a + g.metrics.bomMm, 0),
-    `bom=${tot.bomMm}mm`);
+    tot.sscs === 2 && tot.modules === 12 && tot.geomMm === groups.reduce((a, g) => a + g.metrics.geomMm, 0),
+    `span=${tot.geomMm}mm`);
 }
 
 /* ============================================================

@@ -54,7 +54,7 @@ that SSC controls; it is a variable, not a constant.
 all restricted to that SSC's own modules, each scored with
 `groupMetrics()` — the same approved-harness arithmetic as the single-string
 engine (R07–R10 jumpers, M2S harnesses, catalogue overflow). Best plan:
-no unreleased cable → cheapest BOM → fewest long jumpers → shortest span.
+no unreleased cable → shortest physical span → fewest long jumpers.
 
 ## Write-back (chains become strings)
 

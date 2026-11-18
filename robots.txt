@@ -1,0 +1,7 @@
+User-agent: *
+Allow: /
+Disallow: /tests/
+Disallow: /tests-manual/
+Disallow: /prototype-output/
+
+Sitemap: https://dsarangi7.github.io/WireFlow/sitemap.xml

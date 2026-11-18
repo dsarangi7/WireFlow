@@ -14,7 +14,7 @@ that every cable is the shortest buildable harness, and the app generates:
 - the netlist (power + comm chains, closed loops per SSC),
 - validations against company rules (R01–R12) and layout checks (L01–L06, V01–V05),
 - an A3-style wiring sheet, DXF/SCR export, Visio `.vsdx` export,
-- a cable schedule / BOM,
+- a cable schedule CSV,
 - a front-view mode that draws the actual wiring over the imported rack picture.
 
 Live demo (deployed via the WorkBuddy publisher):
@@ -63,7 +63,7 @@ GitHub: `https://github.com/dsarangi7/WireFlow` (branch `main`)
 | `vsdx-import.js` | OPC/zip reader + Visio 2012 XML: `vsdxOpen` → `doc.renderPage(i, {layersOn})` → `{svg, stats, foreigns, page}`. Handles masters (with instance-cell merge — see bug list), layers, text wrapping/un-flip, foreign images (EMF→PNG, blob carried on record), `vsdxLayerLabel` (Chinese→English layer names) | zip, emf |
 | `vsdx.js` | VSDX **export** of the generated sheet (shares engine globals) | engine, zip |
 | `aps.js` | Autodesk APS (DWG translate/view) — blocked by account country, DXF/PNG/SVG only | — |
-| `app.js` | All UI: login, project pages, tabs (Configuration, Numbering, Netlist, Exceptions, Validation, Schedule & BOM, Diagram, Drawings), Visio viewer, front-view card, variable-layout cards | everything |
+| `app.js` | All UI: login, project pages, tabs (Configuration, Numbering, Netlist, Exceptions, Validation, Diagram, Drawings), Visio viewer, front-view card, variable-layout cards | everything |
 
 `index.html` script order (keep it): config → engine → rack → numbering →
 frontview → zip → emf → vsdx-import → aps → app.

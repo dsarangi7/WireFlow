@@ -3,17 +3,303 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>AYK WireFlow — Wiring Diagram Automation for Marine Battery Systems</title>
+<title>WireFlow by AYK Energy — Battery Rack Wiring Diagrams from AutoCAD DXF</title>
+<meta name="description" content="WireFlow reads your AutoCAD rack drawing in true millimetres, finds every battery module, SSC, junction box, ACDP and MSM after you teach each part once, and applies AYK's wiring rules for marine battery systems.">
+<meta name="keywords" content="battery rack wiring diagram, marine battery system, AutoCAD DXF, wiring diagram automation, SSC, battery module numbering, cable routing, AYK Energy">
+<meta name="author" content="AYK Energy">
+<meta name="robots" content="index, follow">
+<meta name="theme-color" content="#080d1d">
+<link rel="canonical" href="https://dsarangi7.github.io/WireFlow/">
 <link rel="icon" href="assets/ayk-logo.ico">
+<link rel="icon" type="image/png" sizes="256x256" href="assets/ayk-energy-logo.png">
+<link rel="apple-touch-icon" href="assets/ayk-energy-logo.png">
+
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="WireFlow by AYK Energy">
+<meta property="og:title" content="WireFlow — Battery rack wiring, drawn from your CAD file">
+<meta property="og:description" content="Import the AutoCAD rack drawing, teach each part once, and every module, SSC and terminal is found automatically. Built on AYK's wiring rules for marine battery systems.">
+<meta property="og:url" content="https://dsarangi7.github.io/WireFlow/">
+<meta property="og:image" content="https://dsarangi7.github.io/WireFlow/assets/og-wireflow.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="A real 60-module battery rack with every module, SSC, junction box, ACDP and MSM recognised by WireFlow">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="WireFlow — Battery rack wiring, drawn from your CAD file">
+<meta name="twitter:description" content="Teach a part once. Every copy is found. Wiring rules built in.">
+<meta name="twitter:image" content="https://dsarangi7.github.io/WireFlow/assets/og-wireflow.png">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="site.css">
+
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "WireFlow",
+  "alternateName": "AYK WireFlow",
+  "applicationCategory": "BusinessApplication",
+  "applicationSubCategory": "Electrical wiring diagram automation",
+  "operatingSystem": "Web browser (Chrome, Edge)",
+  "url": "https://dsarangi7.github.io/WireFlow/",
+  "image": "https://dsarangi7.github.io/WireFlow/assets/og-wireflow.png",
+  "description": "Reads AutoCAD rack drawings (DXF) in true millimetres, recognises battery modules, SSCs, junction boxes, ACDPs and MSMs after one example of each, and applies AYK wiring and numbering rules for marine battery systems.",
+  "publisher": { "@type": "Organization", "name": "AYK Energy", "logo": "https://dsarangi7.github.io/WireFlow/assets/ayk-energy-logo.png" },
+  "featureList": [
+    "Native AutoCAD DXF import at true millimetre scale",
+    "Teach a part once and find every identical copy",
+    "Module terminals placed on every module from one example",
+    "SSC1 and ACDP1 numbered from the MSM",
+    "Engineer confirms every SSC, ACDP and MSM label",
+    "Module count per SSC checked against the drawing",
+    "Runs in the browser; drawings stay on the device"
+  ]
+}
+</script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    { "@type": "Question", "name": "Which drawing formats does WireFlow read?",
+      "acceptedAnswer": { "@type": "Answer", "text": "ASCII DXF exported from AutoCAD. DWG files are converted to DXF first with the included script (it uses your installed AutoCAD) or with AutoCAD Save As DXF." } },
+    { "@type": "Question", "name": "Do my drawings leave my computer?",
+      "acceptedAnswer": { "@type": "Answer", "text": "No. The drawing is read and stored in your browser on your device. There is no account and no upload." } },
+    { "@type": "Question", "name": "Our drawings are flat exports with no blocks or text. Does that work?",
+      "acceptedAnswer": { "@type": "Answer", "text": "Yes. You box one example of each part and click its terminals once; WireFlow finds every identical copy by its exact geometry." } },
+    { "@type": "Question", "name": "Who decides the SSC, ACDP and MSM names?",
+      "acceptedAnswer": { "@type": "Answer", "text": "WireFlow proposes them (SSC1 and ACDP1 are the ones closest to the MSM) and the engineer confirms or renames every label and enters the number of modules per SSC." } },
+    { "@type": "Question", "name": "Does WireFlow draw the cables already?",
+      "acceptedAnswer": { "@type": "Answer", "text": "Not on DXF drawings yet. Recognition, numbering rules and confirmations are available now; crossing-free power routing and AutoCAD output are the next release." } }
+  ]
+}
+</script>
 </head>
 <body>
-<div id="app"></div>
+<a class="skip-link" href="#main">Skip to content</a>
+
+<!-- Public product page: static so search engines and link previews can read it. -->
+<div id="landing" class="site">
+  <header class="site-header">
+    <div class="site-wrap site-nav">
+      <a class="brand" href="#top" aria-label="WireFlow by AYK Energy, home">
+        <span class="brand-logo"><img src="assets/ayk-energy-logo.png" width="30" height="30" alt=""></span>
+        <span>WireFlow</span><small>by AYK Energy</small>
+      </a>
+      <nav class="site-links" aria-label="Main">
+        <a href="#features">Features</a>
+        <a href="#how">How it works</a>
+        <a href="#rules">Engineering rules</a>
+        <a href="#roadmap">Roadmap</a>
+        <a href="#faq">FAQ</a>
+      </nav>
+      <a class="btn-site btn-site-primary" href="#/app">Open WireFlow</a>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="hero" id="top">
+      <div class="site-wrap hero-grid">
+        <div class="hero-copy">
+          <p class="maker-line"><span class="brand-logo brand-logo-lg"><img src="assets/ayk-energy-logo.png" width="44" height="44" alt="AYK Energy logo"></span><span><b>An AYK Energy product</b><small>For marine battery rack engineers</small></span></p>
+          <h1>Battery rack wiring, drawn from your AutoCAD file.</h1>
+          <p class="lead">WireFlow reads the rack drawing you already have, in true millimetres. Teach it one battery module, one SSC and one junction box &mdash; it finds every other copy, places every terminal and applies AYK's wiring and numbering rules. Your engineers check and confirm instead of drawing by hand.</p>
+          <div class="hero-cta">
+            <a class="btn-site btn-site-primary btn-site-lg" href="#/app">Open WireFlow</a>
+            <a class="btn-site btn-site-ghost btn-site-lg" href="#how">See how it works</a>
+          </div>
+          <ul class="hero-trust">
+            <li>No account</li><li>Drawings stay on your device</li><li>Works with flat SolidWorks/AutoCAD exports</li>
+          </ul>
+        </div>
+        <figure class="hero-shot">
+          <div class="window">
+            <div class="window-bar"><span></span><span></span><span></span><em>rack-111.dxf &middot; 5,143.6 &times; 1,906.0 mm</em></div>
+            <img src="assets/rack-111-recognised.svg" width="1200" height="460" alt="A real AYK rack drawing in WireFlow: 60 battery modules outlined in blue with comm and power terminals, 5 SSCs in orange, 5 junction boxes in violet, ACDP1 and ACDP2 in yellow and MSM1 in pink" loading="eager">
+          </div>
+          <figcaption>A real 60-module rack drawing after teaching one example of each part.</figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <section class="proof" aria-label="Measured on a real rack drawing">
+      <div class="site-wrap proof-grid">
+        <div><strong>97,770</strong><span>CAD entities read, none skipped</span></div>
+        <div><strong>0.2 s</strong><span>to find 60 modules, 5 SSCs and 5 junction boxes</span></div>
+        <div><strong>4 clicks</strong><span>place all 240 module terminals</span></div>
+        <div><strong>0.01 mm</strong><span>extents match AutoCAD's own header</span></div>
+      </div>
+      <p class="site-wrap proof-note">Measured on AYK rack drawing 111 (AutoCAD 2000 DWG converted to DXF).</p>
+    </section>
+
+    <section class="maker" aria-labelledby="maker-title">
+      <div class="site-wrap maker-grid">
+        <div class="maker-logo">
+          <img src="assets/ayk-energy-logo.png" width="256" height="256" alt="AYK Energy logo">
+          <span>AYK ENERGY</span>
+        </div>
+        <div>
+          <p class="eyebrow">Engineered by AYK Energy</p>
+          <h2 id="maker-title">Built by the team that builds the racks.</h2>
+          <p class="section-lead">WireFlow is AYK Energy's own engineering tool. It is shaped around AYK battery modules, SSCs, junction boxes and the wiring rules our engineers sign off &mdash; and it asks the engineer whenever a rule is not yet defined.</p>
+          <ul class="maker-points">
+            <li>AYK module catalogue and terminal conventions built in</li>
+            <li>Rules agreed with AYK engineering, never guessed</li>
+            <li>Every label and module count confirmed by an engineer</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="features" aria-labelledby="features-title">
+      <div class="site-wrap">
+        <p class="eyebrow">Features</p>
+        <h2 id="features-title">Built around how rack engineers actually work</h2>
+        <p class="section-lead">Engineers draw rack wiring in AutoCAD, module by module. WireFlow keeps the drawing and the rules, and takes away the repetitive part.</p>
+        <div class="feature-grid">
+          <article class="feature">
+            <div class="feature-icon" aria-hidden="true">mm</div>
+            <h3>Native AutoCAD, true scale</h3>
+            <p>Opens the DXF exactly as AutoCAD sees it &mdash; lines, arcs, splines, circles, blocks &mdash; in millimetres. No pictures, no calibration clicks.</p>
+          </article>
+          <article class="feature">
+            <div class="feature-icon" aria-hidden="true">1&rarr;60</div>
+            <h3>Teach once, find every copy</h3>
+            <p>Box one module and click its four terminals. WireFlow matches the exact geometry and finds every identical module, SSC, junction box, ACDP and MSM.</p>
+          </article>
+          <article class="feature">
+            <div class="feature-icon" aria-hidden="true">#1</div>
+            <h3>Numbering by the rules</h3>
+            <p>SSC1 and ACDP1 are proposed as the ones closest to the MSM, for the shortest cables. Modules per SSC are checked against the drawing.</p>
+          </article>
+          <article class="feature">
+            <div class="feature-icon" aria-hidden="true">&#10003;</div>
+            <h3>The engineer stays in charge</h3>
+            <p>Every SSC, ACDP and MSM name is confirmed by an engineer. Counts that do not add up, duplicate names and rule breaks are flagged before anything is saved.</p>
+          </article>
+          <article class="feature">
+            <div class="feature-icon" aria-hidden="true">&#9851;</div>
+            <h3>Reuse across racks</h3>
+            <p>Parts taught once are saved on the device. The next rack with the same modules is recognised as soon as it opens.</p>
+          </article>
+          <article class="feature">
+            <div class="feature-icon" aria-hidden="true">&#128274;</div>
+            <h3>Private by design</h3>
+            <p>Runs in the browser. Drawings and parts never leave the engineer's computer, and there is no account to manage.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="section section-alt" id="how" aria-labelledby="how-title">
+      <div class="site-wrap">
+        <p class="eyebrow">How it works</p>
+        <h2 id="how-title">From DWG to a recognised rack in four steps</h2>
+        <ol class="steps">
+          <li><span>1</span><h3>Import the drawing</h3><p>Convert the DWG with the included script (it uses your installed AutoCAD) and drop the DXF into WireFlow.</p></li>
+          <li><span>2</span><h3>Teach each part once</h3><p>Box one battery module and click its terminals; box one SSC with its connector strip, one junction box, ACDP and MSM.</p></li>
+          <li><span>3</span><h3>Confirm the rack</h3><p>Check the proposed SSC, ACDP and MSM names and enter how many modules each SSC controls.</p></li>
+          <li><span>4</span><h3>Wire it <em class="tag-next">next release</em></h3><p>Module numbering without power crossings, cable routing and output back to AutoCAD on its own layers.</p></li>
+        </ol>
+      </div>
+    </section>
+
+    <section class="section" id="rules" aria-labelledby="rules-title">
+      <div class="site-wrap rules-grid">
+        <div>
+          <p class="eyebrow">Engineering rules</p>
+          <h2 id="rules-title">AYK's wiring rules, not guesses</h2>
+          <p class="section-lead">WireFlow follows rules agreed with AYK engineering. Where a rule is not defined yet, it asks instead of inventing one.</p>
+        </div>
+        <ul class="rules-list">
+          <li><b>Power never crosses power.</b> Power and communication cables may cross where needed, such as at the bottom of the rack.</li>
+          <li><b>Series power sequence.</b> SSC+ to the highest module +, each module &minus; to the next lower module +, module 1 &minus; to SSC&minus;.</li>
+          <li><b>SSC1 and ACDP1 sit closest to the MSM</b>, so their cables are the shortest.</li>
+          <li><b>ACDP and MSM are wired at the back.</b> They are labelled on the drawing, never wired on the front view.</li>
+          <li><b>Module terminals:</b> communication pair on the left (S, N), power pair on the right (&minus;, +).</li>
+          <li><b>Engineer confirmation</b> of every name and every module count before wiring.</li>
+        </ul>
+      </div>
+    </section>
+
+    <section class="section section-alt" id="roadmap" aria-labelledby="roadmap-title">
+      <div class="site-wrap">
+        <p class="eyebrow">Roadmap</p>
+        <h2 id="roadmap-title">What works today, and what is next</h2>
+        <div class="roadmap">
+          <div class="road-col">
+            <h3><span class="dot dot-ok"></span>Available now</h3>
+            <ul>
+              <li>AutoCAD DXF import in true millimetres, DWG conversion script</li>
+              <li>Teach-once recognition of modules, SSCs, junction boxes, ACDPs and MSMs</li>
+              <li>Module and SSC connector terminals on every copy</li>
+              <li>SSC / ACDP / MSM numbering rules and engineer confirmation</li>
+              <li>Module count per SSC, checked against the drawing</li>
+              <li>Saved parts reused on the next rack; parts export (JSON)</li>
+            </ul>
+          </div>
+          <div class="road-col">
+            <h3><span class="dot dot-next"></span>Next</h3>
+            <ul>
+              <li>Module numbering per SSC with no power crossings</li>
+              <li>Cable routing on the real rack geometry</li>
+              <li>Output to AutoCAD on dedicated wiring layers</li>
+              <li>Visio output</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="faq" aria-labelledby="faq-title">
+      <div class="site-wrap faq-wrap">
+        <p class="eyebrow">FAQ</p>
+        <h2 id="faq-title">Questions engineers ask</h2>
+        <details><summary>Which drawing formats does WireFlow read?</summary><p>ASCII DXF exported from AutoCAD. DWG files are converted to DXF first with the included script (it uses your installed AutoCAD) or with AutoCAD Save As DXF.</p></details>
+        <details><summary>Do my drawings leave my computer?</summary><p>No. The drawing is read and stored in your browser on your device. There is no account and no upload.</p></details>
+        <details><summary>Our drawings are flat exports with no blocks or text. Does that work?</summary><p>Yes. You box one example of each part and click its terminals once; WireFlow finds every identical copy by its exact geometry.</p></details>
+        <details><summary>Who decides the SSC, ACDP and MSM names?</summary><p>WireFlow proposes them (SSC1 and ACDP1 are the ones closest to the MSM) and the engineer confirms or renames every label and enters the number of modules per SSC.</p></details>
+        <details><summary>Does WireFlow draw the cables already?</summary><p>Not on DXF drawings yet. Recognition, numbering rules and confirmations are available now; crossing-free power routing and AutoCAD output are the next release.</p></details>
+      </div>
+    </section>
+
+    <section class="cta-band" aria-labelledby="cta-title">
+      <div class="site-wrap cta-inner">
+        <h2 id="cta-title">Open your first rack drawing</h2>
+        <p>Drop a DXF and teach one module. It takes about a minute.</p>
+        <a class="btn-site btn-site-primary btn-site-lg" href="#/app">Open WireFlow</a>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="site-wrap footer-grid">
+      <div>
+        <a class="brand" href="#top"><span class="brand-logo brand-logo-lg"><img src="assets/ayk-energy-logo.png" width="44" height="44" alt="AYK Energy logo"></span><span>WireFlow</span><small>by AYK Energy</small></a>
+        <p>Wiring diagram automation for marine battery systems.</p>
+      </div>
+      <nav aria-label="Footer">
+        <a href="#features">Features</a>
+        <a href="#how">How it works</a>
+        <a href="#rules">Engineering rules</a>
+        <a href="#faq">FAQ</a>
+        <a href="#/app">Open the app</a>
+      </nav>
+      <p class="footer-small">&copy; 2026 AYK Energy. Internal engineering tool.</p>
+    </div>
+  </footer>
+</div>
+
+<!-- The application (rendered by js/app.js on #/app, #/cad/…, #/project/…). -->
+<div id="app" hidden></div>
 <div id="toast-wrap"></div>
 <script src="js/engine.js"></script>
 <script src="js/zip.js"></script>
 <script src="js/vsdx.js"></script>
 <script src="js/rack.js"></script>
+<script src="js/cad.js"></script>
 <script src="js/numbering.js"></script>
 <script src="js/sscplan.js"></script>
 <script src="js/frontview.js"></script>

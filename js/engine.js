@@ -251,7 +251,7 @@ const VALIDATION_SPEC = [
   { id: 'V07', label: 'Selected harness connectors and orientations match both endpoints' },
   { id: 'V08', label: 'Selected harness length is not shorter than the approved routed requirement' },
   { id: 'V09', label: 'Power and communication routes comply with channel and separation rules' },
-  { id: 'V10', label: 'Every drawn cable appears once in the cable schedule and BOM' },
+  { id: 'V10', label: 'Every drawn cable appears once in the cable schedule' },
   { id: 'V11', label: 'Cable quantities reconcile with the generated netlists' },
   { id: 'V12', label: 'All exceptions carry an engineering approval reference' },
 ];
@@ -377,7 +377,7 @@ function runValidations(project, conns) {
   return out;
 }
 
-/* ---------- cable schedule / BOM ---------- */
+/* ---------- cable schedule ---------- */
 function buildSchedule(conns) {
   const map = new Map();
   for (const c of conns) {

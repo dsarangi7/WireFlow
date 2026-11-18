@@ -1,7 +1,7 @@
 # AYK WireFlow — Wiring Diagram Automation for Marine Battery Systems
 
 AYK WireFlow turns a marine battery rack configuration into complete power & communication
-wiring diagrams, cable schedules and BOMs — governed by approved engineering rules and
+wiring diagrams, cable schedules — governed by approved engineering rules and
 exported as native **Visio (.vsdx)**, **AutoCAD DXF/.scr**, **SVG** and **CSV**.
 
 Built as an internal AYK Energy browser tool with device-local project storage and a
@@ -21,6 +21,16 @@ Live site: https://dsarangi7.github.io/WireFlow/
 - **Marked cable trays:** Mark tray boundaries once in Align the drawing.
   Generation uses the saved network for long runs and blocks invalid off-tray
   output. See [marking and routing limits](docs/marked-cable-trays.md).
+
+- **Product page and app home:** a static, search-engine-ready product page at the
+  site root and a Drawings home at `#/app`. See [site and SEO](docs/site-and-seo.md).
+
+- **Native AutoCAD drawings (Phase 1):** Import the rack as DXF (convert DWG
+  with `tools/dwg-to-dxf.ps1`) and view it at true millimetre scale with
+  measuring. Teach each part once (box one module, click its terminals) and
+  every copy is found automatically; saved parts are reused on other racks.
+  Numbering and wiring on DXF are next. See
+  [native CAD scope](docs/native-cad-workflow-scope.md).
 
 - **SVG-first entry (early version):** Import an SVG without entering project
   metadata, then continue in the existing wiring workspace. See
@@ -86,7 +96,7 @@ to mark component and port positions. See [ordered marking](docs/ordered-marking
   destination + allowance), power deduction and rounding rules
 - **Export**: `.vsdx` (editable Visio: native 1D wires, AYK logo in the title block,
   12 layers, auto-built Notes page), `.dxf` (R12, opens in AutoCAD),
-  `.scr` (AutoCAD script), CSV cable schedule/BOM, and a machine-readable
+  `.scr` (AutoCAD script), CSV cable schedule, and a machine-readable
   **JSON layout spec** for downstream automation tools
 - **Front-view wiring on the real rack** — the embedded AutoCAD rack from the
   Visio file becomes the wiring base: two clicks calibrate the module grid on

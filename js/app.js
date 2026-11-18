@@ -1,7 +1,8 @@
 /* ============================================================
  * WireFlow — application shell
  * Hash router: #/ and #/app dashboard ·
- * #/project/<id> workspace · #/integrations APS settings
+ * #/project/<id> workspace · #/cad/<id> CAD rack view ·
+ * #/integrations APS settings
  * ============================================================ */
 
 const app = document.getElementById('app');
@@ -97,7 +98,6 @@ function buildPrintDocument(parts) {
   return [
     { title: 'Generated wiring sheet', svg: p.sheetSvg || '' },
     { title: 'Rack front-view wiring', svg: p.frontSvg || '' },
-    { title: 'Cable schedule & BOM', svg: p.scheduleSvg || '' },
   ];
 }
 
@@ -253,11 +253,24 @@ async function importRackDrawing(file, project, ctx, opts) {
 /* ---------------- router ---------------- */
 window.addEventListener('hashchange', route);
 
+const SITE_TITLE = document.title;
 async function route() {
-  const h = location.hash || '#/';
+  const h = location.hash || '';
+  /* The public product page lives in index.html (static, crawlable). Only
+     "#/<something>" routes belong to the app; "#features" etc. are page anchors. */
+  const isApp = h.startsWith('#/') && h !== '#/';
+  const landing = document.getElementById('landing');
+  if (landing) landing.hidden = isApp;
+  app.hidden = !isApp;
+  if (!isApp) {
+    document.title = SITE_TITLE;
+    if (h === '' || h === '#/') window.scrollTo(0, 0);
+    return;
+  }
+  document.title = 'WireFlow · AYK Energy';
   if (h.startsWith('#/project/')) { renderProjectPage(+h.split('/')[2]); return; }
+  if (h.startsWith('#/cad/')) { renderCadPage(+h.split('/')[2]); return; }
   switch (h) {
-    case '#/':
     case '#/app': renderDashboard(); return;
     case '#/login': location.replace('#/app'); return;
     case '#/integrations': renderIntegrations(); return;
@@ -269,16 +282,19 @@ async function route() {
 function shell(content, active) {
   app.innerHTML = `
   <div class="shell">
-    <aside class="side">
-      <a class="logo side-logo" href="#/"><svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M3 7h6l2-4 2 12 2-4h6" stroke="#f97316" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/><rect x="2" y="2" width="20" height="20" rx="5" stroke="#1e3a5f" stroke-width="1.6"/></svg> AYK WireFlow</a>
-      <nav class="side-nav">
-        <a href="#/app" class="${active === 'dash' ? 'on' : ''}">◫ Projects</a>
-      </nav>
-      <div class="side-foot">
-        <div class="side-user">AYK Energy · Internal</div>
-        <div class="muted small">Projects stay on this device.</div>
+    <header class="topbar">
+      <div class="topbar-in">
+        <a class="tb-brand" href="#/app" aria-label="WireFlow drawings">
+          <span class="brand-logo"><img src="assets/ayk-energy-logo.png" width="28" height="28" alt=""></span>
+          <span>WireFlow</span><small>by AYK Energy</small>
+        </a>
+        <nav class="tb-nav" aria-label="App">
+          <a href="#/app" class="${active === 'dash' ? 'on' : ''}">Drawings</a>
+          <a href="#/">Product</a>
+        </nav>
+        <span class="tb-note"><span class="tb-dot" aria-hidden="true"></span>Drawings stay on this device</span>
       </div>
-    </aside>
+    </header>
     <main class="main">${content}</main>
   </div>`;
 }
@@ -290,43 +306,78 @@ async function renderDashboard() {
   try { projects = await localProjects(); }
   catch (error) { shell(`<div class="empty">Could not open local projects: ${esc(error.message)}</div>`, 'dash'); return; }
 
+  const cadProjects = projects.filter(p => p.underlay_kind === 'cad');
+  const legacy = projects.filter(p => p.underlay_kind !== 'cad');
+  const when = p => new Date(p.updated_at || p.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+  const cadCard = p => {
+    const comps = (p.config && p.config.cad && p.config.cad.components) || [];
+    const n = k => comps.filter(c => c.kind === k).length;
+    const named = comps.filter(c => c.kind === 'ssc' || c.kind === 'acdp' || c.kind === 'msm');
+    const status = !comps.length ? ['Parts not taught yet', 'idle']
+      : named.length && named.every(c => c.labelConfirmed) ? ['Rack confirmed', 'ok'] : ['Needs confirmation', 'warn'];
+    const stats = [['modules', n('module')], ['SSCs', n('ssc')], ['JBs', n('jb')], ['ACDPs', n('acdp')], ['MSMs', n('msm')]].filter(x => x[1]);
+    return `<a class="d-card" href="#/cad/${p.id}">
+      <div class="d-card-top"><span class="d-file" aria-hidden="true">DXF</span>
+        <div class="d-card-title"><b>${esc(p.name)}</b><small>Updated ${esc(when(p))}</small></div></div>
+      <div class="d-stats">${stats.length ? stats.map(x => `<span><b>${x[1]}</b> ${x[0]}</span>`).join('') : '<span class="muted">Open the drawing and teach one module to start.</span>'}</div>
+      <div class="d-status d-status-${status[1]}"><span class="d-dot"></span>${status[0]}</div>
+    </a>`;
+  };
   shell(`
-    <section class="studio-import" aria-labelledby="studio-import-title">
-      <img class="studio-logo" src="assets/ayk-logo.ico" alt="AYK Energy">
-      <p class="studio-kicker">AYK · WIRING STUDIO</p>
-      <h1 id="studio-import-title">Import your SVG drawing</h1>
-      <p>Select the rack layout or wiring drawing, or drop an SVG here.</p>
-      <button class="btn btn-primary" id="studio-import-button">Import SVG</button>
-      <button class="btn btn-ghost" id="studio-open-session">Open saved session</button>
-      <input id="studio-import-file" type="file" accept=".svg,image/svg+xml" hidden>
-      <input id="studio-session-file" type="file" accept=".json,application/json" hidden>
-      <p id="studio-import-status" role="status"></p>
-    </section>
-    <details class="studio-existing"><summary>Existing projects</summary>
-    <div class="page-head">
-      <div><h1>Projects</h1><p class="muted">Rack configurations, netlists and drawing packages.</p></div>
-      <button class="btn btn-primary" id="btn-new">+ New project</button>
+    <div class="dash">
+      <div class="dash-head">
+        <div>
+          <h1>Rack drawings</h1>
+          <p>Import an AutoCAD rack drawing, teach each part once and confirm the rack.</p>
+        </div>
+        <div class="dash-actions">
+          <button class="btn-site btn-site-ghost" id="studio-open-session">Open saved session</button>
+          <button class="btn-site btn-site-primary" id="studio-import-button">Import DXF</button>
+        </div>
+      </div>
+
+      <section class="drop" id="dash-drop" aria-labelledby="drop-title">
+        <div class="drop-icon" aria-hidden="true">
+          <svg width="40" height="40" viewBox="0 0 24 24" fill="none"><path d="M12 15V4m0 0L8 8m4-4 4 4" stroke="#00a8ff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 14v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4" stroke="#9aabc6" stroke-width="1.8" stroke-linecap="round"/></svg>
+        </div>
+        <h2 id="drop-title">Drop an AutoCAD rack drawing here</h2>
+        <p>ASCII DXF in millimetres &middot; <button class="link-btn" id="drop-browse">browse files</button></p>
+        <p class="drop-hint">Have a DWG? Convert it with <code>tools/dwg-to-dxf.ps1</code> (uses your AutoCAD) or AutoCAD <i>Save As &rarr; DXF</i>.</p>
+        <p id="studio-import-status" class="drop-status" role="status"></p>
+        <input id="studio-import-file" type="file" accept=".dxf,.svg,image/svg+xml" hidden>
+        <input id="studio-session-file" type="file" accept=".json,application/json" hidden>
+      </section>
+
+      <ol class="dash-steps" aria-label="Workflow">
+        <li><b>1</b><span>Import DXF</span></li>
+        <li><b>2</b><span>Teach each part once</span></li>
+        <li><b>3</b><span>Confirm SSCs, ACDPs, MSM and modules per SSC</span></li>
+        <li class="next"><b>4</b><span>Wiring <em>next release</em></span></li>
+      </ol>
+
+      <section class="dash-list" aria-labelledby="list-title">
+        <div class="dash-list-head"><h2 id="list-title">Your drawings</h2><span>${cadProjects.length} drawing${cadProjects.length === 1 ? '' : 's'}</span></div>
+        ${cadProjects.length ? `<div class="d-grid">${cadProjects.map(cadCard).join('')}</div>`
+          : `<div class="d-empty"><b>No drawings yet</b><span>Import a DXF above to start. Parts you teach are reused on the next rack.</span></div>`}
+      </section>
+
+      <details class="dash-legacy">
+        <summary>Legacy picture projects (${legacy.length})</summary>
+        <p class="muted small">The earlier picture-based workspace. New racks should use DXF drawings above.</p>
+        <div class="dash-legacy-actions"><button class="btn-site btn-site-ghost" id="btn-new">New legacy project</button></div>
+        ${legacy.length ? `<div class="d-grid">${legacy.map(p => `
+          <a class="d-card" href="#/project/${p.id}">
+            <div class="d-card-top"><span class="d-file d-file-old" aria-hidden="true">IMG</span>
+              <div class="d-card-title"><b>${esc(p.name)}</b><small>Updated ${esc(when(p))}</small></div></div>
+            <div class="d-stats"><span>${esc(p.status || 'draft')}</span>${p.drawing_no ? `<span>${esc(p.drawing_no)} rev ${esc(p.revision || '')}</span>` : ''}</div>
+          </a>`).join('')}</div>` : ''}
+      </details>
     </div>
-    ${projects.length === 0 ? `
-      <div class="empty">
-        <h3>No projects yet</h3>
-        <p>Create your first rack configuration — or start from the approved template (2 strings × 24 modules).</p>
-        <button class="btn btn-primary" id="btn-new2">+ New project</button>
-      </div>` : `
-      <div class="proj-grid">
-        ${projects.map(p => `
-        <a class="proj-card" href="#/project/${p.id}">
-          <div class="proj-top"><span class="proj-name">${esc(p.name)}</span><span class="chip ${p.status === 'released' ? 'chip-ok' : ''}">${esc(p.status)}</span></div>
-          <div class="proj-meta">${esc(p.vessel || '—')} · ${esc(p.product_family)}</div>
-          <div class="proj-meta muted">${esc(p.drawing_no || 'no drawing no.')} rev ${esc(p.revision)} · ${esc(String(p.modules_per_string))} modules/string</div>
-          <div class="proj-foot">Updated ${new Date(p.updated_at || p.created_at).toLocaleDateString()}</div>
-        </a>`).join('')}
-      </div>`}
-    </details>
   `, 'dash');
   const studioFile = document.getElementById('studio-import-file');
   const studioStatus = document.getElementById('studio-import-status');
   document.getElementById('studio-import-button').onclick = () => studioFile.click();
+  document.getElementById('drop-browse').onclick = () => studioFile.click();
   const sessionFile = document.getElementById('studio-session-file');
   document.getElementById('studio-open-session').onclick = () => sessionFile.click();
   sessionFile.onchange = async () => {
@@ -353,7 +404,9 @@ async function renderDashboard() {
     if (!file) return;
     studioStatus.textContent = 'Checking drawing…';
     try {
-      if (!/\.svg$/i.test(file.name)) throw new Error('Choose an SVG drawing.');
+      if (/\.dwg$/i.test(file.name)) throw new Error('DWG cannot be read in the browser. Convert it with tools/dwg-to-dxf.ps1 or AutoCAD Save As DXF, then import the .dxf.');
+      if (/\.dxf$/i.test(file.name)) { await openStudioCad(file); return; }
+      if (!/\.svg$/i.test(file.name)) throw new Error('Choose a DXF or SVG drawing.');
       const svg = validateStudioSvg(await file.text());
       const now = new Date().toISOString();
       const project = { name: file.name.replace(/\.svg$/i, '') || 'Drawing', vessel: '', drawing_no: '',
@@ -366,20 +419,35 @@ async function renderDashboard() {
       sessionStorage.setItem('wireflow-open-workspace', String(project.id));
       location.hash = `#/project/${project.id}`;
     } catch (error) {
-      console.error('SVG import failed', error);
-      studioStatus.textContent = error.message || 'Could not import this SVG drawing.';
+      console.error('Drawing import failed', error);
+      studioStatus.textContent = error.message || 'Could not import this drawing.';
     } finally { studioFile.value = ''; }
   }
+  async function openStudioCad(file) {
+    studioStatus.textContent = 'Reading DXF…';
+    const text = await file.text();
+    const model = cadParseDxf(text);             /* throws a readable error for DWG / binary / empty */
+    if (!model.entities.length) throw new Error('The DXF has no model-space geometry.');
+    const now = new Date().toISOString();
+    const project = { name: file.name.replace(/\.dxf$/i, '') || 'Rack', vessel: '', drawing_no: '',
+      product_family: '', modules_per_string: 0, config: { rules: { ...DEFAULT_RULES }, exceptions: [], spans: [] },
+      status: 'draft', revision: 'A', created_at: now, updated_at: now, underlay_kind: 'cad', cad_file: file.name };
+    project.id = await localAddProject(project);
+    await localPutUnderlay(project.id, new Blob([text], { type: 'application/dxf' }), 'cad');
+    project.underlay_url = `local-underlay:${project.id}`;
+    await localPutProject(project);
+    location.hash = `#/cad/${project.id}`;
+  }
   studioFile.onchange = () => openStudioDrawing(studioFile.files[0]);
-  const dropArea = document.querySelector('.studio-import');
-  dropArea.ondragover = event => { event.preventDefault(); dropArea.classList.add('studio-dragover'); };
-  dropArea.ondragleave = () => dropArea.classList.remove('studio-dragover');
+  const dropArea = document.getElementById('dash-drop');
+  dropArea.ondragover = event => { event.preventDefault(); dropArea.classList.add('drop-over'); };
+  dropArea.ondragleave = () => dropArea.classList.remove('drop-over');
   dropArea.ondrop = event => {
-    event.preventDefault(); dropArea.classList.remove('studio-dragover');
-    if (event.dataTransfer.files.length !== 1) { studioStatus.textContent = 'Drop one SVG drawing at a time.'; return; }
+    event.preventDefault(); dropArea.classList.remove('drop-over');
+    if (event.dataTransfer.files.length !== 1) { studioStatus.textContent = 'Drop one drawing at a time.'; return; }
     openStudioDrawing(event.dataTransfer.files[0]);
   };
-  (document.getElementById('btn-new') || document.getElementById('btn-new2'))?.addEventListener('click', () => showNewProjectModal());
+  document.getElementById('btn-new')?.addEventListener('click', () => showNewProjectModal());
 }
 
 function validateStudioSession(saved) {
@@ -463,6 +531,651 @@ function showNewProjectModal() {
   };
 }
 
+/* ================= CAD RACK VIEW =================
+ * Native CAD workflow. Phase 1: the imported DXF is shown at its true
+ * millimetre geometry (no fitting, no calibration). Phase 2: the engineer
+ * teaches each part once (box one example, click its terminals) and every
+ * identical copy in the drawing is found automatically. */
+
+const CAD_KINDS = [
+  { id: 'module', label: 'Battery module', color: '#38bdf8' },
+  /* SSCs are wired AND named: SSC1 is the SSC closest to the MSM; the engineer
+     confirms each name and enters how many modules each SSC controls. */
+  { id: 'ssc', label: 'SSC', color: '#f97316', named: true, prefix: 'SSC' },
+  { id: 'jb', label: 'Junction box', color: '#a78bfa' },
+  /* ACDP and MSM are wired at the back of the rack: no terminals, no front
+     wiring. They only carry a label (ACDP1, MSM1 ...) that the engineer confirms. */
+  { id: 'acdp', label: 'ACDP', color: '#facc15', wired: false, prefix: 'ACDP' },
+  { id: 'msm', label: 'MSM', color: '#f472b6', wired: false, prefix: 'MSM' },
+];
+/** Parts whose names the engineer confirms (SSC, ACDP, MSM). */
+function cadNamed(kind) { const k = cadKind(kind); return k.wired === false || !!k.named; }
+/** Stable key of a recognised component on one drawing (kind + position). */
+function cadCompKey(c) { return c.kind + '@' + Math.round(c.x0) + ',' + Math.round(c.y0); }
+/** Label shown for a component: the engineer's label, else the proposal. */
+function cadCompLabel(c, labels) {
+  const k = cadKind(c.kind);
+  if (!cadNamed(c.kind)) return c.id;
+  const saved = labels && labels[cadCompKey(c)];
+  return saved && saved.label ? saved.label : k.prefix + (c.proposal || c.id.split('-').pop());
+}
+/* AYK convention: communication pair on the left of the module face (S then N),
+   power pair on the right (− then +). */
+const CAD_MODULE_TERMINALS = ['comm-S', 'comm-N', 'power-', 'power+'];
+const CAD_LIBRARY_KEY = 'wireflow-cad-part-library-v1';
+
+function cadKind(id) { return CAD_KINDS.find(k => k.id === id) || { id: id, label: id, color: '#94a3b8' }; }
+function cadTerminalColor(role) { return /^power/.test(role) ? '#ef4444' : /^comm/.test(role) ? '#22c55e' : '#22d3ee'; }
+
+/** Device-local library of taught parts, reused on other racks. */
+function cadLibraryLoad() {
+  try { const v = JSON.parse(localStorage.getItem(CAD_LIBRARY_KEY) || '[]'); return Array.isArray(v) ? v : []; } catch (e) { return []; }
+}
+function cadLibrarySave(list) {
+  try { localStorage.setItem(CAD_LIBRARY_KEY, JSON.stringify(list)); return true; } catch (e) { return false; }
+}
+/** Identity of a taught part, shared by its drawing copy and library copy. */
+function cadSigId(sig) {
+  return sig.id || [sig.kind, sig.w, sig.h, sig.features.length, sig.features[0] && sig.features[0].key].join('|');
+}
+/** Library copy of a signature: drop where it was taught (drawing-specific). */
+function cadLibraryEntry(sig) {
+  const s = Object.assign({}, sig);
+  delete s.x0; delete s.y0;
+  return s;
+}
+
+async function renderCadPage(id) {
+  shell('<div class="loading">Opening drawing…</div>', 'dash');
+  let project, record;
+  try { project = await localProject(id); record = await localGetUnderlay(id); } catch (error) {}
+  if (!project || !record || !record.blob) {
+    shell('<div class="empty"><h3>Drawing not found</h3><p>This drawing is not stored in this browser.</p><a class="btn btn-primary" href="#/app">Back</a></div>', 'dash'); return;
+  }
+  let model, flat, index;
+  try {
+    model = cadParseDxf(await record.blob.text());
+    flat = cadFlatten(model);
+    index = cadFeatureIndex(cadFeatures(flat), 1);
+  } catch (error) {
+    shell(`<div class="empty"><h3>Could not read this DXF</h3><p>${esc(error.message)}</p><a class="btn btn-primary" href="#/app">Back</a></div>`, 'dash'); return;
+  }
+  const sum = cadSummary(model, flat);
+  const fmt = v => Number(v).toLocaleString('en-GB', { maximumFractionDigits: 1, minimumFractionDigits: 1 });
+  const u = sum.units === 'unitless' ? 'units' : sum.units;
+  const extOk = !!(sum.extMin && sum.extMax &&
+    Math.abs(sum.bounds.minX - sum.extMin.x) < 0.01 && Math.abs(sum.bounds.minY - sum.extMin.y) < 0.01 &&
+    Math.abs(sum.bounds.maxX - sum.extMax.x) < 0.01 && Math.abs(sum.bounds.maxY - sum.extMax.y) < 0.01);
+  const counts = Object.keys(sum.counts).sort((a, b) => sum.counts[b] - sum.counts[a])
+    .map(k => `<li><span>${esc(k)}</span><b>${sum.counts[k].toLocaleString('en-GB')}</b></li>`).join('');
+  const skipped = Object.keys(sum.unsupported).map(k => `${esc(k)} ${sum.unsupported[k]}`).join(', ');
+
+  const cfg = project.config || (project.config = {});
+  const cad = cfg.cad || (cfg.cad = { signatures: [], components: [] });
+  if (!Array.isArray(cad.signatures)) cad.signatures = [];
+  if (!cad.labels || typeof cad.labels !== 'object') cad.labels = {};
+  let components = [];
+  let fromLibrary = false;
+
+  shell(`
+    <div class="cad-page">
+      <header class="cad-head">
+        <a class="back" href="#/app">← Drawings</a>
+        <h1>${esc(project.name)}</h1>
+        <span class="chip">DXF · ${esc(u)}</span>
+        <div class="cad-tools">
+          <button class="btn btn-ghost btn-sm" id="cad-fit" title="Fit drawing (F)">Fit</button>
+          <button class="btn btn-ghost btn-sm" id="cad-measure" aria-pressed="false" title="Measure between two points (M); snaps to circle centres">Measure</button>
+        </div>
+      </header>
+      <div class="cad-body">
+        <div class="cad-stage" id="cad-stage"><canvas id="cad-canvas" aria-label="Rack drawing at true scale"></canvas>
+          <div class="cad-readout" id="cad-readout" aria-live="polite">—</div>
+          <div class="cad-prompt" id="cad-prompt" hidden></div>
+        </div>
+        <aside class="cad-info">
+          <section class="cad-parts">
+            <h3>Parts</h3>
+            <div id="cad-found"></div>
+            <div class="cad-teach">
+              <label for="cad-kind">Teach a part</label>
+              <div class="cad-teach-row">
+                <select id="cad-kind">${CAD_KINDS.map(k => `<option value="${k.id}">${esc(k.label)}</option>`).join('')}</select>
+                <button class="btn btn-primary btn-sm" id="cad-teach">Box one example</button>
+              </div>
+              <p class="muted small">Drag a box around one complete copy. Every identical copy is then found. For a battery module you then click its four terminals once.</p>
+            </div>
+            <div id="cad-labels"></div>
+            <div id="cad-sigs"></div>
+            <div class="cad-part-actions">
+              <button class="btn btn-ghost btn-sm" id="cad-use-library">Use saved parts</button>
+              <button class="btn btn-ghost btn-sm" id="cad-download" disabled>Download parts (JSON)</button>
+            </div>
+            <p class="small" id="cad-status" role="status"></p>
+          </section>
+          <details class="cad-drawing-info">
+            <summary>Drawing</summary>
+            <dl>
+              <dt>Size</dt><dd>${fmt(sum.width)} × ${fmt(sum.height)} ${esc(u)}</dd>
+              <dt>Entities</dt><dd>${sum.entities.toLocaleString('en-GB')}</dd>
+              <dt>Layers</dt><dd>${sum.layers}</dd>
+              <dt>Blocks</dt><dd>${sum.blocks}</dd>
+              <dt>Circles</dt><dd>${sum.circles.toLocaleString('en-GB')}</dd>
+              <dt>Text</dt><dd>${sum.texts.toLocaleString('en-GB')}</dd>
+            </dl>
+            <ul class="cad-counts">${counts}</ul>
+            <p class="${sum.skipped ? 'warn' : 'muted'} small">${sum.skipped ? 'Skipped (not supported): ' + skipped : 'Every entity was read.'}</p>
+            <p class="small ${extOk ? 'cad-ok' : 'muted'}">${extOk ? '✓ Extents match the AutoCAD header exactly.' : (sum.extMin ? 'Extents differ from the AutoCAD header (the header may be stale).' : 'No AutoCAD extents in the header to compare.')}</p>
+          </details>
+        </aside>
+      </div>
+    </div>`, 'dash');
+
+  const $ = s => document.getElementById(s);
+  const statusEl = $('cad-status'), promptEl = $('cad-prompt');
+  const say = (msg, kind) => { statusEl.textContent = msg || ''; statusEl.className = 'small ' + (kind || ''); };
+  const prompt = (msg) => { promptEl.hidden = !msg; promptEl.textContent = msg || ''; };
+
+  /* teaching state: null | {step:'box', kind} | {step:'terminals', kind, box, sig, hits, roles, picked} */
+  let teach = null;
+
+  const viewer = cadViewer($('cad-stage'), flat, {
+    readout: $('cad-readout'), unit: u,
+    fitButton: $('cad-fit'), measureButton: $('cad-measure'),
+    overlay: drawOverlay,
+    onBox: onBox,
+    onPick: onPick,
+    onCancel: cancelTeach,
+  });
+
+  function drawOverlay(ctx, toScreen, scale) {
+    const list = teach && teach.hits ? teach.hits.map(h => Object.assign({ kind: teach.kind, preview: true }, h)) : components;
+    for (const c of list) {
+      const a = toScreen(c.x0, c.y1), b = toScreen(c.x1, c.y0);
+      const col = cadKind(c.kind).color;
+      ctx.strokeStyle = col; ctx.lineWidth = c.preview ? 2 : 1.5;
+      ctx.setLineDash(c.preview ? [6, 4] : []);
+      ctx.strokeRect(a[0], a[1], b[0] - a[0], b[1] - a[1]);
+      ctx.setLineDash([]);
+      ctx.fillStyle = col + '1f';
+      ctx.fillRect(a[0], a[1], b[0] - a[0], b[1] - a[1]);
+      const unwired = cadKind(c.kind).wired === false;
+      if (c.id && (b[0] - a[0] > 46 || unwired)) {
+        const saved = cad.labels[cadCompKey(c)];
+        const text = cadCompLabel(c, cad.labels) + (cadNamed(c.kind) && !(saved && saved.confirmed) ? ' ?' : '') +
+          (c.kind === 'ssc' && saved && saved.modules ? ' · ' + saved.modules + ' modules' : '');
+        ctx.fillStyle = col;
+        ctx.font = (unwired ? '700 ' + Math.round(Math.max(12, Math.min(28, 40 * scale))) + 'px' : '600 12px') + ' Inter, system-ui, sans-serif';
+        if (unwired) { ctx.textAlign = 'center'; ctx.fillText(text, (a[0] + b[0]) / 2, (a[1] + b[1]) / 2); ctx.textAlign = 'start'; }
+        else ctx.fillText(text, a[0] + 4, a[1] + 14);
+      }
+      for (const t of c.terminals || []) {
+        const p = toScreen(t.x, t.y);
+        ctx.fillStyle = cadTerminalColor(t.role);
+        ctx.beginPath(); ctx.arc(p[0], p[1], Math.max(2.5, Math.min(6, 3 * scale)), 0, Math.PI * 2); ctx.fill();
+      }
+    }
+    if (teach && teach.box) {
+      const a = toScreen(teach.box.x0, teach.box.y1), b = toScreen(teach.box.x1, teach.box.y0);
+      ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 2;
+      ctx.strokeRect(a[0], a[1], b[0] - a[0], b[1] - a[1]);
+      for (const t of teach.picked || []) {
+        const p = toScreen(t.x, t.y);
+        ctx.strokeStyle = cadTerminalColor(t.role); ctx.lineWidth = 2.5;
+        ctx.beginPath(); ctx.arc(p[0], p[1], 9, 0, Math.PI * 2); ctx.stroke();
+        ctx.fillStyle = '#ffffff'; ctx.font = '600 11px Inter, system-ui, sans-serif';
+        ctx.fillText(t.role, p[0] + 11, p[1] - 9);
+      }
+    }
+  }
+
+  function recognise() {
+    components = cad.signatures.length ? cadRecognise(index, cad.signatures) : [];
+    /* proposed ACDP / MSM numbers: ACDP1 = closest to the MSM */
+    const nums = cadProposeNumbers(components);
+    components.forEach(c => { if (nums.has(c)) c.proposal = nums.get(c); });
+    renderFound();
+    viewer.redraw();
+  }
+
+  /* Warns when the name ending in 1 is not on the ACDP closest to the MSM. */
+  function ruleWarning(kind, list) {
+    if ((kind !== 'acdp' && kind !== 'ssc') || !components.some(c => c.kind === 'msm')) return '';
+    const first = cadKind(kind).prefix + '1';
+    const nearest = list.find(c => c.proposal === 1);
+    const one = list.find(c => cadCompLabel(c, cad.labels) === first);
+    if (!nearest || !one || one === nearest) return '';
+    return `<p class="warn small">${first} is normally the ${cadKind(kind).label} closest to the MSM (now named ${esc(cadCompLabel(nearest, cad.labels))}). Use Show to check before confirming.</p>`;
+  }
+
+  /* ACDP / MSM labels: ACDP numbered from the MSM, MSM left to right; the
+     engineer confirms every label. */
+  function renderLabels() {
+    const box = $('cad-labels');
+    const kinds = CAD_KINDS.filter(k => cadNamed(k.id) && components.some(c => c.kind === k.id));
+    const modulesFound = components.filter(c => c.kind === 'module').length;
+    if (!kinds.length) { box.innerHTML = ''; return; }
+    box.innerHTML = kinds.map(k => {
+      const list = components.filter(c => c.kind === k.id).sort((a, b) => (a.proposal || 0) - (b.proposal || 0));
+      const done = list.every(c => cad.labels[cadCompKey(c)] && cad.labels[cadCompKey(c)].confirmed);
+      return `<div class="cad-label-card" data-kind="${k.id}">
+        <h4><span class="cad-swatch" style="background:${k.color}"></span>${k.id === 'ssc' ? 'SSC numbers and modules' : esc(k.label) + ' labels'}
+          <span class="chip ${done ? 'chip-ok' : 'chip-warn'}">${done ? 'Confirmed' : 'Please confirm'}</span></h4>
+        <p class="muted small">${k.id === 'ssc'
+          ? `${components.some(c => c.kind === 'msm') ? 'SSC1 is the one closest to the MSM, then the next closest. ' : 'Numbered left to right (no MSM on this drawing). '}Enter how many battery modules each SSC controls. ${modulesFound} modules were found on the drawing.`
+          : `No wiring (connected at the back of the rack). ${k.id === 'acdp' ? 'ACDP1 is the one closest to the MSM, then the next closest. ' : ''}Check each one on the drawing and confirm its name.`}</p>
+        ${ruleWarning(k.id, list)}
+        ${list.map(c => {
+          const saved = cad.labels[cadCompKey(c)] || {};
+          return `<div class="cad-label-row">
+          <button class="btn btn-ghost btn-xs" data-show="${esc(cadCompKey(c))}" title="Zoom to this ${esc(k.label)}">Show</button>
+          <input type="text" maxlength="24" value="${esc(cadCompLabel(c, cad.labels))}" data-key="${esc(cadCompKey(c))}" aria-label="${esc(k.label)} name">
+          ${k.id === 'ssc' ? `<input type="number" class="cad-modules" min="1" step="1" inputmode="numeric" placeholder="modules" value="${saved.modules ? esc(String(saved.modules)) : ''}" data-modules="${esc(cadCompKey(c))}" aria-label="Number of modules for ${esc(cadCompLabel(c, cad.labels))}"><span class="muted small">modules</span>` : ''}
+        </div>`;
+        }).join('')}
+        ${k.id === 'ssc' ? `<p class="small muted" data-total>Total entered: <b>${list.reduce((n, c) => n + (+((cad.labels[cadCompKey(c)] || {}).modules) || 0), 0)}</b> of ${modulesFound}</p>` : ''}
+        <button class="btn btn-primary btn-sm" data-confirm="${k.id}">Confirm ${k.id === 'ssc' ? 'SSC numbers and modules' : esc(k.label) + ' labels'}</button>
+      </div>`;
+    }).join('');
+    box.querySelectorAll('[data-show]').forEach(b => b.onclick = () => {
+      const c = components.find(x => cadCompKey(x) === b.dataset.show);
+      if (c) viewer.zoomTo(c.x0 - 150, c.y0 - 150, c.x1 + 150, c.y1 + 150);
+    });
+    box.querySelectorAll('input[data-key], input[data-modules]').forEach(inp => inp.oninput = () => {
+      const card = inp.closest('.cad-label-card');
+      const total = card.querySelector('[data-total] b');
+      if (total) total.textContent = [...card.querySelectorAll('input[data-modules]')].reduce((n, i) => n + (+i.value || 0), 0);
+      const key = inp.dataset.key || inp.dataset.modules;
+      const prev = cad.labels[key];
+      if (prev && prev.confirmed) prev.confirmed = false;
+      const chip = card.querySelector('.chip');
+      chip.className = 'chip chip-warn'; chip.textContent = 'Please confirm';
+    });
+    box.querySelectorAll('[data-confirm]').forEach(b => b.onclick = async () => {
+      const card = b.closest('.cad-label-card');
+      const inputs = [...card.querySelectorAll('input[data-key]')];
+      const names = inputs.map(i => i.value.trim());
+      const others = components.filter(c => cadNamed(c.kind) && c.kind !== card.dataset.kind).map(c => cadCompLabel(c, cad.labels));
+      if (names.some(n => !n)) { say('Every label needs a name.', 'warn'); return; }
+      const dup = names.find((n, i) => names.indexOf(n) !== i || others.includes(n));
+      if (dup) { say(`The label ${dup} is used twice.`, 'warn'); return; }
+      let counts = null;
+      if (card.dataset.kind === 'ssc') {
+        counts = inputs.map(i => card.querySelector(`input[data-modules="${CSS.escape(i.dataset.key)}"]`).value.trim());
+        const bad = counts.findIndex(v => !/^[1-9][0-9]*$/.test(v));
+        if (bad >= 0) { say(`Enter the number of modules for ${names[bad]} (a whole number, 1 or more).`, 'warn'); return; }
+        counts = counts.map(Number);
+        const total = counts.reduce((a, b) => a + b, 0);
+        if (total !== modulesFound) {
+          say(`The SSC module counts add up to ${total}, but ${modulesFound} modules were found on the drawing. Check the counts, or teach any missing modules first.`, 'warn');
+          return;
+        }
+      }
+      inputs.forEach((inp, i) => {
+        cad.labels[inp.dataset.key] = counts ? { label: names[i], modules: counts[i], confirmed: true } : { label: names[i], confirmed: true };
+      });
+      await persist();
+      renderFound();
+      viewer.redraw();
+      say(counts
+        ? `SSCs confirmed: ${names.map((n, i) => n + ' ' + counts[i]).join(', ')} modules.`
+        : `${cadKind(card.dataset.kind).label} labels confirmed: ${names.join(', ')}.`, 'cad-ok');
+    });
+  }
+
+  function renderFound() {
+    renderLabels();
+    const by = {};
+    components.forEach(c => { by[c.kind] = (by[c.kind] || 0) + 1; });
+    const terms = components.reduce((n, c) => n + (c.terminals || []).length, 0);
+    $('cad-found').innerHTML = components.length
+      ? `<ul class="cad-found-list">${CAD_KINDS.filter(k => by[k.id]).map(k =>
+          `<li><span class="cad-swatch" style="background:${k.color}"></span>${esc(k.label)}<b>${by[k.id]}</b></li>`).join('')}
+          <li><span class="cad-swatch cad-swatch-dot"></span>Terminals<b>${terms}</b></li></ul>
+          ${fromLibrary ? '<p class="muted small">Found with saved parts. Check every copy on the drawing.</p>' : ''}`
+      : '<p class="muted small">No parts taught yet.</p>';
+    $('cad-sigs').innerHTML = cad.signatures.length ? `<ul class="cad-sig-list">${cad.signatures.map((s, i) =>
+      `<li><span class="cad-swatch" style="background:${cadKind(s.kind).color}"></span><span>${esc(s.name || cadKind(s.kind).label)}<small>${s.features.length} features · ${s.terminals.length} terminals</small></span>
+        <span class="cad-sig-actions">
+          <button class="btn btn-ghost btn-xs" data-remove="${i}" title="Remove from this drawing only; keep it saved on this device">Remove</button>
+          <button class="btn btn-ghost btn-xs" data-forget="${i}" title="Remove from this drawing AND delete it from this device (use when it was taught wrongly)">Forget</button>
+        </span></li>`).join('')}</ul>` : '';
+    $('cad-sigs').querySelectorAll('[data-remove]').forEach(b => b.onclick = async () => {
+      cad.signatures.splice(+b.dataset.remove, 1);
+      fromLibrary = false;
+      recognise();
+      await persist();
+      say('Part removed from this drawing. It stays saved on this device.');
+    });
+    $('cad-sigs').querySelectorAll('[data-forget]').forEach(b => b.onclick = async () => {
+      const gone = cad.signatures.splice(+b.dataset.forget, 1)[0];
+      const lib = cadLibraryLoad();
+      const keep = lib.filter(x => cadSigId(x) !== cadSigId(gone));
+      cadLibrarySave(keep);
+      fromLibrary = false;
+      recognise();
+      await persist();
+      say(`Part forgotten on this drawing${keep.length < lib.length ? ' and deleted from this device' : ''}.`);
+    });
+    $('cad-download').disabled = !components.length;
+  }
+
+  async function persist() {
+    /* labels belong to recognised components; drop those of parts that are gone */
+    const live = new Set(components.map(cadCompKey));
+    Object.keys(cad.labels).forEach(k => { if (!live.has(k)) delete cad.labels[k]; });
+    cad.components = components.map(c => {
+      const unwired = cadKind(c.kind).wired === false;
+      const saved = cad.labels[cadCompKey(c)];
+      const out = { id: c.id, kind: c.kind, x0: c.x0, y0: c.y0, x1: c.x1, y1: c.y1, terminals: c.terminals,
+        label: cadCompLabel(c, cad.labels), wired: !unwired, labelConfirmed: cadNamed(c.kind) ? !!(saved && saved.confirmed) : true };
+      if (c.kind === 'ssc') out.modules = saved && saved.modules ? saved.modules : null;
+      return out;
+    });
+    project.updated_at = new Date().toISOString();
+    try { await localPutProject(project); } catch (e) { say('Could not save to this browser: ' + e.message, 'warn'); }
+  }
+
+  function cancelTeach() {
+    if (!teach) return;
+    teach = null;
+    prompt('');
+    viewer.setMode('pan');
+    $('cad-teach').disabled = false;
+    viewer.redraw();
+    say('Teaching cancelled.');
+  }
+
+  $('cad-teach').onclick = () => {
+    const kind = $('cad-kind').value;
+    teach = { step: 'box', kind: kind };
+    $('cad-teach').disabled = true;
+    viewer.setMode('box');
+    const name = cadKind(kind).label;
+    prompt(`Drag a box around ONE complete ${name === name.toUpperCase() ? name : name.toLowerCase()} · Esc cancels`);
+    say('');
+  };
+
+  function onBox(box) {
+    if (!teach || teach.step !== 'box') return;
+    let sig;
+    try {
+      const n = cad.signatures.filter(s => s.kind === teach.kind).length;
+      sig = cadTeachSignature(index, box, { kind: teach.kind, name: cadKind(teach.kind).label + (n ? ' ' + String.fromCharCode(65 + n) : '') });
+      sig = cadRefineSignature(index, sig);
+      sig.id = teach.kind + '-' + Date.now().toString(36);
+    } catch (e) { say(e.message, 'warn'); return; }
+    const hits = cadFindMatches(index, sig);
+    teach.box = box; teach.sig = sig; teach.hits = hits;
+    if (cadKind(teach.kind).wired === false) {
+      /* back-wired part: nothing to click, just check the count and save */
+      teach.step = 'terminals'; teach.roles = null; teach.picked = []; teach.noTerminals = true;
+      viewer.setMode('pan');
+      prompt(`Found ${hits.length} ${cadKind(teach.kind).label}. No wiring needed. Press Enter to save · Wrong count? Esc and box again`);
+    } else if (teach.kind === 'module') {
+      teach.step = 'terminals'; teach.roles = CAD_MODULE_TERMINALS.slice(); teach.picked = [];
+      viewer.setMode('pick');
+      prompt(`Found ${hits.length} copies. Now click terminal: ${teach.roles[0]} (inside the white box) · Wrong count? Esc and box again`);
+    } else {
+      teach.step = 'terminals'; teach.roles = null; teach.picked = [];
+      viewer.setMode('pick');
+      prompt(`Found ${hits.length} copies. Click its terminals if needed (T1, T2 …), then press Enter to finish · If a copy is missing, the box probably cut the part or caught a neighbour: press Esc and box again`);
+    }
+    viewer.redraw();
+  }
+
+  function onPick(pt) {
+    if (!teach || teach.step !== 'terminals') return;
+    const b = teach.box;
+    if (pt[0] < b.x0 || pt[0] > b.x1 || pt[1] < b.y0 || pt[1] > b.y1) { say('Click inside the white box: terminals belong to the taught copy.', 'warn'); return; }
+    if (!pt[2]) say('No circle under the cursor: the point was taken as clicked. Zoom in to snap to the terminal centre.', 'warn'); else say('');
+    const role = teach.roles ? teach.roles[teach.picked.length] : 'T' + (teach.picked.length + 1);
+    teach.picked.push({ role: role, x: pt[0], y: pt[1] });
+    if (teach.roles && teach.picked.length < teach.roles.length) {
+      prompt(`Click terminal: ${teach.roles[teach.picked.length]} · Esc cancels`);
+      viewer.redraw();
+      return;
+    }
+    if (teach.roles) finishTeach(); else viewer.redraw();
+  }
+
+  async function finishTeach() {
+    if (!teach || teach.step !== 'terminals') return;
+    const t = teach;
+    t.sig.terminals = t.picked.map(p => ({ role: p.role, dx: +(p.x - t.sig.x0).toFixed(4), dy: +(p.y - t.sig.y0).toFixed(4) }));
+    cad.signatures.push(t.sig);
+    teach = null;
+    fromLibrary = false;
+    prompt('');
+    viewer.setMode('pan');
+    $('cad-teach').disabled = false;
+    recognise();
+    await persist();
+    const lib = cadLibraryLoad();
+    lib.push(cadLibraryEntry(t.sig));
+    const saved = cadLibrarySave(lib);
+    const n = components.filter(c => c.kind === t.sig.kind).length;
+    say(`${cadKind(t.sig.kind).label}: ${n} found${saved ? ' · saved on this device for other racks' : ''}.`, 'cad-ok');
+  }
+  viewer.onEnter = () => { if (teach && teach.step === 'terminals' && !teach.roles) finishTeach(); };
+
+  $('cad-use-library').onclick = async () => {
+    const lib = cadLibraryLoad();
+    if (!lib.length) { say('No parts saved on this device yet. Teach one first.', 'warn'); return; }
+    cad.signatures = lib.map(s => Object.assign({}, s));
+    fromLibrary = true;
+    recognise();
+    await persist();
+    say(`${lib.length} saved part${lib.length === 1 ? '' : 's'} applied.`);
+  };
+
+  $('cad-download').onclick = () => {
+    const out = {
+      format: 'ayk-wireflow-cad-parts', version: 1, drawing: project.cad_file || project.name, units: sum.units,
+      components: components.map(c => ({ id: c.id, kind: c.kind, label: cadCompLabel(c, cad.labels),
+        wired: cadKind(c.kind).wired !== false,
+        labelConfirmed: cadNamed(c.kind) ? !!(cad.labels[cadCompKey(c)] && cad.labels[cadCompKey(c)].confirmed) : true,
+        modules: c.kind === 'ssc' ? ((cad.labels[cadCompKey(c)] || {}).modules || null) : undefined,
+        box: [c.x0, c.y0, c.x1, c.y1].map(v => +v.toFixed(3)),
+        terminals: (c.terminals || []).map(t => ({ role: t.role, x: +t.x.toFixed(3), y: +t.y.toFixed(3) })) })),
+    };
+    download(`${project.name || 'rack'}-parts.json`, JSON.stringify(out, null, 2), 'application/json');
+  };
+
+  /* Open: saved parts for this drawing, else the device library. */
+  if (cad.signatures.length) { recognise(); }
+  else {
+    const lib = cadLibraryLoad();
+    if (lib.length) {
+      cad.signatures = lib.map(s => Object.assign({}, s));
+      fromLibrary = true;
+      recognise();
+      if (!components.length) { cad.signatures = []; fromLibrary = false; renderFound(); }
+      else persist();
+    } else renderFound();
+  }
+}
+
+/** Canvas viewer for flattened CAD geometry: wheel zoom at the cursor, drag to
+ *  pan, live coordinates in drawing units, two-point measure that snaps to
+ *  circle centres, and teaching modes (box / pick) with an overlay hook. */
+function cadViewer(stage, flat, opts) {
+  const canvas = stage.querySelector('canvas');
+  const ctx = canvas.getContext('2d');
+  const B = flat.bounds;
+  const path = new Path2D();
+  for (const p of flat.polylines) {
+    const a = p.pts;
+    path.moveTo(a[0], a[1]);
+    for (let i = 2; i < a.length; i += 2) path.lineTo(a[i], a[i + 1]);
+    if (p.closed) path.closePath();
+  }
+  for (const c of flat.circles) { path.moveTo(c.cx + c.r, c.cy); path.arc(c.cx, c.cy, c.r, 0, Math.PI * 2); }
+  const view = { s: 1, tx: 0, ty: 0 };   /* screen = (x*s + tx, -y*s + ty), CSS px */
+  let W = 0, H = 0, dpr = 1, frame = 0;
+  let mode = 'pan';                      /* pan | measure | box | pick */
+  let mA = null, mB = null, hover = null, drag = null, band = null;
+  let userMoved = false;                 /* keep re-fitting on resize until the user zooms or pans */
+  const api = { onEnter: null };
+  const toWorld = (sx, sy) => [(sx - view.tx) / view.s, -(sy - view.ty) / view.s];
+  const toScreen = (x, y) => [x * view.s + view.tx, -y * view.s + view.ty];
+  const fmt = v => v.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+  function fit() {
+    const w = Math.max(1e-9, B.maxX - B.minX), h = Math.max(1e-9, B.maxY - B.minY);
+    view.s = Math.min((W - 40) / w, (H - 40) / h);
+    view.tx = (W - w * view.s) / 2 - B.minX * view.s;
+    view.ty = (H - h * view.s) / 2 + B.maxY * view.s;
+    draw();
+  }
+  function resize() {
+    const r = stage.getBoundingClientRect();
+    dpr = window.devicePixelRatio || 1;
+    const first = !W;
+    W = Math.max(200, r.width); H = Math.max(200, r.height);
+    canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr);
+    canvas.style.width = W + 'px'; canvas.style.height = H + 'px';
+    if (first || !userMoved) fit(); else draw();
+  }
+  function snap(sx, sy) {
+    let best = null, bd = 10;
+    for (const c of flat.circles) {
+      const q = toScreen(c.cx, c.cy);
+      const d = Math.hypot(q[0] - sx, q[1] - sy);
+      if (d < bd || (best && Math.abs(d - bd) < 0.5 && c.r > best.r)) { bd = d; best = c; }
+    }
+    return best ? [best.cx, best.cy, best] : null;
+  }
+  function draw() {
+    cancelAnimationFrame(frame);
+    frame = requestAnimationFrame(() => {
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.fillStyle = '#0b1220'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.setTransform(dpr * view.s, 0, 0, -dpr * view.s, dpr * view.tx, dpr * view.ty);
+      ctx.lineWidth = 1 / view.s;
+      ctx.strokeStyle = '#d6deeb';
+      ctx.stroke(path);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      if (opts.overlay) opts.overlay(ctx, toScreen, view.s);
+      if (hover && hover[2] && mode !== 'box') {
+        const q = toScreen(hover[0], hover[1]);
+        ctx.strokeStyle = '#00a8ff'; ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.arc(q[0], q[1], Math.max(4, hover[2].r * view.s + 3), 0, Math.PI * 2); ctx.stroke();
+      }
+      if (band) {
+        ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1; ctx.setLineDash([5, 4]);
+        ctx.strokeRect(band.x, band.y, band.w, band.h); ctx.setLineDash([]);
+        ctx.fillStyle = 'rgba(255,255,255,.06)'; ctx.fillRect(band.x, band.y, band.w, band.h);
+      }
+      if (mA) {
+        const a = toScreen(mA[0], mA[1]), b = mB ? toScreen(mB[0], mB[1]) : null;
+        ctx.strokeStyle = '#f97316'; ctx.fillStyle = '#f97316'; ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.arc(a[0], a[1], 3, 0, Math.PI * 2); ctx.fill();
+        if (b) {
+          ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke();
+          ctx.beginPath(); ctx.arc(b[0], b[1], 3, 0, Math.PI * 2); ctx.fill();
+        }
+      }
+      /* scale bar: a round number of drawing units, roughly 120 px long */
+      const target = 120 / view.s, pow = Math.pow(10, Math.floor(Math.log10(target)));
+      const len = [1, 2, 5, 10].map(k => k * pow).find(v => v >= target * 0.6) || pow;
+      ctx.fillStyle = '#93a4bf'; ctx.strokeStyle = '#93a4bf'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(16, H - 18); ctx.lineTo(16 + len * view.s, H - 18); ctx.stroke();
+      ctx.font = '12px Inter, system-ui, sans-serif';
+      ctx.fillText(len.toLocaleString('en-GB') + ' ' + opts.unit, 16, H - 26);
+    });
+  }
+  function readout() {
+    if (!opts.readout) return;
+    const parts = [];
+    if (hover) parts.push(`X ${fmt(hover[0])}  Y ${fmt(hover[1])} ${opts.unit}${hover[2] ? `  · circle Ø ${fmt(hover[2].r * 2)}` : ''}`);
+    if (mA && mB) {
+      const dx = mB[0] - mA[0], dy = mB[1] - mA[1];
+      parts.push(`Distance ${fmt(Math.hypot(dx, dy))} ${opts.unit} (ΔX ${fmt(dx)}, ΔY ${fmt(dy)})`);
+    } else if (mode === 'measure') parts.push(mA ? 'Click the second point' : 'Measure: click the first point');
+    opts.readout.textContent = parts.join('   ·   ') || '—';
+  }
+  canvas.addEventListener('pointerdown', e => {
+    canvas.setPointerCapture(e.pointerId);
+    /* middle button always pans, so the drawing can move while teaching */
+    drag = { x: e.offsetX, y: e.offsetY, tx: view.tx, ty: view.ty, moved: false, pan: mode !== 'box' || e.button === 1 };
+  });
+  canvas.addEventListener('pointermove', e => {
+    if (drag) {
+      const dx = e.offsetX - drag.x, dy = e.offsetY - drag.y;
+      if (Math.abs(dx) + Math.abs(dy) > 3) drag.moved = true;
+      if (drag.moved && drag.pan) { view.tx = drag.tx + dx; view.ty = drag.ty + dy; userMoved = true; }
+      if (drag.moved && !drag.pan) band = { x: Math.min(drag.x, e.offsetX), y: Math.min(drag.y, e.offsetY), w: Math.abs(dx), h: Math.abs(dy) };
+    }
+    const w = toWorld(e.offsetX, e.offsetY);
+    hover = snap(e.offsetX, e.offsetY) || [w[0], w[1], null];
+    draw(); readout();
+  });
+  canvas.addEventListener('pointerup', e => {
+    const d = drag;
+    drag = null;
+    if (!d) return;
+    if (!d.pan && band) {
+      const a = toWorld(band.x, band.y + band.h), b = toWorld(band.x + band.w, band.y);
+      band = null;
+      draw();
+      if (opts.onBox) opts.onBox({ x0: a[0], y0: a[1], x1: b[0], y1: b[1] });
+      return;
+    }
+    band = null;
+    if (d.moved) return;
+    const w = toWorld(e.offsetX, e.offsetY);
+    const s = snap(e.offsetX, e.offsetY) || [w[0], w[1], null];
+    if (mode === 'measure') {
+      if (!mA || mB) { mA = s; mB = null; } else mB = s;
+      draw(); readout();
+    } else if (mode === 'pick' && opts.onPick) opts.onPick(s);
+  });
+  canvas.addEventListener('wheel', e => {
+    e.preventDefault();
+    const w = toWorld(e.offsetX, e.offsetY);
+    view.s *= Math.exp(-e.deltaY * 0.0015);
+    userMoved = true;
+    view.tx = e.offsetX - w[0] * view.s;
+    view.ty = e.offsetY + w[1] * view.s;
+    draw();
+  }, { passive: false });
+  function setMode(m) {
+    mode = m; mA = mB = null; band = null;
+    if (opts.measureButton) { opts.measureButton.setAttribute('aria-pressed', String(m === 'measure')); opts.measureButton.classList.toggle('on', m === 'measure'); }
+    canvas.style.cursor = m === 'pan' ? 'grab' : 'crosshair';
+    draw(); readout();
+  }
+  if (opts.fitButton) opts.fitButton.onclick = fit;
+  if (opts.measureButton) opts.measureButton.onclick = () => setMode(mode === 'measure' ? 'pan' : 'measure');
+  const onKey = e => {
+    if (!document.body.contains(canvas)) { window.removeEventListener('keydown', onKey); return; }
+    if (e.target && /INPUT|TEXTAREA|SELECT/.test(e.target.tagName)) return;
+    if (e.key === 'f' || e.key === 'F' || e.key === ' ') { e.preventDefault(); fit(); }
+    else if ((e.key === 'm' || e.key === 'M') && (mode === 'pan' || mode === 'measure')) setMode(mode === 'measure' ? 'pan' : 'measure');
+    else if (e.key === 'Enter' && api.onEnter) api.onEnter();
+    else if (e.key === 'Escape') {
+      if (mode === 'box' || mode === 'pick') { if (opts.onCancel) opts.onCancel(); }
+      else setMode('pan');
+    }
+  };
+  window.addEventListener('keydown', onKey);
+  const ro = new ResizeObserver(() => { if (!document.body.contains(canvas)) { ro.disconnect(); return; } resize(); });
+  ro.observe(stage);
+  canvas.style.cursor = 'grab';
+  resize();
+  api.fit = fit; api.view = view; api.setMode = setMode; api.redraw = draw;
+  api.zoomTo = (x0, y0, x1, y1) => {
+    userMoved = true;
+    const w = Math.max(1e-6, x1 - x0), h = Math.max(1e-6, y1 - y0);
+    view.s = Math.min((W - 40) / w, (H - 40) / h);
+    view.tx = (W - w * view.s) / 2 - x0 * view.s;
+    view.ty = (H - h * view.s) / 2 + y1 * view.s;
+    draw();
+  };
+  return api;
+}
+
 /* ================= PROJECT WORKSPACE ================= */
 async function renderProjectPage(id) {
   shell(`<div class="loading">Loading project…</div>`, 'dash');
@@ -474,7 +1187,7 @@ async function renderProjectPage(id) {
   const cfg = project.config || { rules: { ...DEFAULT_RULES }, exceptions: [], spans: [] };
   let netlist = null, validations = null;
 
-  const tabs = ['Configuration', 'Numbering', 'Netlist', 'Exceptions', 'Validation', 'Schedule & BOM', 'Diagram', 'Drawings (DWG)', 'Wire & validate', 'Export'];
+  const tabs = ['Configuration', 'Numbering', 'Netlist', 'Exceptions', 'Validation', 'Diagram', 'Drawings (DWG)', 'Wire & validate', 'Export'];
   shell(`
     <div class="proj-head">
       <a class="back" href="#/app">← Projects</a>
@@ -495,7 +1208,7 @@ async function renderProjectPage(id) {
 
   const body = document.getElementById('tab-body');
   const home = document.getElementById('workspace-home');
-  const views = [tabConfig, tabSimpleWiring, tabNetlist, tabExceptions, tabValidation, tabSchedule, tabDiagram, tabDrawings, tabWireValidate, tabExport];
+  const views = [tabConfig, tabSimpleWiring, tabNetlist, tabExceptions, tabValidation, tabDiagram, tabDrawings, tabWireValidate, tabExport];
 
   async function saveProject(patch) {
     try {
@@ -810,7 +1523,7 @@ function tabNumbering(el, project, ctx) {
 
   const fmtM = mm => (mm / 1000).toFixed(1) + ' m';
   const metricLine = m =>
-    `Cable to buy <b>${fmtM(m.bomMm)}</b> · physical span ${fmtM(m.geomMm)} · ` +
+    `Physical span <b>${fmtM(m.geomMm)}</b> · ` +
     `<b>${m.longHops}</b> long jumper${m.longHops === 1 ? '' : 's'} of ${m.hops} hops · longest ${m.maxHopMm} mm` +
     (m.overflow ? ` · <span class="warn">${m.overflow} needs engineering release</span>` : ' · all approved harnesses');
 
@@ -948,7 +1661,7 @@ function tabNumbering(el, project, ctx) {
         <td><span class="ssc-dot" style="background:${c}"></span>${esc(g.label)}</td>
         <td class="mono">${esc(g.slot)}</td>
         <td>${g.modules.length} of ${g.capacity}${g.modules.length > g.capacity ? ' <span class="warn">over</span>' : ''}</td>
-        <td>${fmtM(g.metrics.bomMm)}</td>
+        <td>${fmtM(g.metrics.geomMm)}</td>
         <td>${g.metrics.longHops} of ${g.metrics.hops}</td>
         <td>${g.metrics.overflow ? `<span class="warn">${g.metrics.overflow} need release</span>` : '<span class="chip chip-ok">approved parts</span>'}</td>
         <td class="muted small">${esc(g.planTitle || 'hand-pointed chain')}</td>
@@ -957,10 +1670,10 @@ function tabNumbering(el, project, ctx) {
     return `
     <p class="muted small">Every rack is different: the number of SSCs, how many modules each SSC controls and the module arrangement all follow the rack layout diagram. WireFlow plans each SSC's chain independently — shortest cable first, scored against the approved harness catalogue — and the general diagram shows every chain on the real rack.</p>
     <table class="ssc-table">
-      <thead><tr><th>SSC</th><th>Slot</th><th>Modules</th><th>Cable to buy</th><th>Long jumpers</th><th>Harnesses</th><th>Chain plan</th></tr></thead>
+      <thead><tr><th>SSC</th><th>Slot</th><th>Modules</th><th>Physical span</th><th>Long jumpers</th><th>Harnesses</th><th>Chain plan</th></tr></thead>
       <tbody>${rows || '<tr><td colspan="7" class="muted">No SSC on the rack — paint an SSC slot in section 2.</td></tr>'}</tbody>
     </table>
-    <p class="muted small" style="margin-top:8px">Total: ${t.sscs} SSC chain(s) · ${t.modules} modules · <b>${fmtM(t.bomMm)}</b> of cable · ${t.longHops} long jumper(s)${t.overflow ? ` · <span class="warn">${t.overflow} hop(s) need an engineering release</span>` : ' · everything buildable from approved parts'}</p>
+    <p class="muted small" style="margin-top:8px">Total: ${t.sscs} SSC chain(s) · ${t.modules} modules · <b>${fmtM(t.geomMm)}</b> physical span · ${t.longHops} long jumper(s)${t.overflow ? ` · <span class="warn">${t.overflow} hop(s) need an engineering release</span>` : ' · everything buildable from approved parts'}</p>
     <div class="btn-row" style="margin-top:8px">
       <button class="btn btn-ghost btn-sm" id="ssc-auto">Auto — nearest cable</button>
       <button class="btn btn-ghost btn-sm" id="ssc-cols">Split by columns</button>
@@ -1448,35 +2161,6 @@ async function tabValidation(el, project, ctx) {
   </div>`;
 }
 
-/* ---- Tab 6: Schedule & BOM ---- */
-async function tabSchedule(el, project, ctx) {
-  const conns = await ctx.getNetlist();
-  const sched = buildSchedule(conns);
-  el.innerHTML = `
-  <div class="page-head slim">
-    <div><h2>Cable schedule & BOM</h2><p class="muted">${sched.length} line items · ${sched.reduce((t, r) => t + r.qty, 0)} cables total.</p></div>
-    <div class="btn-row">
-      <button class="btn btn-ghost" id="s-csv">Export CSV</button>
-      <button class="btn btn-ghost" id="s-dxf">Export DXF</button>
-      <button class="btn btn-primary" id="s-vsdx">Export Visio (.vsdx)</button>
-    </div>
-  </div>
-  <div class="table-wrap"><table class="data">
-    <thead><tr><th>Cable ID</th><th>Network</th><th>Class</th><th>From → To</th><th>Harness P/N</th><th>Cable spec</th><th>Mfg length</th><th>Qty</th></tr></thead>
-    <tbody>${sched.map((r, i) => `<tr>
-      <td class="mono">C-${String(i + 1).padStart(3, '0')}</td>
-      <td><span class="net ${r.network}">${r.network}</span></td><td>${esc(r.cls)}</td>
-      <td class="mono">${esc(r.from)} → ${esc(r.to)}</td>
-      <td class="mono ${r.harness.startsWith('—') ? 'warn' : ''}">${esc(r.harness)}</td>
-      <td class="mono">${esc(r.gauge || '')}</td>
-      <td>${r.length} mm</td><td>${r.qty}</td></tr>`).join('')}
-    </tbody>
-  </table></div>`;
-  el.querySelector('#s-csv').onclick = () => download(`${project.name || 'cable'}-BOM.csv`, scheduleCSV(conns, project), 'text/csv');
-  el.querySelector('#s-dxf').onclick = () => download(`${project.name || 'wiring'}.dxf`, dxfExport(conns, project), 'application/dxf');
-  el.querySelector('#s-vsdx').onclick = () => download(`${project.name || 'wiring'}.vsdx`, vsdxExport(conns, project), 'application/vnd.ms-visio.drawing.main+xml');
-}
-
 /* ---- Tab 7: Diagram ---- */
 async function tabDiagram(el, project, ctx) {
   const conns = await ctx.getNetlist();
@@ -1696,14 +2380,14 @@ async function tabWireValidate(el, project, ctx) {
       <div class="flow-empty ${failed ? 'danger' : passed === checks.length ? 'success' : ''}"><span>${failed ? '!' : '✓'}</span><p>${esc(emptyGuidance)}</p></div>
       <div class="summary-grid">
         <div class="summary-card"><span>Modules numbered</span><strong>${numbered}/${required}</strong><small>${numbered === required ? 'Complete' : required - numbered + ' remaining'}</small></div>
-        <div class="summary-card"><span>SSC chains</span><strong>${totals.sscs}</strong><small>${(totals.bomMm / 1000).toFixed(1)} m cable total</small></div>
+        <div class="summary-card"><span>SSC chains</span><strong>${totals.sscs}</strong><small>${(totals.geomMm / 1000).toFixed(1)} m physical span</small></div>
         <div class="summary-card"><span>Validation gate</span><strong>${passed}/${checks.length}</strong><small>${passed === checks.length ? 'All checks pass' : checks.length - passed + ' need attention'}</small></div>
       </div>
       <div class="card">
         <h3>Chains by SSC</h3>
         <div class="chain-summary-list">${groups.map((group, i) => {
           const live = perSsc[i];
-          return `<div class="chain-summary-row"><span class="ssc-dot" style="background:${SSC_PALETTE[i % SSC_PALETTE.length]}"></span><b>${esc(group.label)}</b><span>${group.order.length} modules</span><span>${(group.metrics.bomMm / 1000).toFixed(1)} m BOM</span><span>${live ? 'red ' + (live.powerMm / 1000).toFixed(1) + ' m · green ' + (live.commMm / 1000).toFixed(1) + ' m' : 'Calibrate to measure front-view wiring'}</span></div>`;
+          return `<div class="chain-summary-row"><span class="ssc-dot" style="background:${SSC_PALETTE[i % SSC_PALETTE.length]}"></span><b>${esc(group.label)}</b><span>${group.order.length} modules</span><span>${(group.metrics.geomMm / 1000).toFixed(1)} m span</span><span>${live ? 'red ' + (live.powerMm / 1000).toFixed(1) + ' m · green ' + (live.commMm / 1000).toFixed(1) + ' m' : 'Calibrate to measure front-view wiring'}</span></div>`;
         }).join('') || '<p class="muted">No applied SSC chains yet.</p>'}</div>
       </div>
       <div class="card">
@@ -1716,31 +2400,6 @@ async function tabWireValidate(el, project, ctx) {
     await ctx.switchTab(1);
     document.getElementById('fv-card')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
-}
-
-function schedulePrintSvg(conns) {
-  const grouped = new Map();
-  for (const row of buildSchedule(conns || [])) {
-    const key = [row.harness, row.network, row.gauge, row.length].join('|');
-    if (!grouped.has(key)) grouped.set(key, { ...row, qty: 0 });
-    grouped.get(key).qty += row.qty;
-  }
-  const rows = [...grouped.values()];
-  const W = 1680, H = 1188, x = [70, 430, 650, 1000, 1260, 1450];
-  let svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" font-family="Inter, Arial, sans-serif"><rect width="${W}" height="${H}" fill="#fff"/>`;
-  svg += '<text x="70" y="92" font-size="38" font-weight="700" fill="#18212f">Cable schedule &amp; BOM</text>';
-  const heads = ['Harness / part number', 'Network', 'Cable specification', 'Length (mm)', 'Quantity'];
-  heads.forEach((head, i) => { svg += `<text x="${x[i]}" y="160" font-size="18" font-weight="700" fill="#687386">${esc(head)}</text>`; });
-  svg += '<line x1="70" y1="178" x2="1610" y2="178" stroke="#cfd5dd" stroke-width="2"/>';
-  rows.slice(0, 24).forEach((row, index) => {
-    const y = 218 + index * 37;
-    const vals = [row.harness, row.network, row.gauge || '—', row.length, row.qty];
-    vals.forEach((value, i) => { svg += `<text x="${x[i]}" y="${y}" font-size="17" fill="#18212f">${esc(value)}</text>`; });
-    svg += `<line x1="70" y1="${y + 12}" x2="1610" y2="${y + 12}" stroke="#edf0f3"/>`;
-  });
-  const qty = rows.reduce((sum, row) => sum + row.qty, 0);
-  svg += `<text x="70" y="1125" font-size="20" font-weight="700" fill="#18212f">${rows.length} BOM line(s) · ${qty} cable(s)</text></svg>`;
-  return svg;
 }
 
 function projectPrintPages(project, conns) {
@@ -1762,7 +2421,6 @@ function projectPrintPages(project, conns) {
   return buildPrintDocument({
     sheetSvg: renderDiagramSVG(project, conns),
     frontSvg: frontSvg,
-    scheduleSvg: schedulePrintSvg(conns),
   });
 }
 

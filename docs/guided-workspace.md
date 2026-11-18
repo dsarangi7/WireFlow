@@ -142,8 +142,8 @@ validation families: the engine release checks and variable-layout L01–L06
 checks. **Open wiring view** returns to the established front-view card in
 Numbering; the guided summary does not implement a second wiring editor.
 
-Step 5 builds three ordered print pages: generated wiring sheet, calibrated
-rack front view and compact cable schedule/BOM. The pages live in a hidden
+Step 5 builds two ordered print pages: generated wiring sheet and calibrated
+rack front view. The pages live in a hidden
 container until `window.print()` and use A3 landscape print CSS with exact
 colors and page breaks. Browser Save as PDF is therefore the PDF generator;
 there are no extra libraries. DXF, SCR, VSDX and CSV remain under **Other

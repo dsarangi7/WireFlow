@@ -40,7 +40,7 @@ spans further than the longest approved harness.
 
 ## Automatic mode — pick the shortest cable
 
-The engine enumerates every reasonable pattern and scores each one with the real BOM:
+The engine enumerates every reasonable pattern and scores each one on physical cable span:
 
 1. **Serpentine** — down one column, up the next (the pattern in the recorded session).
    Four start corners × column-major / row-major.
@@ -54,13 +54,12 @@ Each candidate is scored:
 
 | Metric | Meaning |
 |---|---|
-| `bomMm` | total manufactured cable — what you actually buy |
 | `geomMm` | total physical span — how much copper the layout needs |
 | `longHops` | hops that need R09/R10 instead of R07/R08 |
 | `maxHopMm` | longest single hop |
 | `overflow` | hops (or M2S legs) that no approved harness reaches — these need an engineering release, so they rank above pure length |
 
-Ranking: **fewest unreleasable cables first, then cheapest BOM, then shortest span.** The
+Ranking: **fewest unreleasable cables first, then shortest physical span, then fewest long jumpers.** The
 engineer sees the top options side by side with a preview of the pattern and picks one.
 
 ## Custom mode — the engineer points the order
@@ -78,7 +77,7 @@ engineer sees the top options side by side with a preview of the pattern and pic
 - **Netlist** — a hop between two slots that are not physical neighbours is built with the
   long jumper and flagged `derived from rack numbering`; every hop carries its physical
   span (`geometryMm`).
-- **Schedule / BOM** — part numbers and quantities follow from that (e.g. 7 × `PW-LOC-445`
+- **Cable schedule** — part numbers and quantities follow from that (e.g. 7 × `PW-LOC-445`
   instead of 7 × `PW-JMP-100`).
 - **Drawing** — once a rack drawing is imported, `M1 … MN` are drawn as circled numbers on
   the `NUMBER` layer over the rack, together with labels for SSC / ACDP / MSM / JB. The

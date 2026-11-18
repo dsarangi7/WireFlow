@@ -315,7 +315,7 @@ function numberMetrics(rack, rules, order, countsOpt) {
   const capP = cat.reduce((m, h) => h.network === 'power' ? Math.max(m, h.length) : m, 0);
   const capC = cat.reduce((m, h) => h.network === 'comm' ? Math.max(m, h.length) : m, 0);
 
-  let bomMm = 0, geomMm = 0, longHops = 0, maxHopMm = 0, hops = 0, shortMm = 0;
+  let geomMm = 0, longHops = 0, maxHopMm = 0, hops = 0, shortMm = 0;
   let overflow = 0, unnumbered = 0;
 
   let off = 0;
@@ -335,7 +335,6 @@ function numberMetrics(rack, rules, order, countsOpt) {
       const span = rackSpan(rack, ssc, first, 'power') + rackSpan(rack, ssc, last, 'power') +
         rackSpan(rack, ssc, first, 'comm') + rackSpan(rack, ssc, last, 'comm');
       geomMm += span;
-      bomMm += 2 * (+(r.m2sPowerLen) || 0) + 2 * (+(r.m2sCommLen) || 0);
       const longest = Math.max(
         rackSpan(rack, ssc, first, 'power'), rackSpan(rack, ssc, last, 'power'),
         rackSpan(rack, ssc, first, 'comm'), rackSpan(rack, ssc, last, 'comm'));
@@ -351,7 +350,6 @@ function numberMetrics(rack, rules, order, countsOpt) {
       const hc = pickHarness(cat, 'comm', routedC, r);
       const lenP = hp ? hp.length : routedP;
       const lenC = hc ? hc.length : routedC;
-      bomMm += lenP + lenC;
       if (kind === 'adjacent') shortMm += lenP + lenC; else longHops++;
       if (!hp || !hc) overflow++;
       const spanP = rackSpan(rack, a, b, 'power'), spanC = rackSpan(rack, a, b, 'comm');
@@ -372,7 +370,6 @@ function numberMetrics(rack, rules, order, countsOpt) {
     hops: hops,
     longHops: longHops,
     shortMm: Math.round(shortMm),
-    bomMm: Math.round(bomMm),
     geomMm: Math.round(geomMm),
     maxHopMm: Math.round(maxHopMm),
     overflow: overflow,
@@ -381,14 +378,14 @@ function numberMetrics(rack, rules, order, countsOpt) {
 
 /**
  * Compares two scored plans: no unreleased cable first, then the
- * cheapest BOM, then the shortest physical span.
+ * shortest physical span, then the fewest long jumpers.
  * @param {Object} a Plan. @param {Object} b Plan. @return {number} Sort order.
  */
 function numberPlanCompare(a, b) {
   const ma = a.metrics, mb = b.metrics;
   if (ma.overflow !== mb.overflow) return ma.overflow - mb.overflow;
-  if (ma.bomMm !== mb.bomMm) return ma.bomMm - mb.bomMm;
-  return ma.geomMm - mb.geomMm;
+  if (ma.geomMm !== mb.geomMm) return ma.geomMm - mb.geomMm;
+  return ma.longHops - mb.longHops;
 }
 
 /* ---------------- traversal patterns ---------------- */
