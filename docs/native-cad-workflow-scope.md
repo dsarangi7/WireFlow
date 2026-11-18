@@ -12,22 +12,21 @@ Status: Phases 1 and 2 done (18 November 2026); Phases 3–5 not started.
   primitives by point count + bounding-box size, 0.1 mm tolerance.
 - Drawing view: **Teach a part** (module, SSC, junction box, ACDP, MSM) →
   drag a box around one copy → all copies outlined → for a module click the
-  four terminals once (comm S, comm N, power −, power +; clicks snap to circle
-  centres). SSC/JB terminals are optional (T1, T2 …) until their roles are
-  defined in Phase 3.
+  terminals once, left to right (clicks snap to circle centres). Terminal
+  roles are fixed (see **Terminal conventions** below); parts taught earlier
+  with T1, T2 … are renamed by the convention, left to right, when opened.
 - Taught parts are saved with the drawing and in a device library; a newly
   imported rack is recognised automatically with the saved parts.
   **Download parts (JSON)** exports every component box and terminal in mm.
 - Verified on 111, in Node and through the browser UI: 60 modules, 5 SSCs,
   5 junction boxes, 240 module terminals, each on a terminal circle centre.
   **The junction box is the long box at the TOP of each SSC column**
-  (two connectors and two round knock-outs; confirmed by AYK 18 Nov 2026).
+  (confirmed by AYK 18 Nov 2026). On 111 it has four flanged connectors in a
+  row at y ≈ 1,945 mm, x ≈ 3,425 / 3,495 / 3,565 / 3,635 mm (first column).
   The strip with six connectors directly under each SSC is the **SSC's own
   connector strip** (confirmed by AYK): the SSC is taught as panel + strip,
-  and its six connectors are its terminals T1–T6, left to right (on 111 at
-  y ≈ 1,152 mm: 2 round connectors, then 4 square-flange connectors). What
-  each connector carries (power +/−, comm in/out …) is still to be supplied
-  by AYK; do not guess it.
+  and its six connectors are its terminals, left to right (on 111 at
+  y ≈ 1,152 mm: 2 round connectors, then 4 square-flange connectors).
 - Refinement ignores partial repeats: a candidate copy only votes when it
   shares several kinds of geometry spread over most of the part, so a
   connector that also appears elsewhere cannot take over the signature.
@@ -59,8 +58,20 @@ Status: Phases 1 and 2 done (18 November 2026); Phases 3–5 not started.
   Teaching on a bottom-row module (with rail geometry inside the box) also
   gives 60. Recognition takes ≈0.2 s.
 - Not yet verified on a second rack drawing (S10177 DWG not available here).
-  The four 8.9 mm-radius circles were used as module terminals for the test;
-  an engineer must confirm they are the real terminal positions.
+
+## Terminal conventions (AYK, 18 Nov 2026)
+
+All read left to right on the front of the rack (`CAD_TERMINAL_ROLES` in
+`js/app.js`):
+
+| Part | Terminals | Meaning |
+|---|---|---|
+| Battery module | S, N, −, + | S and N are the communication pair; − and + are power |
+| SSC connector strip | S, N, S+, B+, B−, S− | S, N communication; S+ / S− string + / string −; B+ / B− bus + / bus − |
+| Junction box | +, −, +, − (P1+, P1−, P2+, P2−) | two power pairs; one pair or both are used, depending on the requirement |
+
+On 111 the module terminals are the four r 8.9 mm circles at 25 / 85 / 300 /
+350 mm from the slot edge. Communication terminals are drawn green, power red.
 
 ## Phase 1 — what exists now
 
@@ -184,3 +195,55 @@ engine code.
    supplies them, use `WF-POWER` (red), `WF-COMM` (green), `WF-LABEL`,
    `WF-NUMBER`.
 2. Rule for multiple strings on one SSC (still missing, do not invent).
+3. Wiring of one SSC as read from AYK's "Bank-1" wiring sheet (SSC 1/3,
+   modules 1 … 12, JB front); **confirmed by AYK on 18 Nov 2026**:
+   - power, series: SSC S− → module 1 −; module k + → module k+1 −;
+     last module + → SSC S+;
+   - communication, daisy chain: SSC N → module 1 S; module k N →
+     module k+1 S; last module N → SSC S;
+   - bus: SSC B+ → JB +, SSC B− → JB −.
+
+## Phase 3–4 — what exists now (wiring, 18 Nov 2026)
+
+- `js/cadwire.js` → `cadWirePlan(components, sscs, {pair})`:
+  - groups the modules column by column into one connected group per SSC
+    (counts from the engineer), trying both directions across the rack and
+    keeping only distinct groupings;
+  - for each SSC tries every module order (columns either way, each column
+    up or down) and every order of its four long power cables; each long
+    cable may leave the SSC strip up or down, run in either riser channel
+    beside the SSC column (its own lane, shared lanes tracked across SSCs)
+    and enter its far terminal from above or below; jumps between columns go
+    round the modules or through the riser; a second pass re-routes column
+    jumps once the whole string is known;
+  - keeps the layout with **zero power-power crossings** first, then the
+    shortest power cable, then the shortest total; reports any crossing that
+    remains (shown outlined in white) instead of hiding it.
+- Drawing (as AYK's marked-up rack): modules labelled S1-M1 …, red power and
+  green communication jumps between neighbouring modules, long cables along
+  the risers, a yellow dashed outline per SSC group.
+- **Generate wiring** in the CAD view (after the SSCs are confirmed and the
+  junction box is taught with its four connectors). The plan is saved with
+  the drawing and reused until an input changes (SSC names / counts, parts,
+  junction-box pair).
+- Exports: **Download for AutoCAD (DXF)** — R12 DXF in the drawing's own
+  millimetre coordinates on layers WF-POWER (red), WF-COMM (green),
+  WF-NUMBER (labels), WF-GROUP (outlines); in AutoCAD open it, copy, and
+  PASTEORIG into the rack drawing. **Cable list (CSV)** — SSC, type, from,
+  to, drawn length.
+- Verified on 111: 140 cables (75 power, 65 comm), no power crossings, for
+  pair 1 and pair 2; uneven counts 10/14/12/12/12 also crossing-free.
+  AutoCAD 2024 opens the DXF (AUDIT: 0 errors; 155 power lines, 105 comm
+  lines, 60 labels). Planning takes ≈0.7 s in Node, ≈2.5 s in the browser.
+- Not yet: engineer edits to the suggested numbering, cable slack / part
+  numbers, Visio output. Lengths are along the drawn route only.
+
+## Decided on 18 November 2026 (wiring step)
+
+- **One SSC = one string**: one string controller, one junction box (the one
+  at the top of its column) and the modules the engineer assigns to it.
+- **Junction-box pair:** the engineer picks the pair (P1 or P2) on one
+  junction box; the same pair is used on every junction box of the rack.
+- **Which modules go to which SSC:** the engineer enters the count per SSC;
+  the tool suggests the assignment and numbering with **no power-cable
+  crossings anywhere in the rack**, and the engineer can change it.

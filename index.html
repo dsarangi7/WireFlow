@@ -3,10 +3,9 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>WireFlow by AYK Energy — Battery Rack Wiring Diagrams from AutoCAD DXF</title>
+<title>WireFlow — Battery Rack Wiring Diagrams from AutoCAD DXF</title>
 <meta name="description" content="WireFlow reads your AutoCAD rack drawing in true millimetres, finds every battery module, SSC, junction box, ACDP and MSM after you teach each part once, and applies AYK's wiring rules for marine battery systems.">
-<meta name="keywords" content="battery rack wiring diagram, marine battery system, AutoCAD DXF, wiring diagram automation, SSC, battery module numbering, cable routing, AYK Energy">
-<meta name="author" content="AYK Energy">
+<meta name="keywords" content="battery rack wiring diagram, marine battery system, AutoCAD DXF, wiring diagram automation, SSC, battery module numbering, cable routing">
 <meta name="robots" content="index, follow">
 <meta name="theme-color" content="#080d1d">
 <link rel="canonical" href="https://dsarangi7.github.io/WireFlow/">
@@ -15,7 +14,7 @@
 <link rel="apple-touch-icon" href="assets/ayk-energy-logo.png">
 
 <meta property="og:type" content="website">
-<meta property="og:site_name" content="WireFlow by AYK Energy">
+<meta property="og:site_name" content="WireFlow">
 <meta property="og:title" content="WireFlow — Battery rack wiring, drawn from your CAD file">
 <meta property="og:description" content="Import the AutoCAD rack drawing, teach each part once, and every module, SSC and terminal is found automatically. Built on AYK's wiring rules for marine battery systems.">
 <meta property="og:url" content="https://dsarangi7.github.io/WireFlow/">
@@ -46,7 +45,6 @@
   "url": "https://dsarangi7.github.io/WireFlow/",
   "image": "https://dsarangi7.github.io/WireFlow/assets/og-wireflow.png",
   "description": "Reads AutoCAD rack drawings (DXF) in true millimetres, recognises battery modules, SSCs, junction boxes, ACDPs and MSMs after one example of each, and applies AYK wiring and numbering rules for marine battery systems.",
-  "publisher": { "@type": "Organization", "name": "AYK Energy", "logo": "https://dsarangi7.github.io/WireFlow/assets/ayk-energy-logo.png" },
   "featureList": [
     "Native AutoCAD DXF import at true millimetre scale",
     "Teach a part once and find every identical copy",
@@ -54,6 +52,8 @@
     "SSC1 and ACDP1 numbered from the MSM",
     "Engineer confirms every SSC, ACDP and MSM label",
     "Module count per SSC checked against the drawing",
+    "Automatic wiring per SSC with no power cable crossings",
+    "Wiring exported as AutoCAD DXF on dedicated layers, plus a cable list",
     "Runs in the browser; drawings stay on the device"
   ]
 }
@@ -72,7 +72,7 @@
     { "@type": "Question", "name": "Who decides the SSC, ACDP and MSM names?",
       "acceptedAnswer": { "@type": "Answer", "text": "WireFlow proposes them (SSC1 and ACDP1 are the ones closest to the MSM) and the engineer confirms or renames every label and enters the number of modules per SSC." } },
     { "@type": "Question", "name": "Does WireFlow draw the cables already?",
-      "acceptedAnswer": { "@type": "Answer", "text": "Not on DXF drawings yet. Recognition, numbering rules and confirmations are available now; crossing-free power routing and AutoCAD output are the next release." } }
+      "acceptedAnswer": { "@type": "Answer", "text": "Yes. After the engineer confirms the SSCs and their module counts, Generate wiring chooses which modules each SSC wires and their order so that no power cables cross, draws the series power, communication and bus cables, and exports them as an AutoCAD DXF on WF-POWER and WF-COMM layers plus a cable list." } }
   ]
 }
 </script>
@@ -84,9 +84,9 @@
 <div id="landing" class="site">
   <header class="site-header">
     <div class="site-wrap site-nav">
-      <a class="brand" href="#top" aria-label="WireFlow by AYK Energy, home">
+      <a class="brand" href="#top" aria-label="WireFlow home">
         <span class="brand-logo"><img src="assets/ayk-energy-logo.png" width="30" height="30" alt=""></span>
-        <span>WireFlow</span><small>by AYK Energy</small>
+        <span>WireFlow</span>
       </a>
       <nav class="site-links" aria-label="Main">
         <a href="#features">Features</a>
@@ -103,7 +103,7 @@
     <section class="hero" id="top">
       <div class="site-wrap hero-grid">
         <div class="hero-copy">
-          <p class="maker-line"><span class="brand-logo brand-logo-lg"><img src="assets/ayk-energy-logo.png" width="44" height="44" alt="AYK Energy logo"></span><span><b>An AYK Energy product</b><small>For marine battery rack engineers</small></span></p>
+          <p class="eyebrow">For marine battery rack engineers</p>
           <h1>Battery rack wiring, drawn from your AutoCAD file.</h1>
           <p class="lead">WireFlow reads the rack drawing you already have, in true millimetres. Teach it one battery module, one SSC and one junction box &mdash; it finds every other copy, places every terminal and applies AYK's wiring and numbering rules. Your engineers check and confirm instead of drawing by hand.</p>
           <div class="hero-cta">
@@ -115,11 +115,27 @@
           </ul>
         </div>
         <figure class="hero-shot">
-          <div class="window">
-            <div class="window-bar"><span></span><span></span><span></span><em>rack-111.dxf &middot; 5,143.6 &times; 1,906.0 mm</em></div>
-            <img src="assets/rack-111-recognised.svg" width="1200" height="460" alt="A real AYK rack drawing in WireFlow: 60 battery modules outlined in blue with comm and power terminals, 5 SSCs in orange, 5 junction boxes in violet, ACDP1 and ACDP2 in yellow and MSM1 in pink" loading="eager">
+          <div class="rack3d">
+            <div class="rack3d-body">
+              <div class="rack3d-face rack3d-front">
+                <img src="assets/rack-111-animated.svg" width="1200" height="456" alt="A real AYK rack drawing in WireFlow: 60 battery modules outlined in blue with communication (green) and power (red) terminals, 5 SSCs in orange, 5 junction boxes in violet, ACDP1 and ACDP2 in yellow and MSM1 in pink" loading="eager">
+              </div>
+              <div class="rack3d-face rack3d-back" aria-hidden="true">
+                <span class="brand-logo brand-logo-lg"><img src="assets/ayk-energy-logo.png" width="44" height="44" alt=""></span>
+                <b>Rear of the rack</b>
+                <small>ACDPs and MSM are wired here &middot; labelled, not drawn</small>
+              </div>
+              <div class="rack3d-face rack3d-side rack3d-left" aria-hidden="true"></div>
+              <div class="rack3d-face rack3d-side rack3d-right" aria-hidden="true"></div>
+              <div class="rack3d-face rack3d-cap rack3d-top" aria-hidden="true"></div>
+              <div class="rack3d-face rack3d-cap rack3d-bottom" aria-hidden="true"></div>
+            </div>
+            <div class="rack3d-floor" aria-hidden="true"></div>
           </div>
-          <figcaption>A real 60-module rack drawing after teaching one example of each part.</figcaption>
+          <figcaption>
+            <span class="rack3d-legend"><i style="--c:#38bdf8"></i>60 modules <i style="--c:#f97316"></i>5 SSCs <i style="--c:#a78bfa"></i>5 junction boxes <i style="--c:#facc15"></i>2 ACDPs <i style="--c:#f472b6"></i>1 MSM</span>
+            AYK rack 111 (5,143.6 &times; 1,906.0 mm), recognised after teaching one example of each part.
+          </figcaption>
         </figure>
       </div>
     </section>
@@ -132,25 +148,6 @@
         <div><strong>0.01 mm</strong><span>extents match AutoCAD's own header</span></div>
       </div>
       <p class="site-wrap proof-note">Measured on AYK rack drawing 111 (AutoCAD 2000 DWG converted to DXF).</p>
-    </section>
-
-    <section class="maker" aria-labelledby="maker-title">
-      <div class="site-wrap maker-grid">
-        <div class="maker-logo">
-          <img src="assets/ayk-energy-logo.png" width="256" height="256" alt="AYK Energy logo">
-          <span>AYK ENERGY</span>
-        </div>
-        <div>
-          <p class="eyebrow">Engineered by AYK Energy</p>
-          <h2 id="maker-title">Built by the team that builds the racks.</h2>
-          <p class="section-lead">WireFlow is AYK Energy's own engineering tool. It is shaped around AYK battery modules, SSCs, junction boxes and the wiring rules our engineers sign off &mdash; and it asks the engineer whenever a rule is not yet defined.</p>
-          <ul class="maker-points">
-            <li>AYK module catalogue and terminal conventions built in</li>
-            <li>Rules agreed with AYK engineering, never guessed</li>
-            <li>Every label and module count confirmed by an engineer</li>
-          </ul>
-        </div>
-      </div>
     </section>
 
     <section class="section" id="features" aria-labelledby="features-title">
@@ -196,12 +193,12 @@
     <section class="section section-alt" id="how" aria-labelledby="how-title">
       <div class="site-wrap">
         <p class="eyebrow">How it works</p>
-        <h2 id="how-title">From DWG to a recognised rack in four steps</h2>
+        <h2 id="how-title">From DWG to a wired rack in four steps</h2>
         <ol class="steps">
           <li><span>1</span><h3>Import the drawing</h3><p>Convert the DWG with the included script (it uses your installed AutoCAD) and drop the DXF into WireFlow.</p></li>
           <li><span>2</span><h3>Teach each part once</h3><p>Box one battery module and click its terminals; box one SSC with its connector strip, one junction box, ACDP and MSM.</p></li>
           <li><span>3</span><h3>Confirm the rack</h3><p>Check the proposed SSC, ACDP and MSM names and enter how many modules each SSC controls.</p></li>
-          <li><span>4</span><h3>Wire it <em class="tag-next">next release</em></h3><p>Module numbering without power crossings, cable routing and output back to AutoCAD on its own layers.</p></li>
+          <li><span>4</span><h3>Generate the wiring</h3><p>Module numbering S1-M1 &hellip; with no power crossings, cables routed along the risers, and a DXF back to AutoCAD on its own layers.</p></li>
         </ol>
       </div>
     </section>
@@ -215,7 +212,9 @@
         </div>
         <ul class="rules-list">
           <li><b>Power never crosses power.</b> Power and communication cables may cross where needed, such as at the bottom of the rack.</li>
-          <li><b>Series power sequence.</b> SSC+ to the highest module +, each module &minus; to the next lower module +, module 1 &minus; to SSC&minus;.</li>
+          <li><b>Series power.</b> SSC S&minus; to module 1 &minus;, each module + to the next module &minus;, the last module + to SSC S+.</li>
+          <li><b>Communication chain.</b> SSC N to module 1 S, each module N to the next module S, the last module N back to SSC S.</li>
+          <li><b>Bus to the junction box.</b> SSC B+ and B&minus; to one + &minus; pair of the junction box above it; the engineer picks the pair once for the whole rack.</li>
           <li><b>SSC1 and ACDP1 sit closest to the MSM</b>, so their cables are the shortest.</li>
           <li><b>ACDP and MSM are wired at the back.</b> They are labelled on the drawing, never wired on the front view.</li>
           <li><b>Module terminals:</b> communication pair on the left (S, N), power pair on the right (&minus;, +).</li>
@@ -238,14 +237,15 @@
               <li>SSC / ACDP / MSM numbering rules and engineer confirmation</li>
               <li>Module count per SSC, checked against the drawing</li>
               <li>Saved parts reused on the next rack; parts export (JSON)</li>
+              <li>Automatic wiring per SSC with no power crossings</li>
+              <li>AutoCAD DXF of the wiring (WF-POWER, WF-COMM, WF-NUMBER, WF-GROUP) and a cable list (CSV)</li>
             </ul>
           </div>
           <div class="road-col">
             <h3><span class="dot dot-next"></span>Next</h3>
             <ul>
-              <li>Module numbering per SSC with no power crossings</li>
-              <li>Cable routing on the real rack geometry</li>
-              <li>Output to AutoCAD on dedicated wiring layers</li>
+              <li>Engineer edits to the suggested numbering</li>
+              <li>Cable lengths with slack and part numbers</li>
               <li>Visio output</li>
             </ul>
           </div>
@@ -261,7 +261,7 @@
         <details><summary>Do my drawings leave my computer?</summary><p>No. The drawing is read and stored in your browser on your device. There is no account and no upload.</p></details>
         <details><summary>Our drawings are flat exports with no blocks or text. Does that work?</summary><p>Yes. You box one example of each part and click its terminals once; WireFlow finds every identical copy by its exact geometry.</p></details>
         <details><summary>Who decides the SSC, ACDP and MSM names?</summary><p>WireFlow proposes them (SSC1 and ACDP1 are the ones closest to the MSM) and the engineer confirms or renames every label and enters the number of modules per SSC.</p></details>
-        <details><summary>Does WireFlow draw the cables already?</summary><p>Not on DXF drawings yet. Recognition, numbering rules and confirmations are available now; crossing-free power routing and AutoCAD output are the next release.</p></details>
+        <details><summary>Does WireFlow draw the cables already?</summary><p>Yes. After the engineer confirms the SSCs and their module counts, Generate wiring chooses which modules each SSC wires and their order so that no power cables cross, draws the series power, communication and bus cables, and exports them as an AutoCAD DXF on WF-POWER and WF-COMM layers plus a cable list.</p></details>
       </div>
     </section>
 
@@ -277,7 +277,7 @@
   <footer class="site-footer">
     <div class="site-wrap footer-grid">
       <div>
-        <a class="brand" href="#top"><span class="brand-logo brand-logo-lg"><img src="assets/ayk-energy-logo.png" width="44" height="44" alt="AYK Energy logo"></span><span>WireFlow</span><small>by AYK Energy</small></a>
+        <a class="brand" href="#top"><span>WireFlow</span></a>
         <p>Wiring diagram automation for marine battery systems.</p>
       </div>
       <nav aria-label="Footer">
@@ -287,7 +287,7 @@
         <a href="#faq">FAQ</a>
         <a href="#/app">Open the app</a>
       </nav>
-      <p class="footer-small">&copy; 2026 AYK Energy. Internal engineering tool.</p>
+      <p class="footer-small">&copy; 2026 WireFlow.</p>
     </div>
   </footer>
 </div>
@@ -300,6 +300,7 @@
 <script src="js/vsdx.js"></script>
 <script src="js/rack.js"></script>
 <script src="js/cad.js"></script>
+<script src="js/cadwire.js"></script>
 <script src="js/numbering.js"></script>
 <script src="js/sscplan.js"></script>
 <script src="js/frontview.js"></script>

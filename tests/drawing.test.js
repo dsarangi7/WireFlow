@@ -2055,6 +2055,31 @@ let vsdxTests = Promise.resolve();
     `polylines=${(svg.match(/<polyline/g) || []).length} labels=${(svg.match(/>M\d+<\/text>/g) || []).length}`);
 }
 
+/* ---- AYK terminal conventions on DXF parts (left to right) ---- */
+{
+  const grab = re => { const m = appSrc.match(re); return m ? m[0] : ''; };
+  const T = new Function(
+    grab(/const CAD_TERMINAL_ROLES = \{[\s\S]*?\n\};/) + '\n' +
+    grab(/function cadTerminalColor\(role\) \{[\s\S]*?\n\}/) + '\n' +
+    grab(/function cadNormaliseTerminals\(sig\) \{[\s\S]*?\n\}/) +
+    '\nreturn { CAD_TERMINAL_ROLES, cadTerminalColor, cadNormaliseTerminals };')();
+  ok('terminals: module S, N, -, +', T.CAD_TERMINAL_ROLES.module.join() === 'comm-S,comm-N,power-,power+');
+  ok('terminals: SSC S, N, S+, B+, B-, S-', T.CAD_TERMINAL_ROLES.ssc.join() === 'S,N,S+,B+,B-,S-');
+  ok('terminals: junction box + - + - as two pairs', T.CAD_TERMINAL_ROLES.jb.join() === 'P1+,P1-,P2+,P2-');
+  const green = '#22c55e', red = '#ef4444';
+  ok('terminals: S and N drawn as communication, +/- as power',
+    ['S', 'N', 'comm-S'].every(r => T.cadTerminalColor(r) === green) &&
+    ['S+', 'B+', 'B-', 'S-', 'P2-', 'power+'].every(r => T.cadTerminalColor(r) === red));
+  /* an SSC taught before the convention (clicked out of order) is renamed by x */
+  const old = { kind: 'ssc', terminals: [3, 0, 1, 2, 4, 5].map(i => ({ role: 'T' + (i + 1), dx: [57, 102, 141.6, 188.1, 234.6, 281.1][i], dy: 53 })) };
+  const fixed = T.cadNormaliseTerminals(old);
+  ok('terminals: old T1-T6 SSC renamed left to right',
+    fixed.terminals.map(t => t.role).join() === 'S,N,S+,B+,B-,S-' && fixed.terminals[2].dx === 141.6,
+    fixed.terminals.map(t => t.role + '@' + t.dx).join(' '));
+  const odd = { kind: 'jb', terminals: [{ role: 'T1', dx: 1, dy: 0 }, { role: 'T2', dx: 2, dy: 0 }] };
+  ok('terminals: wrong count is left alone (no guessing)', T.cadNormaliseTerminals(odd).terminals[0].role === 'T1');
+}
+
 
 /* ============================================================
  * SUMMARY

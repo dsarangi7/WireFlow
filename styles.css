@@ -521,3 +521,16 @@ body:has(.cad-page) .topbar { display: none; }
   .dash-head h1 { font-size: 24px; }
   .dash-actions, .dash-actions .btn-site { width: 100%; }
 }
+
+/* CAD view: wiring card */
+.cad-wire-card { border-color: rgba(239,68,68,.4); background: rgba(239,68,68,.05); }
+.cad-wire-row { display: flex; gap: 10px; align-items: center; justify-content: space-between; margin: 8px 0 2px; }
+.cad-wire-row label { font-size: 13px; font-weight: 600; }
+.cad-wire-row select { min-width: 0; }
+.cad-wire-go { width: 100%; margin: 8px 0 4px; justify-content: center; }
+.cad-wire-todo { margin: 8px 0; padding-left: 18px; font-size: 13px; color: #fbbf24; }
+.cad-wire-check { font-weight: 700; margin: 10px 0 6px; }
+.cad-wire-table { width: 100%; border-collapse: collapse; font-size: 12.5px; margin: 6px 0; }
+.cad-wire-table th, .cad-wire-table td { text-align: left; padding: 4px 6px; border-bottom: 1px solid rgba(148,163,184,.18); white-space: nowrap; }
+.cad-wire-table thead th { font-weight: 600; opacity: .75; }
+.cad-wire-show { display: flex; gap: 8px; align-items: center; font-size: 13px; margin: 8px 0; }

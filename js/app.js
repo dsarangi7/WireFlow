@@ -267,7 +267,7 @@ async function route() {
     if (h === '' || h === '#/') window.scrollTo(0, 0);
     return;
   }
-  document.title = 'WireFlow · AYK Energy';
+  document.title = 'WireFlow';
   if (h.startsWith('#/project/')) { renderProjectPage(+h.split('/')[2]); return; }
   if (h.startsWith('#/cad/')) { renderCadPage(+h.split('/')[2]); return; }
   switch (h) {
@@ -286,7 +286,7 @@ function shell(content, active) {
       <div class="topbar-in">
         <a class="tb-brand" href="#/app" aria-label="WireFlow drawings">
           <span class="brand-logo"><img src="assets/ayk-energy-logo.png" width="28" height="28" alt=""></span>
-          <span>WireFlow</span><small>by AYK Energy</small>
+          <span>WireFlow</span>
         </a>
         <nav class="tb-nav" aria-label="App">
           <a href="#/app" class="${active === 'dash' ? 'on' : ''}">Drawings</a>
@@ -352,7 +352,7 @@ async function renderDashboard() {
         <li><b>1</b><span>Import DXF</span></li>
         <li><b>2</b><span>Teach each part once</span></li>
         <li><b>3</b><span>Confirm SSCs, ACDPs, MSM and modules per SSC</span></li>
-        <li class="next"><b>4</b><span>Wiring <em>next release</em></span></li>
+        <li><b>4</b><span>Generate wiring and download for AutoCAD</span></li>
       </ol>
 
       <section class="dash-list" aria-labelledby="list-title">
@@ -559,13 +559,36 @@ function cadCompLabel(c, labels) {
   const saved = labels && labels[cadCompKey(c)];
   return saved && saved.label ? saved.label : k.prefix + (c.proposal || c.id.split('-').pop());
 }
-/* AYK convention: communication pair on the left of the module face (S then N),
-   power pair on the right (− then +). */
-const CAD_MODULE_TERMINALS = ['comm-S', 'comm-N', 'power-', 'power+'];
+/* AYK terminal conventions (confirmed by AYK engineering), all LEFT to RIGHT:
+   - module: S, N (communication), then power − and +;
+   - SSC connector strip: S, N (communication), S+ (string +), B+ (bus +),
+     B− (bus −), S− (string −);
+   - junction box: + − + −, i.e. two power pairs P1 and P2. A rack uses one
+     pair or both, depending on the requirement. */
+const CAD_TERMINAL_ROLES = {
+  module: ['comm-S', 'comm-N', 'power-', 'power+'],
+  ssc: ['S', 'N', 'S+', 'B+', 'B-', 'S-'],
+  jb: ['P1+', 'P1-', 'P2+', 'P2-'],
+};
+const CAD_MODULE_TERMINALS = CAD_TERMINAL_ROLES.module;
 const CAD_LIBRARY_KEY = 'wireflow-cad-part-library-v1';
 
 function cadKind(id) { return CAD_KINDS.find(k => k.id === id) || { id: id, label: id, color: '#94a3b8' }; }
-function cadTerminalColor(role) { return /^power/.test(role) ? '#ef4444' : /^comm/.test(role) ? '#22c55e' : '#22d3ee'; }
+/** Communication (S, N) is green, power (anything ending + or −) is red. */
+function cadTerminalColor(role) {
+  if (/^comm/.test(role) || role === 'S' || role === 'N') return '#22c55e';
+  if (/^power/.test(role) || /[+-]$/.test(role)) return '#ef4444';
+  return '#22d3ee';
+}
+/** Parts taught before the conventions were known have terminals named
+    T1, T2 …; when the count matches, name them by the convention, left to right. */
+function cadNormaliseTerminals(sig) {
+  const roles = CAD_TERMINAL_ROLES[sig && sig.kind];
+  const t = sig && sig.terminals;
+  if (!roles || !Array.isArray(t) || t.length !== roles.length || !t.every(x => /^T\d+$/.test(x.role))) return sig;
+  sig.terminals = t.slice().sort((a, b) => a.dx - b.dx).map((x, i) => Object.assign({}, x, { role: roles[i] }));
+  return sig;
+}
 
 /** Device-local library of taught parts, reused on other racks. */
 function cadLibraryLoad() {
@@ -613,9 +636,16 @@ async function renderCadPage(id) {
   const cfg = project.config || (project.config = {});
   const cad = cfg.cad || (cfg.cad = { signatures: [], components: [] });
   if (!Array.isArray(cad.signatures)) cad.signatures = [];
+  const roleList = () => JSON.stringify(cad.signatures.map(s => (s.terminals || []).map(t => t.role)));
+  const rolesBefore = roleList();
+  cad.signatures.forEach(cadNormaliseTerminals);
+  const renamedTerminals = roleList() !== rolesBefore;
   if (!cad.labels || typeof cad.labels !== 'object') cad.labels = {};
   let components = [];
   let fromLibrary = false;
+  /* generated wiring (plain data, saved with the drawing) */
+  let wiring = cad.wiring && cad.wiring.plan ? cad.wiring.plan : null;
+  let showWiring = true;
 
   shell(`
     <div class="cad-page">
@@ -643,9 +673,10 @@ async function renderCadPage(id) {
                 <select id="cad-kind">${CAD_KINDS.map(k => `<option value="${k.id}">${esc(k.label)}</option>`).join('')}</select>
                 <button class="btn btn-primary btn-sm" id="cad-teach">Box one example</button>
               </div>
-              <p class="muted small">Drag a box around one complete copy. Every identical copy is then found. For a battery module you then click its four terminals once.</p>
+              <p class="muted small">Drag a box around one complete copy. Every identical copy is then found. Then click its terminals once, left to right: module S, N, −, + · SSC S, N, S+, B+, B−, S− · junction box +, −, +, −.</p>
             </div>
             <div id="cad-labels"></div>
+            <div id="cad-wiring"></div>
             <div id="cad-sigs"></div>
             <div class="cad-part-actions">
               <button class="btn btn-ghost btn-sm" id="cad-use-library">Use saved parts</button>
@@ -700,7 +731,7 @@ async function renderCadPage(id) {
       ctx.fillStyle = col + '1f';
       ctx.fillRect(a[0], a[1], b[0] - a[0], b[1] - a[1]);
       const unwired = cadKind(c.kind).wired === false;
-      if (c.id && (b[0] - a[0] > 46 || unwired)) {
+      if (c.id && (b[0] - a[0] > 46 || unwired) && !(c.kind === 'module' && wiring && showWiring && !teach)) {
         const saved = cad.labels[cadCompKey(c)];
         const text = cadCompLabel(c, cad.labels) + (cadNamed(c.kind) && !(saved && saved.confirmed) ? ' ?' : '') +
           (c.kind === 'ssc' && saved && saved.modules ? ' · ' + saved.modules + ' modules' : '');
@@ -715,6 +746,7 @@ async function renderCadPage(id) {
         ctx.beginPath(); ctx.arc(p[0], p[1], Math.max(2.5, Math.min(6, 3 * scale)), 0, Math.PI * 2); ctx.fill();
       }
     }
+    if (!teach && wiring && showWiring) drawWiring(ctx, toScreen, scale);
     if (teach && teach.box) {
       const a = toScreen(teach.box.x0, teach.box.y1), b = toScreen(teach.box.x1, teach.box.y0);
       ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 2;
@@ -726,6 +758,127 @@ async function renderCadPage(id) {
         ctx.fillStyle = '#ffffff'; ctx.font = '600 11px Inter, system-ui, sans-serif';
         ctx.fillText(t.role, p[0] + 11, p[1] - 9);
       }
+    }
+  }
+
+  /* ---------- wiring (AYK rules, see js/cadwire.js) ---------- */
+  function drawWiring(ctx, toScreen, scale) {
+    const bad = new Set((wiring.crossings || []).flatMap(x => [x.a, x.b]));
+    ctx.save();
+    ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    ctx.strokeStyle = '#facc15'; ctx.lineWidth = 1.6; ctx.setLineDash([8, 5]);
+    for (const o of wiring.outline || []) for (const sgm of o.segs) {
+      const a = toScreen(sgm[0][0], sgm[0][1]), b = toScreen(sgm[1][0], sgm[1][1]);
+      ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke();
+    }
+    ctx.setLineDash([]);
+    const w = Math.max(1.4, Math.min(3.2, 5 * scale));
+    for (const kind of ['comm', 'power']) for (const c of wiring.cables) {
+      if (c.kind !== kind) continue;
+      ctx.beginPath();
+      c.pts.forEach((pt, i) => { const q = toScreen(pt[0], pt[1]); if (i) ctx.lineTo(q[0], q[1]); else ctx.moveTo(q[0], q[1]); });
+      if (bad.has(c.id)) { ctx.strokeStyle = '#ffffff'; ctx.lineWidth = w + 4; ctx.stroke(); }
+      ctx.strokeStyle = kind === 'power' ? '#ef4444' : '#22c55e'; ctx.lineWidth = w; ctx.stroke();
+    }
+    const fs = Math.round(Math.max(9, Math.min(22, 34 * scale)));
+    ctx.font = '700 ' + fs + 'px Inter, system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    for (const st of wiring.strings) for (const l of st.labels) {
+      const q = toScreen(l.x, l.y);
+      ctx.lineWidth = 3; ctx.strokeStyle = '#0b1220'; ctx.strokeText(l.text, q[0], q[1]);
+      ctx.fillStyle = '#d8b4fe'; ctx.fillText(l.text, q[0], q[1]);
+    }
+    ctx.restore();
+  }
+
+  /* what the wiring depends on; a saved plan is reused only while this is unchanged */
+  function wiringInputs() {
+    const sscs = components.filter(c => c.kind === 'ssc').map(c => {
+      const saved = cad.labels[cadCompKey(c)] || {};
+      return { comp: c, name: cadCompLabel(c, cad.labels), count: saved.modules || 0, confirmed: !!saved.confirmed };
+    });
+    const pair = (cad.wiring && cad.wiring.pair) === 'P2' ? 'P2' : 'P1';
+    const key = JSON.stringify([pair, sscs.map(s => [cadCompKey(s.comp), s.name, s.count]),
+      components.map(c => cadCompKey(c) + (c.terminals || []).map(t => t.role).join(''))]);
+    return { sscs: sscs, pair: pair, key: key };
+  }
+
+  function renderWiring() {
+    const box = $('cad-wiring');
+    if (!box) return;
+    const inp = wiringInputs();
+    if (!inp.sscs.length) { box.innerHTML = ''; return; }
+    if (wiring && wiring.key !== inp.key) wiring = null;
+    const ready = inp.sscs.every(s => s.confirmed && s.count >= 1);
+    const jbs = components.filter(c => c.kind === 'jb');
+    const jbTaught = jbs.length && jbs.every(j => (j.terminals || []).length === 4);
+    const todo = [];
+    if (!ready) todo.push('Confirm the SSC numbers and module counts above.');
+    if (!jbs.length) todo.push('Teach the junction box (the box at the top of each SSC column).');
+    else if (!jbTaught) todo.push('Teach the junction box again and click its four connectors left to right (+, −, +, −).');
+    const m = v => (v / 1000).toLocaleString('en-GB', { maximumFractionDigits: 1, minimumFractionDigits: 1 }) + ' m';
+    const len = pts => pts.reduce((a, p, i) => i ? a + Math.hypot(p[0] - pts[i - 1][0], p[1] - pts[i - 1][1]) : 0, 0);
+    let result = '';
+    if (wiring) {
+      const ok = !wiring.crossings.length;
+      const rows = wiring.strings.map(st => {
+        const cs = wiring.cables.filter(c => c.ssc === st.name);
+        const pw = cs.filter(c => c.kind === 'power'), cm = cs.filter(c => c.kind === 'comm');
+        return `<tr><th>${esc(st.name)}</th><td>${st.labels.length}</td><td>${pw.length} · ${m(pw.reduce((a, c) => a + len(c.pts), 0))}</td><td>${cm.length} · ${m(cm.reduce((a, c) => a + len(c.pts), 0))}</td></tr>`;
+      }).join('');
+      result = `
+        <p class="cad-wire-check ${ok ? 'cad-ok' : 'warn'}">${ok ? '✓ No power cables cross anywhere in the rack.' : '✗ ' + wiring.crossings.length + ' power crossing(s), outlined in white.'}</p>
+        ${(wiring.warnings || []).filter(w => !/crossing/.test(w)).map(w => `<p class="warn small">${esc(w)}</p>`).join('')}
+        <table class="cad-wire-table"><thead><tr><th>SSC</th><th>Modules</th><th>Power</th><th>Comm</th></tr></thead><tbody>${rows}</tbody></table>
+        <p class="muted small">Cables · length along the drawn route, without slack. S1-M1 is the module wired to S− and N.</p>
+        <label class="cad-wire-show"><input type="checkbox" id="cad-wire-show" ${showWiring ? 'checked' : ''}> Show wiring on the drawing</label>
+        <div class="cad-part-actions">
+          <button class="btn btn-primary btn-sm" id="cad-wire-dxf">Download for AutoCAD (DXF)</button>
+          <button class="btn btn-ghost btn-sm" id="cad-wire-csv">Cable list (CSV)</button>
+        </div>
+        <p class="muted small">Same coordinates as your rack drawing. In AutoCAD: open the DXF, select all, Copy (Ctrl+C), then in your rack drawing use PASTEORIG (paste to original coordinates). Layers WF-POWER (red), WF-COMM (green), WF-NUMBER, WF-GROUP.</p>`;
+    }
+    box.innerHTML = `<div class="cad-label-card cad-wire-card">
+      <h4><span class="cad-swatch" style="background:#ef4444"></span>Wiring
+        <span class="chip ${wiring && !wiring.crossings.length ? 'chip-ok' : 'chip-warn'}">${wiring ? (wiring.crossings.length ? 'Check crossings' : 'Generated') : 'Not generated'}</span></h4>
+      <p class="muted small">Power in series S− → M1 → … → S+, communication N → M1 → … → S, bus B+ / B− to the junction box. The tool chooses which modules each SSC wires, and their order, so that no power cables cross.</p>
+      ${todo.length ? `<ul class="cad-wire-todo">${todo.map(t => `<li>${esc(t)}</li>`).join('')}</ul>` : ''}
+      <div class="cad-wire-row">
+        <label for="cad-wire-pair">Junction box connectors</label>
+        <select id="cad-wire-pair">
+          <option value="P1" ${inp.pair === 'P1' ? 'selected' : ''}>Pair 1 (left + −)</option>
+          <option value="P2" ${inp.pair === 'P2' ? 'selected' : ''}>Pair 2 (right + −)</option>
+        </select>
+      </div>
+      <p class="muted small">The same pair is used on every junction box.</p>
+      <button class="btn btn-primary btn-sm cad-wire-go" id="cad-wire-go" ${todo.length ? 'disabled' : ''}>${wiring ? 'Generate again' : 'Generate wiring'}</button>
+      ${result}
+    </div>`;
+    $('cad-wire-pair').onchange = async e => {
+      cad.wiring = Object.assign({}, cad.wiring, { pair: e.target.value });
+      delete cad.wiring.plan; wiring = null;
+      await persist(); renderWiring(); viewer.redraw();
+    };
+    $('cad-wire-go').onclick = () => {
+      const btn = $('cad-wire-go');
+      btn.disabled = true; btn.textContent = 'Working out the wiring…';
+      setTimeout(async () => {
+        const inp2 = wiringInputs();
+        let plan;
+        try { plan = cadWirePlan(components, inp2.sscs, { pair: inp2.pair }); } catch (e) { plan = { ok: false, errors: [e.message] }; }
+        if (!plan.ok) { say(plan.errors.join(' '), 'warn'); renderWiring(); return; }
+        wiring = cadWireSave(plan, inp2.key);
+        showWiring = true;
+        cad.wiring = { pair: inp2.pair, plan: wiring };
+        await persist();
+        renderWiring(); viewer.redraw();
+        say(plan.crossings.length ? `Wiring generated with ${plan.crossings.length} power crossing(s) to check.` : `Wiring generated: ${plan.cables.length} cables, no power crossings.`, plan.crossings.length ? 'warn' : 'cad-ok');
+      }, 30);
+    };
+    if (wiring) {
+      $('cad-wire-show').onchange = e => { showWiring = e.target.checked; viewer.redraw(); };
+      const base = (project.name || 'rack').replace(/[^\w.-]+/g, '-');
+      $('cad-wire-dxf').onclick = () => download(`${base}-wiring.dxf`, cadWireDxf(wiring), 'application/dxf');
+      $('cad-wire-csv').onclick = () => download(`${base}-cables.csv`, cadWireCsv(wiring), 'text/csv');
     }
   }
 
@@ -825,6 +978,7 @@ async function renderCadPage(id) {
 
   function renderFound() {
     renderLabels();
+    renderWiring();
     const by = {};
     components.forEach(c => { by[c.kind] = (by[c.kind] || 0) + 1; });
     const terms = components.reduce((n, c) => n + (c.terminals || []).length, 0);
@@ -912,10 +1066,10 @@ async function renderCadPage(id) {
       teach.step = 'terminals'; teach.roles = null; teach.picked = []; teach.noTerminals = true;
       viewer.setMode('pan');
       prompt(`Found ${hits.length} ${cadKind(teach.kind).label}. No wiring needed. Press Enter to save · Wrong count? Esc and box again`);
-    } else if (teach.kind === 'module') {
-      teach.step = 'terminals'; teach.roles = CAD_MODULE_TERMINALS.slice(); teach.picked = [];
+    } else if (CAD_TERMINAL_ROLES[teach.kind]) {
+      teach.step = 'terminals'; teach.roles = CAD_TERMINAL_ROLES[teach.kind].slice(); teach.picked = [];
       viewer.setMode('pick');
-      prompt(`Found ${hits.length} copies. Now click terminal: ${teach.roles[0]} (inside the white box) · Wrong count? Esc and box again`);
+      prompt(`Found ${hits.length} copies. Click its ${teach.roles.length} terminals left to right (${teach.roles.join(', ')}). First: ${teach.roles[0]} (inside the white box) · Wrong count? Esc and box again`);
     } else {
       teach.step = 'terminals'; teach.roles = null; teach.picked = [];
       viewer.setMode('pick');
@@ -962,7 +1116,7 @@ async function renderCadPage(id) {
   $('cad-use-library').onclick = async () => {
     const lib = cadLibraryLoad();
     if (!lib.length) { say('No parts saved on this device yet. Teach one first.', 'warn'); return; }
-    cad.signatures = lib.map(s => Object.assign({}, s));
+    cad.signatures = lib.map(s => cadNormaliseTerminals(Object.assign({}, s)));
     fromLibrary = true;
     recognise();
     await persist();
@@ -983,11 +1137,11 @@ async function renderCadPage(id) {
   };
 
   /* Open: saved parts for this drawing, else the device library. */
-  if (cad.signatures.length) { recognise(); }
+  if (cad.signatures.length) { recognise(); if (renamedTerminals) persist(); }
   else {
     const lib = cadLibraryLoad();
     if (lib.length) {
-      cad.signatures = lib.map(s => Object.assign({}, s));
+      cad.signatures = lib.map(s => cadNormaliseTerminals(Object.assign({}, s)));
       fromLibrary = true;
       recognise();
       if (!components.length) { cad.signatures = []; fromLibrary = false; renderFound(); }
@@ -1164,7 +1318,8 @@ function cadViewer(stage, flat, opts) {
   ro.observe(stage);
   canvas.style.cursor = 'grab';
   resize();
-  api.fit = fit; api.view = view; api.setMode = setMode; api.redraw = draw;
+  api.fit = fit; api.view = view; api.setMode = setMode; api.redraw = draw; api.toScreen = toScreen;
+  canvas.wfToScreen = toScreen; /* for UI tests: drawing mm -> canvas px */
   api.zoomTo = (x0, y0, x1, y1) => {
     userMoved = true;
     const w = Math.max(1e-6, x1 - x0), h = Math.max(1e-6, y1 - y0);

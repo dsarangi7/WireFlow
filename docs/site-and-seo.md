@@ -29,12 +29,20 @@ The canonical/OG URLs use the GitHub Pages address from the README
   ≥ 40 mm) with the recognised modules, SSCs, junction boxes, ACDPs and MSM,
   rendered from the DXF and the taught parts. 81 KB.
 - `assets/og-wireflow.png` — 1200 × 630 social preview made from the same data.
+- `assets/rack-111-animated.svg` — the hero picture: the same rack with the
+  recognition replayed as a 12 s loop (scan line, modules column by column,
+  terminals, junction boxes, SSCs with S, N, S+, B+, B−, S− coloured, ACDPs,
+  MSM, labels). Made by `python tools/make-hero-animation.py` from
+  `rack-111-recognised.svg`; regenerate it when that file changes. On the page
+  it sits on a CSS 3D rack (`.rack3d` in `site.css`) that faces the viewer,
+  sways, then makes one slow full turn every 26 s; the rear face says ACDPs and
+  MSM are wired at the back. With *reduce motion* switched on, both the turn
+  and the SVG animation stop and the finished picture is shown.
 
-- `assets/ayk-energy-logo.png` — AYK Energy logo (256 px, from the supplied
-  `AYK LOGO-PNG.ico`). Shown on a white tile because the blue mark needs a light
-  background on the dark theme: header, hero ("An AYK Energy product"), the
-  large "Engineered by AYK Energy" panel, footer, app top bar and the social
-  image. It is 256 px, so keep it at 200 px or smaller on screen.
+- `assets/ayk-energy-logo.png` — the logo (256 px, from the supplied
+  `AYK LOGO-PNG.ico`), shown small on a white tile in the site header, the app
+  top bar and the social image. The site does not carry a company byline:
+  WireFlow is presented under its own name.
 
 The rack images were generated from `prototype-output/cad-check/rack-111.dxf`; they are
 not mock-ups. Regenerate them if the recognition result changes.
@@ -43,7 +51,7 @@ not mock-ups. Regenerate them if the recognition result changes.
 
 Every number on the page was measured on drawing 111 (97,770 entities, 0.2 s
 recognition, 240 terminals from 4 clicks, extents equal to AutoCAD's header
-within 0.01 mm). Wiring on DXF is marked "next release" until it exists.
+within 0.01 mm). Wiring claims match `js/cadwire.js` and `tests/cadwire.test.js` (111: 140 cables, no power crossings).
 Do not add customer logos, testimonials or prices that are not real.
 
 ## Styles
