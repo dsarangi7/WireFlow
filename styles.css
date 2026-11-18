@@ -581,3 +581,6 @@ body:has(.sh-page) .topbar { display: none; }
 
 .cad-card-msg { margin: 8px 0; padding: 8px 10px; border-radius: 8px; background: rgba(239,68,68,.12); border: 1px solid rgba(239,68,68,.45); color: #fecaca; font-size: 13px; }
 .cad-label-row input.cad-bad { border-color: #ef4444 !important; box-shadow: 0 0 0 2px rgba(239,68,68,.35); }
+
+.cad-wire-custom { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; color: #d8b4fe; }
+.cad-pop select { min-width: 0; }

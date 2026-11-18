@@ -241,6 +241,13 @@ engine code.
   are on the PDF. Side-by-side modules in adjacent columns are joined by a
   slight C curve (power deeper than comm), as AYK draws them. The PDF is
   vector, A3 landscape, Helvetica, made in the browser (≈2 MB, <0.5 s on 111).
+- **Engineer numbering**: after Generate wiring, click a module (or its
+  S3-M5 label) to give it another number or SSC. The module that has that
+  number swaps with it (every SSC keeps its count) and the wiring is re-routed
+  in the new order (`cadWirePlan(..., {orders})`). Crossings that the new order
+  causes are reported, not refused. **Back to the suggested numbering** resets
+  it. Edited orders are saved per SSC (by its position, so renaming an SSC keeps
+  them). SSC / ACDP / MSM names are renamed the same way (click, or Show).
 - **Example rack**: `#/example` (buttons on the product page and Drawings
   home) loads rack 111 with its parts taught and labels confirmed, built by
   `node tools/make-example.js <rack-111.dxf>` into `assets/examples/`.

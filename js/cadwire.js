@@ -202,8 +202,14 @@ function cadWirePlan(comps, sscs, opts) {
   if (errors.length) return { ok: false, errors: errors, warnings: warnings, strings: [], cables: [], crossings: [], outline: [] };
 
   let best = null;
+  /* the engineer's own numbering (opts.orders: SSC key -> module ids in order) */
+  if (opts.orders) {
+    const fixed = cadwFixedStrings(comps, sscs, opts.orders);
+    if (fixed) best = cadwRunStrings(fixed, cols, jbFor, pair);
+    else warnings.push('The edited numbering no longer matches the modules or SSC counts, so the suggested numbering is used.');
+  }
   const seen = new Set();
-  for (const lr of [1, -1]) for (const td of [1, -1]) {
+  if (!best) for (const lr of [1, -1]) for (const td of [1, -1]) {
     /* traversals that give the same groups of modules are planned once */
     const groups = cadwGroups(cols, sscs, lr, td);
     if (!groups || seen.has(groups)) continue;
@@ -216,9 +222,9 @@ function cadWirePlan(comps, sscs, opts) {
     return { ok: false, errors: ['Could not split the modules into one connected group per SSC with these counts. Check the module count of each SSC.'], warnings: warnings, strings: [], cables: [], crossings: [], outline: [] };
   }
   const crossings = cadwPowerCrossings(best.cables);
-  if (crossings.length) warnings.push(`${crossings.length} power cable crossing${crossings.length === 1 ? '' : 's'} could not be avoided: check the highlighted cables.`);
+  if (crossings.length) warnings.push(`${crossings.length} power cable crossing${crossings.length === 1 ? '' : 's'}${best.custom ? ' with this numbering' : ' could not be avoided'}: check the highlighted cables.`);
   for (const st of best.strings) if (st.far) warnings.push(`${st.name} is not next to its modules; its long cables may be impractical.`);
-  return { ok: true, errors: [], warnings: warnings, pair: pair, strings: best.strings, cables: best.cables, crossings: crossings,
+  return { ok: true, errors: [], warnings: warnings, pair: pair, custom: !!best.custom, strings: best.strings, cables: best.cables, crossings: crossings,
     outline: best.strings.map(st => ({ ssc: st.name, segs: cadwOutline(st.modules.concat([st.ssc])) })) };
 }
 
@@ -236,6 +242,36 @@ function cadwGroups(cols, sscs, lr, td) {
     parts.push(s.name + ':' + mods.map(m => m.id).sort().join(','));
   }
   return parts.sort().join('|');
+}
+
+/** Strings in the engineer's order, or null when the order does not fit the drawing. */
+function cadwFixedStrings(comps, sscs, orders) {
+  const byId = new Map(comps.filter(c => c.kind === 'module').map(m => [m.id, m]));
+  const used = new Set();
+  const out = [];
+  for (const s of sscs) {
+    const ids = orders[s.key];
+    if (!Array.isArray(ids) || ids.length !== s.count) return null;
+    const mods = ids.map(id => byId.get(id));
+    if (mods.some(m => !m || used.has(m.id))) return null;
+    mods.forEach(m => used.add(m.id));
+    const dist = Math.min(...mods.map(m => Math.abs(m._col - s.comp._col)));
+    out.push({ s: s, mods: mods, far: dist > 1, fixed: true });
+  }
+  return used.size === byId.size ? out : null;
+}
+/** Routes a set of strings (left to right) and sums their cost. */
+function cadwRunStrings(strings, cols, jbFor, pair) {
+  const placed = [], gapUse = new Map(), out = [];
+  let score = 0;
+  for (const st of strings.slice().sort((a, b) => a.s.comp._col - b.s.comp._col)) {
+    const r = cadwPlanString(st, cols, jbFor.get(st.s), pair, placed, gapUse);
+    if (!r) return null;
+    for (const c of r.cables) placed.push(c);
+    out.push(r.string);
+    score += r.score;
+  }
+  return { score: score, strings: out, cables: placed, custom: true };
 }
 
 /** One global traversal: columns left->right (lr=1) or right->left, modules top->bottom (td=1) or bottom->top. */
@@ -305,7 +341,7 @@ function cadwPlanString(st, cols, jb, pair, placed, gapUse) {
   const num = (String(st.s.name).match(/\d+/) || [''])[0];
   const tag = 'S' + num;
   let best = null;
-  for (const order of cadwOrders(st.mods)) {
+  for (const order of (st.fixed ? [st.mods] : cadwOrders(st.mods))) {
     const label = new Map(order.map((m, i) => [m, `${tag}-M${i + 1}`]));
     /* jumps between neighbouring modules */
     const jumps = [];
@@ -453,7 +489,7 @@ function cadwOutline(boxes) {
 function cadWireSave(plan, key) {
   const r = v => Math.round(v * 100) / 100;
   return {
-    key: key, pair: plan.pair, generated: new Date().toISOString(),
+    key: key, pair: plan.pair, custom: !!plan.custom, generated: new Date().toISOString(),
     crossings: plan.crossings.slice(), warnings: plan.warnings.slice(),
     cables: plan.cables.map(c => ({ id: c.id, ssc: c.ssc, kind: c.kind, from: c.from, to: c.to, curve: !!c.curve, pts: c.pts.map(p => [r(p[0]), r(p[1])]) })),
     strings: plan.strings.map(st => ({ name: st.name, tag: st.tag, modules: st.modules.map(m => m.id),

@@ -39,7 +39,7 @@ function rack111() {
 /* SSC names as on 111: SSC1 is the rightmost (closest to the MSM) */
 function sscList(comps, counts) {
   const s = comps.filter(c => c.kind === 'ssc').sort((a, b) => b.x0 - a.x0);
-  return s.map((c, i) => ({ comp: c, name: 'SSC' + (i + 1), count: counts ? counts[i] : 12 }));
+  return s.map((c, i) => ({ comp: c, key: c.id, name: 'SSC' + (i + 1), count: counts ? counts[i] : 12 }));
 }
 
 /* ---------- geometry helpers ---------- */
@@ -107,6 +107,29 @@ ok('JB pair P2: still no power crossings', p2.crossings.length === 0, p2.crossin
 const uneven = W.cadWirePlan(comps, sscList(comps, [10, 14, 12, 12, 12]), { pair: 'P1' });
 ok('uneven counts 10/14/12/12/12 planned', uneven.ok, uneven.errors.join(' | '));
 ok('uneven counts: no power crossings', uneven.crossings.length === 0, uneven.crossings.length);
+
+/* the engineer's own numbering: swap two modules inside SSC1, and one across SSC1 / SSC2 */
+{
+  const orders = {};
+  plan.strings.forEach(st => { orders[st.ssc.id] = st.modules.map(m => m.id); });
+  const o1 = orders[s1.ssc.id];
+  [o1[1], o1[4]] = [o1[4], o1[1]];                                   // S1-M2 <-> S1-M5
+  const s2 = plan.strings.find(s => s.name === 'SSC2');
+  const o2 = orders[s2.ssc.id];
+  [o1[11], o2[0]] = [o2[0], o1[11]];                                 // S1-M12 <-> S2-M1
+  const ep = W.cadWirePlan(comps, sscList(comps), { pair: 'P1', orders: orders });
+  const e1 = ep.strings.find(s => s.name === 'SSC1');
+  ok('edited numbering: plan follows the engineer order', ep.ok && ep.custom && e1.modules.map(m => m.id).join() === o1.join());
+  const hasE = (a, b) => ep.cables.some(c => { const [p, q] = ends(c); return (near(p, a) && near(q, b)) || (near(p, b) && near(q, a)); });
+  ok('edited numbering: series chain re-wired in the new order',
+    e1.modules.every((m, i) => i === 11 || hasE(tp(m, 'power+'), tp(e1.modules[i + 1], 'power-'))) &&
+    hasE(tp(e1.ssc, 'S-'), tp(e1.modules[0], 'power-')) && hasE(tp(e1.ssc, 'S+'), tp(e1.modules[11], 'power+')));
+  ok('edited numbering: labels follow (S1-M2 is now the module that was S1-M5)', e1.labels[1].id === plan.strings.find(s => s.name === 'SSC1').modules[4].id && e1.labels[1].text === 'S1-M2');
+  ok('edited numbering: a module moved to another SSC keeps the counts', ep.strings.every(s => s.modules.length === 12));
+  const badOrders = Object.assign({}, orders, { [s1.ssc.id]: o1.slice(0, 11) });
+  const fb = W.cadWirePlan(comps, sscList(comps), { pair: 'P1', orders: badOrders });
+  ok('edited numbering that no longer fits falls back to the suggestion, with a warning', fb.ok && !fb.custom && /no longer matches/.test(fb.warnings.join()));
+}
 
 /* a junction box at the BOTTOM of an SSC column is used too */
 const low = rack111().map(c => c.kind === 'jb' && c.id === 'jb-3' ? Object.assign({}, c, { y0: 120, y1: 222.18, terminals: c.terminals.map(t => Object.assign({}, t, { y: 160.5 })) }) : c);

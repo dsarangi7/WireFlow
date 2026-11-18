@@ -735,7 +735,11 @@ async function renderCadPage(id) {
     if (teach) return;
     const hit = components.filter(c => cadNamed(c.kind) && pt[0] >= c.x0 && pt[0] <= c.x1 && pt[1] >= c.y0 && pt[1] <= c.y1)
       .sort((a, b) => (a.x1 - a.x0) * (a.y1 - a.y0) - (b.x1 - b.x0) * (b.y1 - b.y0))[0];
-    if (!hit) return;
+    if (!hit) {
+      const mod = components.find(c => c.kind === 'module' && pt[0] >= c.x0 && pt[0] <= c.x1 && pt[1] >= c.y0 && pt[1] <= c.y1);
+      if (mod) openModuleEdit(mod, sx, sy);
+      return;
+    }
     const k = cadKind(hit.kind), key = cadCompKey(hit), saved = cad.labels[key] || {};
     focusKey = key; viewer.redraw();
     const pop = document.createElement('form');
@@ -777,6 +781,61 @@ async function renderCadPage(id) {
       say(`${other ? `Swapped: ${name} ↔ ${old}` : `${old} renamed to ${name}`}. Press Confirm in the ${k.label} card when all names are right.`, 'cad-ok');
     };
   }
+  /* ---- renumber a module: S3-M5 -> S3-M2 (or S2-M4) swaps the two modules ---- */
+  function currentOrders() {
+    const keyOf = new Map(wiringInputs().sscs.map(s => [s.name, s.key]));
+    const o = {};
+    for (const st of wiring.strings) o[keyOf.get(st.name)] = st.modules.slice();
+    return o;
+  }
+  async function replan(orders, okText) {
+    const inp = wiringInputs();
+    let plan;
+    try { plan = cadWirePlan(components, inp.sscs, { pair: inp.pair, orders: orders || undefined }); } catch (e) { plan = { ok: false, errors: [e.message] }; }
+    if (!plan.ok) { say(plan.errors.join(' '), 'warn'); return false; }
+    wiring = cadWireSave(plan, inp.key);
+    cad.wiring = { pair: inp.pair, plan: wiring, orders: plan.custom ? orders : undefined };
+    await persist();
+    renderWiring(); viewer.redraw();
+    say(okText + (plan.crossings.length ? ` ⚠ ${plan.crossings.length} power crossing(s) with this numbering, outlined in white.` : ' No power crossings.'), plan.crossings.length ? 'warn' : 'cad-ok');
+    return true;
+  }
+  function openModuleEdit(mod, sx, sy) {
+    if (!wiring) { say('Generate the wiring first; then click a module to change its number.'); return; }
+    const st = wiring.strings.find(s => s.modules.includes(mod.id));
+    if (!st) return;
+    const idx = st.modules.indexOf(mod.id);
+    focusKey = cadCompKey(mod); viewer.redraw();
+    const pop = document.createElement('form');
+    pop.className = 'cad-pop'; pop.id = 'cad-pop';
+    pop.innerHTML = `<b style="color:#d8b4fe">Module ${esc(st.tag)}-M${idx + 1}</b>
+      <label>SSC <select name="ssc">${wiring.strings.map(s => `<option value="${esc(s.name)}" ${s === st ? 'selected' : ''}>${esc(s.tag)} · ${esc(s.name)}</option>`).join('')}</select></label>
+      <label>Number <input name="num" type="number" min="1" step="1" value="${idx + 1}"></label>
+      <p class="muted small">The module that has this number swaps with it, so every SSC keeps its count. The wiring is re-drawn in the new order.</p>
+      <div><button class="btn btn-primary btn-xs" type="submit">Save</button> <button class="btn btn-ghost btn-xs" type="button" data-x>Cancel</button></div>`;
+    const stage = $('cad-stage');
+    stage.appendChild(pop);
+    pop.style.left = Math.min(Math.max(8, sx + 12), stage.clientWidth - pop.offsetWidth - 8) + 'px';
+    pop.style.top = Math.min(Math.max(8, sy - 20), stage.clientHeight - pop.offsetHeight - 8) + 'px';
+    pop.num.select();
+    pop.querySelector('[data-x]').onclick = closeRename;
+    pop.addEventListener('keydown', e => { if (e.key === 'Escape') { e.stopPropagation(); closeRename(); } });
+    pop.onsubmit = async e => {
+      e.preventDefault();
+      const dst = wiring.strings.find(s => s.name === pop.ssc.value);
+      const n = +pop.num.value;
+      if (!dst || !(n >= 1 && n <= dst.modules.length && Number.isInteger(n))) { say(`${dst ? dst.tag : 'This SSC'} has modules 1 to ${dst ? dst.modules.length : '?'}.`, 'warn'); return; }
+      if (dst === st && n === idx + 1) { closeRename(); return; }
+      const orders = currentOrders();
+      const keyOf = new Map(wiringInputs().sscs.map(s => [s.name, s.key]));
+      const a = orders[keyOf.get(st.name)], b = orders[keyOf.get(dst.name)];
+      const from = `${st.tag}-M${idx + 1}`, to = `${dst.tag}-M${n}`;
+      [a[idx], b[n - 1]] = [b[n - 1], a[idx]];
+      closeRename();
+      await replan(orders, `Swapped ${from} ↔ ${to}; wiring re-drawn.`);
+    };
+  }
+
   function closeRename() { const p = document.getElementById('cad-pop'); if (p) p.remove(); if (focusKey) { focusKey = null; viewer.redraw(); } }
 
   function drawOverlay(ctx, toScreen, scale) {
@@ -883,7 +942,7 @@ async function renderCadPage(id) {
   function wiringInputs() {
     const sscs = components.filter(c => c.kind === 'ssc').map(c => {
       const saved = cad.labels[cadCompKey(c)] || {};
-      return { comp: c, name: cadCompLabel(c, cad.labels), count: saved.modules || 0, confirmed: !!saved.confirmed };
+      return { comp: c, key: cadCompKey(c), name: cadCompLabel(c, cad.labels), count: saved.modules || 0, confirmed: !!saved.confirmed };
     });
     const pair = (cad.wiring && cad.wiring.pair) === 'P2' ? 'P2' : 'P1';
     const key = JSON.stringify([pair, sscs.map(s => [cadCompKey(s.comp), s.name, s.count]),
@@ -918,7 +977,8 @@ async function renderCadPage(id) {
         <p class="cad-wire-check ${ok ? 'cad-ok' : 'warn'}">${ok ? '✓ No power cables cross anywhere in the rack.' : '✗ ' + wiring.crossings.length + ' power crossing(s), outlined in white.'}</p>
         ${(wiring.warnings || []).filter(w => !/crossing/.test(w)).map(w => `<p class="warn small">${esc(w)}</p>`).join('')}
         <table class="cad-wire-table"><thead><tr><th>SSC</th><th>Modules</th><th>Power</th><th>Comm</th></tr></thead><tbody>${rows}</tbody></table>
-        <p class="muted small">Cables · length along the drawn route, without slack. S1-M1 is the module wired to S− and N.</p>
+        <p class="muted small">Cables · length along the drawn route, without slack. S1-M1 is the module wired to S− and N. <b>Click a module</b> on the drawing to change its number.</p>
+        ${wiring.custom ? `<p class="small cad-wire-custom">Numbering edited by hand. <button class="btn btn-ghost btn-xs" id="cad-wire-suggest">Back to the suggested numbering</button></p>` : ''}
         <label class="cad-wire-show"><input type="checkbox" id="cad-wire-show" ${showWiring ? 'checked' : ''}> Show wiring on the drawing</label>
         <a class="btn btn-primary btn-sm cad-wire-go" href="#/sheet/${project.id}">Open the wiring sheet →</a>
         <p class="muted small">Edit the A3 sheet (title block, power plugs, cable routes, labels) and download it as PDF.</p>`;
@@ -950,11 +1010,12 @@ async function renderCadPage(id) {
       setTimeout(async () => {
         const inp2 = wiringInputs();
         let plan;
-        try { plan = cadWirePlan(components, inp2.sscs, { pair: inp2.pair }); } catch (e) { plan = { ok: false, errors: [e.message] }; }
+        const orders = cad.wiring && cad.wiring.orders;
+        try { plan = cadWirePlan(components, inp2.sscs, { pair: inp2.pair, orders: orders }); } catch (e) { plan = { ok: false, errors: [e.message] }; }
         if (!plan.ok) { say(plan.errors.join(' '), 'warn'); renderWiring(); return; }
         wiring = cadWireSave(plan, inp2.key);
         showWiring = true;
-        cad.wiring = { pair: inp2.pair, plan: wiring };
+        cad.wiring = { pair: inp2.pair, plan: wiring, orders: plan.custom ? orders : undefined };
         await persist();
         renderWiring(); viewer.redraw();
         say(plan.crossings.length ? `Wiring generated with ${plan.crossings.length} power crossing(s) to check.` : `Wiring generated: ${plan.cables.length} cables, no power crossings.`, plan.crossings.length ? 'warn' : 'cad-ok');
@@ -962,6 +1023,10 @@ async function renderCadPage(id) {
     };
     if (wiring) {
       $('cad-wire-show').onchange = e => { showWiring = e.target.checked; viewer.redraw(); };
+      if ($('cad-wire-suggest')) $('cad-wire-suggest').onclick = async () => {
+        delete cad.wiring.orders;
+        await replan(null, 'Suggested numbering restored.');
+      };
     }
   }
 
@@ -1678,7 +1743,7 @@ function cadViewer(stage, flat, opts) {
     opts.readout.textContent = parts.join('   ·   ') || '—';
   }
   canvas.addEventListener('pointerdown', e => {
-    canvas.setPointerCapture(e.pointerId);
+    try { canvas.setPointerCapture(e.pointerId); } catch (err) {}
     /* middle button always pans, so the drawing can move while teaching */
     drag = { x: e.offsetX, y: e.offsetY, tx: view.tx, ty: view.ty, moved: false, pan: mode !== 'box' || e.button === 1 };
   });
