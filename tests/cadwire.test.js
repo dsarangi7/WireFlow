@@ -138,12 +138,32 @@ const lp = W.cadWirePlan(lowRows, sscList(lowRows), { pair: 'P1' });
 const s3 = lp.ok && lp.strings.find(s => s.ssc.id === 'ssc-3');
 ok('junction box at the bottom of its column is found', lp.ok && s3 && s3.jb.id === 'jb-3', lp.errors.join(' | '));
 
+/* an SSC without a junction box in its column: the engineer maps it to a pair of a neighbour's JB */
+{
+  const noJb = rack111().filter(c => c.id !== 'jb-1');            // the left-most SSC column loses its JB
+  const list = sscList(noJb);                                      // SSC5 = left-most SSC (x 3363)
+  const s5 = list.find(s => s.comp.id === 'ssc-1'), s4 = list.find(s => s.comp.id === 'ssc-2');
+  const miss = W.cadWirePlan(noJb, list, { pair: 'P1' });
+  ok('SSC without a junction box in its column asks for a choice', !miss.ok && miss.needJb.includes(s5.key) && /Choose one/.test(miss.errors[0]), miss.errors[0]);
+  s5.jbId = 'jb-2'; s5.pair = 'P1'; s4.jbId = 'jb-2'; s4.pair = 'P2';   // shared JB: left pair for one, right for the other
+  const shared = W.cadWirePlan(noJb, list, { pair: 'P1' });
+  const jb2 = noJb.find(c => c.id === 'jb-2');
+  const st5 = shared.ok && shared.strings.find(x => x.ssc.id === 'ssc-1'), st4 = shared.ok && shared.strings.find(x => x.ssc.id === 'ssc-2');
+  const hasS = (a, b) => shared.cables.some(c => { const [p, q] = ends(c); return (near(p, a) && near(q, b)) || (near(p, b) && near(q, a)); });
+  ok('two SSCs share one junction box: left pair and right pair', shared.ok && hasS(tp(st5.ssc, 'B+'), tp(jb2, 'P1+')) && hasS(tp(st5.ssc, 'B-'), tp(jb2, 'P1-')) &&
+    hasS(tp(st4.ssc, 'B+'), tp(jb2, 'P2+')) && hasS(tp(st4.ssc, 'B-'), tp(jb2, 'P2-')), shared.errors.join(' | '));
+  ok('shared junction box: cable names say which JB and pair', shared.ok && shared.cables.some(c => /JB\d P2\+/.test(c.to)));
+  s4.pair = 'P1';
+  const dup = W.cadWirePlan(noJb, list, { pair: 'P1' });
+  ok('the same pair of one junction box cannot go to two SSCs', !dup.ok && /given to both/.test(dup.errors.join()), dup.errors[0]);
+}
+
 /* refusals: wrong total, missing JB terminals */
 const bad = W.cadWirePlan(comps, sscList(comps, [12, 12, 12, 12, 11]), {});
 ok('refused: counts do not add up to the modules', !bad.ok && /add up to 59/.test(bad.errors[0]), bad.errors[0]);
 const noJb = rack111().map(c => c.kind === 'jb' ? Object.assign({}, c, { terminals: [] }) : c);
 const nj = W.cadWirePlan(noJb, sscList(noJb), {});
-ok('refused: junction box terminals not taught', !nj.ok && /junction box has no P1 terminals/.test(nj.errors.join()), nj.errors[0]);
+ok('refused: junction box terminals not taught', !nj.ok && /has no P1 terminals/.test(nj.errors.join()), nj.errors[0]);
 
 console.log('\n' + (failed.length ? 'FAILED ' + failed.length + ':\n  ' + failed.join('\n  ') : 'Wiring tests passed: ' + passed));
 process.exitCode = failed.length ? 1 : 0;

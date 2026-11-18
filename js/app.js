@@ -649,6 +649,7 @@ async function renderCadPage(id) {
   /* generated wiring (plain data, saved with the drawing) */
   let wiring = cad.wiring && cad.wiring.plan ? cad.wiring.plan : null;
   let focusKey = null;   /* part highlighted by Show / rename */
+  let numbering = null;  /* engineer numbers the modules by clicking: {list, i, picked: {sscKey: [moduleIds]}} */
   let showWiring = true;
 
   shell(`
@@ -726,7 +727,7 @@ async function renderCadPage(id) {
     overlay: drawOverlay,
     onBox: onBox,
     onPick: onPick,
-    onCancel: cancelTeach,
+    onCancel: () => cancelNumbering() || cancelTeach(),
     onClick: (pt, sx, sy) => openRename(pt, sx, sy),
   });
 
@@ -734,6 +735,7 @@ async function renderCadPage(id) {
   function openRename(pt, sx, sy) {
     closeRename();
     if (teach) return;
+    if (numbering) { numberClick(pt); return; }
     const hit = components.filter(c => cadNamed(c.kind) && pt[0] >= c.x0 && pt[0] <= c.x1 && pt[1] >= c.y0 && pt[1] <= c.y1)
       .sort((a, b) => (a.x1 - a.x0) * (a.y1 - a.y0) - (b.x1 - b.x0) * (b.y1 - b.y0))[0];
     if (!hit) {
@@ -804,7 +806,7 @@ async function renderCadPage(id) {
     try { plan = cadWirePlan(components, inp.sscs, { pair: inp.pair, orders: orders || undefined }); } catch (e) { plan = { ok: false, errors: [e.message] }; }
     if (!plan.ok) { say(plan.errors.join(' '), 'warn'); return false; }
     wiring = cadWireSave(plan, inp.key);
-    cad.wiring = { pair: inp.pair, plan: wiring, orders: plan.custom ? orders : undefined };
+    cad.wiring = Object.assign({}, cad.wiring, { pair: inp.pair, plan: wiring, orders: plan.custom ? orders : undefined });
     await persist();
     renderWiring(); viewer.redraw();
     say(okText + (plan.crossings.length ? ` ⚠ ${plan.crossings.length} power crossing(s) with this numbering, outlined in white.` : ' No power crossings.'), plan.crossings.length ? 'warn' : 'cad-ok');
@@ -846,6 +848,67 @@ async function renderCadPage(id) {
     };
   }
 
+  /* ---- number the modules by clicking them in order, SSC by SSC ---- */
+  function startNumbering() {
+    const inp = wiringInputs();
+    if (!inp.sscs.every(s => s.confirmed && s.count >= 1)) { say('Confirm the SSC numbers and module counts first.', 'warn'); return; }
+    const list = inp.sscs.slice().sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }))
+      .map(s => ({ key: s.key, name: s.name, count: s.count, tag: 'S' + ((String(s.name).match(/\d+/) || [''])[0]) }));
+    numbering = { list: list, i: 0, picked: {} };
+    closeRename();
+    showWiring = false;
+    window.addEventListener('keydown', numberKeys);
+    numberPrompt(); viewer.redraw();
+  }
+  function numberPrompt() {
+    const st = numbering.list[numbering.i];
+    const n = (numbering.picked[st.key] || []).length;
+    prompt(`${st.name}: click module ${n + 1} of ${st.count} (${st.tag}-M${n + 1}) · start with the module wired to S− and N · Backspace undoes · Esc stops`);
+    say(`Numbering ${st.name} (${numbering.i + 1} of ${numbering.list.length} SSCs).`);
+  }
+  function numberKeys(e) {
+    if (!numbering || (e.target && /INPUT|TEXTAREA|SELECT/.test(e.target.tagName))) return;
+    if (e.key === 'Backspace') {
+      e.preventDefault();
+      let st = numbering.list[numbering.i];
+      let arr = numbering.picked[st.key] || [];
+      if (!arr.length && numbering.i > 0) { numbering.i--; st = numbering.list[numbering.i]; arr = numbering.picked[st.key] || []; }
+      arr.pop();
+      numberPrompt(); viewer.redraw();
+    }
+  }
+  function cancelNumbering() {
+    if (!numbering) return false;
+    numbering = null;
+    window.removeEventListener('keydown', numberKeys);
+    prompt(''); showWiring = true; viewer.redraw();
+    say('Numbering stopped. Nothing was changed.');
+    renderWiring();
+    return true;
+  }
+  async function numberClick(pt) {
+    const m = components.find(c => c.kind === 'module' && pt[0] >= c.x0 && pt[0] <= c.x1 && pt[1] >= c.y0 && pt[1] <= c.y1);
+    if (!m) { say('Click inside a battery module.', 'warn'); return; }
+    const owner = numbering.list.find(st => (numbering.picked[st.key] || []).includes(m.id));
+    if (owner) { const at = numbering.picked[owner.key].indexOf(m.id) + 1; say(`That module is already ${owner.tag}-M${at}. Backspace undoes the last click.`, 'warn'); return; }
+    const st = numbering.list[numbering.i];
+    const arr = numbering.picked[st.key] = numbering.picked[st.key] || [];
+    arr.push(m.id);
+    if (arr.length >= st.count) {
+      if (numbering.i + 1 < numbering.list.length) { numbering.i++; numberPrompt(); viewer.redraw(); return; }
+      /* every SSC numbered: wire it in this order */
+      const picked = numbering.picked;
+      numbering = null;
+      window.removeEventListener('keydown', numberKeys);
+      prompt(''); showWiring = true;
+      const left = components.filter(c => c.kind === 'module').length - Object.values(picked).reduce((n, a) => n + a.length, 0);
+      if (left) say(`${left} module${left === 1 ? ' was' : 's were'} not numbered; check the SSC module counts.`, 'warn');
+      await replan(picked, 'Modules numbered by hand; wiring drawn in your order.');
+      return;
+    }
+    numberPrompt(); viewer.redraw();
+  }
+
   function closeRename() { const p = document.getElementById('cad-pop'); if (p) p.remove(); if (focusKey) { focusKey = null; viewer.redraw(); } }
 
   function drawOverlay(ctx, toScreen, scale) {
@@ -863,7 +926,7 @@ async function renderCadPage(id) {
       const named = cadNamed(c.kind);
       if (c.id && (b[0] - a[0] > 46 || named) && !(c.kind === 'module' && wiring && showWiring && !teach)) {
         const saved = cad.labels[cadCompKey(c)];
-        const text = cadCompLabel(c, cad.labels) + (named && !(saved && saved.confirmed) ? ' ?' : '');
+        const text = c.kind === 'jb' && c.jbName ? c.jbName : cadCompLabel(c, cad.labels) + (named && !(saved && saved.confirmed) ? ' ?' : '');
         if (named && !c.preview) {
           /* SSC / ACDP / MSM names: large, centred, on a dark plate so they stay readable */
           const fs = Math.round(Math.max(14, Math.min(30, 44 * scale)));
@@ -886,7 +949,8 @@ async function renderCadPage(id) {
         } else {
           ctx.fillStyle = col;
           ctx.font = '600 12px Inter, system-ui, sans-serif';
-          ctx.fillText(text, a[0] + 4, a[1] + 14);
+          if (c.kind === 'jb') { ctx.font = '800 ' + Math.round(Math.max(12, Math.min(22, 30 * scale))) + 'px Inter, system-ui, sans-serif'; ctx.fillText(text, a[0] + 6, a[1] + Math.max(14, Math.min(24, 30 * scale))); }
+          else ctx.fillText(text, a[0] + 4, a[1] + 14);
         }
       }
       for (const t of c.terminals || []) {
@@ -894,6 +958,24 @@ async function renderCadPage(id) {
         ctx.fillStyle = cadTerminalColor(t.role);
         ctx.beginPath(); ctx.arc(p[0], p[1], Math.max(2.5, Math.min(6, 3 * scale)), 0, Math.PI * 2); ctx.fill();
       }
+    }
+    if (numbering) {
+      ctx.save();
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      const fs = Math.round(Math.max(11, Math.min(22, 34 * scale)));
+      for (const st of numbering.list) for (const [i, id] of (numbering.picked[st.key] || []).entries()) {
+        const m = components.find(c => c.id === id);
+        if (!m) continue;
+        const a = toScreen(m.x0, m.y1), b = toScreen(m.x1, m.y0);
+        const cur = st === numbering.list[numbering.i];
+        ctx.fillStyle = cur ? 'rgba(124,58,237,.35)' : 'rgba(124,58,237,.18)';
+        ctx.fillRect(a[0], a[1], b[0] - a[0], b[1] - a[1]);
+        ctx.font = '800 ' + fs + 'px Inter, system-ui, sans-serif';
+        ctx.lineWidth = 3; ctx.strokeStyle = '#0b1220';
+        const t = st.tag + '-M' + (i + 1);
+        ctx.strokeText(t, (a[0] + b[0]) / 2, (a[1] + b[1]) / 2); ctx.fillStyle = '#e9d5ff'; ctx.fillText(t, (a[0] + b[0]) / 2, (a[1] + b[1]) / 2);
+      }
+      ctx.restore();
     }
     if (focusKey) {
       const f = components.find(c => cadCompKey(c) === focusKey);
@@ -952,12 +1034,42 @@ async function renderCadPage(id) {
   function wiringInputs() {
     const sscs = components.filter(c => c.kind === 'ssc').map(c => {
       const saved = cad.labels[cadCompKey(c)] || {};
-      return { comp: c, key: cadCompKey(c), name: cadCompLabel(c, cad.labels), count: saved.modules || 0, confirmed: !!saved.confirmed };
+      const jm = (cad.wiring && cad.wiring.jbMap && cad.wiring.jbMap[cadCompKey(c)]) || {};
+      const jb = jm.jb ? components.find(j => j.kind === 'jb' && cadCompKey(j) === jm.jb) : null;
+      return { comp: c, key: cadCompKey(c), name: cadCompLabel(c, cad.labels), count: saved.modules || 0, confirmed: !!saved.confirmed,
+        jbId: jb ? jb.id : null, pair: jm.pair || null };
     });
     const pair = (cad.wiring && cad.wiring.pair) === 'P2' ? 'P2' : 'P1';
-    const key = JSON.stringify([pair, sscs.map(s => [cadCompKey(s.comp), s.name, s.count]),
+    const key = JSON.stringify([pair, sscs.map(s => [cadCompKey(s.comp), s.name, s.count, s.jbId, s.pair]),
       components.map(c => cadCompKey(c) + (c.terminals || []).map(t => t.role).join(''))]);
     return { sscs: sscs, pair: pair, key: key };
+  }
+
+  /* one row per SSC: which junction box and which pair its B+ / B- go to */
+  function jbTable(inp) {
+    const jbs = components.filter(c => c.kind === 'jb');
+    if (!jbs.length) return '';
+    const names = cadJbNames(components);
+    const opts = jbs.slice().sort((a, b) => names.get(a.id).localeCompare(names.get(b.id), undefined, { numeric: true }));
+    const rows = inp.sscs.slice().sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true })).map(s => {
+      const auto = cadAutoJb(components, s.comp);
+      const chosen = s.jbId ? components.find(j => j.id === s.jbId) : null;
+      const need = !auto && !chosen;
+      return `<tr class="${need ? 'cad-jb-need' : ''}"><th>${esc(s.name)}</th>
+        <td><select data-jb-ssc="${esc(s.key)}" data-what="jb" aria-label="Junction box for ${esc(s.name)}">
+          <option value="">${auto ? 'Own column (' + esc(names.get(auto.id)) + ')' : '— choose —'}</option>
+          ${opts.map(j => `<option value="${esc(cadCompKey(j))}" ${chosen === j ? 'selected' : ''}>${esc(names.get(j.id))}</option>`).join('')}
+        </select></td>
+        <td><select data-jb-ssc="${esc(s.key)}" data-what="pair" aria-label="Pair for ${esc(s.name)}">
+          <option value="">Rack pair (${inp.pair === 'P2' ? 'right' : 'left'})</option>
+          <option value="P1" ${s.pair === 'P1' ? 'selected' : ''}>Left pair (P1)</option>
+          <option value="P2" ${s.pair === 'P2' ? 'selected' : ''}>Right pair (P2)</option>
+        </select></td></tr>`;
+    }).join('');
+    const missing = inp.sscs.filter(s => !s.jbId && !cadAutoJb(components, s.comp)).length;
+    return `<details class="cad-jb" ${missing ? 'open' : ''}><summary>Junction boxes per SSC${missing ? ` · <b>${missing} need a choice</b>` : ''}</summary>
+      <p class="muted small">Normally each SSC uses the junction box in its own column. If a column has none, pick another junction box; two SSCs can share one by using its left pair and its right pair. JB numbers are shown on the drawing.</p>
+      <table class="cad-wire-table cad-jb-table"><thead><tr><th>SSC</th><th>Junction box</th><th>Pair</th></tr></thead><tbody>${rows}</tbody></table></details>`;
   }
 
   function renderWiring() {
@@ -1005,15 +1117,28 @@ async function renderCadPage(id) {
           <option value="P2" ${inp.pair === 'P2' ? 'selected' : ''}>Pair 2 (right + −)</option>
         </select>
       </div>
-      <p class="muted small">The same pair is used on every junction box.</p>
-      <button class="btn btn-primary btn-sm cad-wire-go" id="cad-wire-go" ${todo.length ? 'disabled' : ''}>${wiring ? 'Generate again' : 'Generate wiring'}</button>
+      <p class="muted small">Used on every junction box unless an SSC below says otherwise.</p>
+      ${jbTable(inp)}
+      <button class="btn btn-primary btn-sm cad-wire-go" id="cad-wire-number" ${todo.length ? 'disabled' : ''} title="Click each SSC's modules in order: M1 (wired to S− and N), M2, …">Number modules by clicking</button>
+      <button class="btn btn-ghost btn-sm cad-wire-go" id="cad-wire-go" ${todo.length ? 'disabled' : ''}>${wiring ? (wiring.custom ? 'Generate again (keeps your numbering)' : 'Generate again') : 'Let the tool number and wire'}</button>
       ${result}
     </div>`;
+    box.querySelectorAll('[data-jb-ssc]').forEach(sel => sel.onchange = async () => {
+      const k = sel.dataset.jbSsc;
+      const map = Object.assign({}, cad.wiring && cad.wiring.jbMap);
+      const row = Object.assign({}, map[k] || {});
+      if (sel.dataset.what === 'jb') row.jb = sel.value || undefined; else row.pair = sel.value || undefined;
+      if (!row.jb && !row.pair) delete map[k]; else map[k] = row;
+      cad.wiring = Object.assign({}, cad.wiring, { jbMap: map });
+      delete cad.wiring.plan; wiring = null;
+      await persist(); renderWiring(); viewer.redraw();
+    });
     $('cad-wire-pair').onchange = async e => {
       cad.wiring = Object.assign({}, cad.wiring, { pair: e.target.value });
       delete cad.wiring.plan; wiring = null;
       await persist(); renderWiring(); viewer.redraw();
     };
+    $('cad-wire-number').onclick = () => startNumbering();
     $('cad-wire-go').onclick = () => {
       const btn = $('cad-wire-go');
       btn.disabled = true; btn.textContent = 'Working out the wiring…';
@@ -1025,7 +1150,7 @@ async function renderCadPage(id) {
         if (!plan.ok) { say(plan.errors.join(' '), 'warn'); renderWiring(); return; }
         wiring = cadWireSave(plan, inp2.key);
         showWiring = true;
-        cad.wiring = { pair: inp2.pair, plan: wiring, orders: plan.custom ? orders : undefined };
+        cad.wiring = Object.assign({}, cad.wiring, { pair: inp2.pair, plan: wiring, orders: plan.custom ? orders : undefined });
         await persist();
         renderWiring(); viewer.redraw();
         say(plan.crossings.length ? `Wiring generated with ${plan.crossings.length} power crossing(s) to check.` : `Wiring generated: ${plan.cables.length} cables, no power crossings.`, plan.crossings.length ? 'warn' : 'cad-ok');
@@ -1048,6 +1173,8 @@ async function renderCadPage(id) {
     (cad.manual || []).forEach((m, i) => components.push({ id: m.kind + '-hand-' + (i + 1), kind: m.kind, name: cadKind(m.kind).label,
       x0: m.x0, y0: m.y0, x1: m.x1, y1: m.y1, terminals: [], manual: true, detail: Infinity }));
     /* proposed ACDP / MSM numbers: ACDP1 = closest to the MSM */
+    const jbNames = cadJbNames(components);
+    components.forEach(c => { if (c.kind === 'jb') c.jbName = jbNames.get(c.id); });
     const nums = cadProposeNumbers(components);
     components.forEach(c => { if (nums.has(c)) c.proposal = nums.get(c); });
     renderFound();

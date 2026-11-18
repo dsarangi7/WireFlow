@@ -587,3 +587,10 @@ body:has(.sh-page) .topbar { display: none; }
 
 .cad-teach-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
 .cad-pop-del { color: #fca5a5 !important; }
+
+.cad-jb { margin: 10px 0; }
+.cad-jb > summary { cursor: pointer; font-weight: 600; font-size: 13px; padding: 4px 0; }
+.cad-jb > summary b { color: #fbbf24; }
+.cad-jb-table select { max-width: 100%; font-size: 12px; padding: 3px 4px; }
+.cad-jb-table td, .cad-jb-table th { white-space: normal; }
+.cad-jb-need th, .cad-jb-need select { color: #fbbf24; border-color: #f59e0b !important; }

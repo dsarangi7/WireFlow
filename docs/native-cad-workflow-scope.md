@@ -252,6 +252,17 @@ engine code.
   copies vote that have little geometry of their own inside the box (at most
   half): a dense look-alike (an SSC for an MSM) can no longer strip the
   screen, arrow and emergency stop that make the MSM unique.
+- **Number modules by clicking** (Wiring card): SSC by SSC (SSC1, SSC2 …) the
+  engineer clicks that SSC's modules in order, M1 first (the module wired to
+  S− and N). Labels appear as they are clicked; Backspace undoes, Esc stops,
+  a module cannot be used twice. After the last SSC the wiring is drawn in
+  exactly that order. "Let the tool number and wire" stays as the automatic option.
+- **Junction box per SSC** (Wiring card, "Junction boxes per SSC"): default is
+  the junction box in the SSC's own column with the rack pair. When a column
+  has none, the engineer picks a junction box (JB1, JB2 … left to right, shown
+  on the drawing) and a pair; two SSCs can share one junction box, one on its
+  left pair (P1) and one on its right pair (P2). One pair cannot go to two SSCs.
+  Choices are kept in `cad.wiring.jbMap` (by SSC position).
 - **Engineer numbering**: after Generate wiring, click a module (or its
   S3-M5 label) to give it another number or SSC. The module that has that
   number swaps with it (every SSC keeps its count) and the wiring is re-routed

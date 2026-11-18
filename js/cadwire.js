@@ -167,6 +167,20 @@ function cadwJump(m1, m2, t1, t2, cols, kind) {
   return out;
 }
 
+/** Junction boxes named JB1, JB2 … left to right (top first in a column). */
+function cadJbNames(comps) {
+  const jbs = comps.filter(c => c.kind === 'jb').sort((a, b) => (a.x0 - b.x0) || (b.y0 - a.y0));
+  return new Map(jbs.map((j, i) => [j.id, 'JB' + (i + 1)]));
+}
+
+/** The junction box of an SSC's own column (top or bottom), or null. */
+function cadAutoJb(comps, ssc) {
+  const cols = cadwColumns(comps);
+  const col = cols[ssc._col];
+  const cy = (ssc.y0 + ssc.y1) / 2;
+  return (col && col.jbs.slice().sort((a, b) => Math.abs((a.y0 + a.y1) / 2 - cy) - Math.abs((b.y0 + b.y1) / 2 - cy))[0]) || null;
+}
+
 /* ---------- planning ---------- */
 /**
  * Plans the wiring of the whole rack.
@@ -189,17 +203,29 @@ function cadWirePlan(comps, sscs, opts) {
   if (modules.some(m => need.module.some(r => !cadwTerm(m, r)))) errors.push('Module terminals are missing: teach the battery module with its four terminals.');
   if (sscs.some(s => need.ssc.some(r => !cadwTerm(s.comp, r)))) errors.push('SSC terminals are missing: teach the SSC and click its six connectors (S, N, S+, B+, B−, S−).');
   const cols = cadwColumns(comps);
+  const jbNames = cadJbNames(comps);
+  const allJbs = comps.filter(c => c.kind === 'jb');
   const jbFor = new Map();
+  const needJb = [];
+  const usedPair = new Map();
   for (const s of sscs) {
-    const col = cols[s.comp._col];
-    /* the junction box of the SSC's own column: usually at the top, on some racks at the bottom */
-    const cy = (s.comp.y0 + s.comp.y1) / 2;
-    const jb = col && col.jbs.slice().sort((a, b) => Math.abs((a.y0 + a.y1) / 2 - cy) - Math.abs((b.y0 + b.y1) / 2 - cy))[0];
-    if (!jb) errors.push(`${s.name}: no junction box found in its column (top or bottom). Teach the junction box, or check that every SSC column has one.`);
-    else if (need.jb.some(r => !cadwTerm(jb, r))) errors.push(`${s.name}: the junction box has no ${pair} terminals. Teach the junction box and click its four connectors (+, −, +, −).`);
-    else jbFor.set(s, jb);
+    /* the engineer's choice (s.jbId, s.pair), else the junction box of the SSC's own
+       column (usually at the top, on some racks at the bottom) with the rack's pair */
+    let jb = s.jbId ? allJbs.find(j => j.id === s.jbId) : null;
+    if (!jb) {
+      const col = cols[s.comp._col];
+      const cy = (s.comp.y0 + s.comp.y1) / 2;
+      jb = col && col.jbs.slice().sort((a, b) => Math.abs((a.y0 + a.y1) / 2 - cy) - Math.abs((b.y0 + b.y1) / 2 - cy))[0];
+    }
+    const pr = s.pair === 'P1' || s.pair === 'P2' ? s.pair : pair;
+    if (!jb) { needJb.push(s.key); errors.push(`${s.name}: no junction box in its column. Choose one for it in "Junction boxes per SSC" in the Wiring card (for example the left or right pair of a neighbouring junction box).`); continue; }
+    if (!cadwTerm(jb, pr + '+') || !cadwTerm(jb, pr + '-')) { errors.push(`${s.name}: ${jbNames.get(jb.id)} has no ${pr} terminals. Teach the junction box and click its four connectors (+, −, +, −).`); continue; }
+    const k = jb.id + '|' + pr;
+    if (usedPair.has(k)) { errors.push(`${jbNames.get(jb.id)} ${pr === 'P1' ? 'left' : 'right'} pair is given to both ${usedPair.get(k)} and ${s.name}. Give one of them the other pair or another junction box.`); continue; }
+    usedPair.set(k, s.name);
+    jbFor.set(s, { jb: jb, pair: pr, name: jbNames.get(jb.id) });
   }
-  if (errors.length) return { ok: false, errors: errors, warnings: warnings, strings: [], cables: [], crossings: [], outline: [] };
+  if (errors.length) return { ok: false, errors: errors, needJb: needJb, warnings: warnings, strings: [], cables: [], crossings: [], outline: [] };
 
   let best = null;
   /* the engineer's own numbering (opts.orders: SSC key -> module ids in order) */
@@ -265,7 +291,8 @@ function cadwRunStrings(strings, cols, jbFor, pair) {
   const placed = [], gapUse = new Map(), out = [];
   let score = 0;
   for (const st of strings.slice().sort((a, b) => a.s.comp._col - b.s.comp._col)) {
-    const r = cadwPlanString(st, cols, jbFor.get(st.s), pair, placed, gapUse);
+    const j = jbFor.get(st.s);
+    const r = cadwPlanString(st, cols, j.jb, j.pair, placed, gapUse, j.name);
     if (!r) return null;
     for (const c of r.cables) placed.push(c);
     out.push(r.string);
@@ -295,7 +322,8 @@ function cadwTryVariant(cols, sscs, jbFor, pair, lr, td) {
   const out = [];
   let score = 0;
   for (const st of strings) {
-    const r = cadwPlanString(st, cols, jbFor.get(st.s), pair, placed, gapUse);
+    const j = jbFor.get(st.s);
+    const r = cadwPlanString(st, cols, j.jb, j.pair, placed, gapUse, j.name);
     if (!r) return null;
     for (const c of r.cables) placed.push(c);
     out.push(r.string);
@@ -335,7 +363,8 @@ function cadwPermutations(arr) {
 }
 
 /** Wires one SSC string; returns the cheapest layout found. */
-function cadwPlanString(st, cols, jb, pair, placed, gapUse) {
+function cadwPlanString(st, cols, jb, pair, placed, gapUse, jbName) {
+  jbName = jbName || 'JB';
   const ssc = st.s.comp;
   const col = cols[ssc._col];
   const num = (String(st.s.name).match(/\d+/) || [''])[0];
@@ -379,8 +408,8 @@ function cadwPlanString(st, cols, jb, pair, placed, gapUse) {
     const longPower = [
       { key: 'S-', from: [ssc, 'S-'], to: [first, 'power-'], name: `${tag} S− → ${label.get(first)} −` },
       { key: 'S+', from: [ssc, 'S+'], to: [last, 'power+'], name: `${tag} ${label.get(last)} + → S+` },
-      { key: 'B+', from: [ssc, 'B+'], to: [jb, pair + '+'], name: `${tag} B+ → JB ${pair}+` },
-      { key: 'B-', from: [ssc, 'B-'], to: [jb, pair + '-'], name: `${tag} B− → JB ${pair}−` },
+      { key: 'B+', from: [ssc, 'B+'], to: [jb, pair + '+'], name: `${tag} B+ → ${jbName} ${pair}+` },
+      { key: 'B-', from: [ssc, 'B-'], to: [jb, pair + '-'], name: `${tag} B− → ${jbName} ${pair}−` },
     ];
     const longComm = [
       { key: 'N', from: [ssc, 'N'], to: [first, 'comm-S'], name: `${tag} N → ${label.get(first)} S` },
@@ -444,7 +473,7 @@ function cadwPlanString(st, cols, jb, pair, placed, gapUse) {
   if (!best) return null;
   for (const [x, n] of best.lanes) gapUse.set(x, n);
   const string = {
-    name: st.s.name, tag: tag, ssc: ssc, jb: jb, far: st.far,
+    name: st.s.name, tag: tag, ssc: ssc, jb: jb, jbName: jbName, pair: pair, far: st.far,
     modules: best.order,
     labels: best.order.map((m, i) => ({ id: m.id, text: `${tag}-M${i + 1}`, x: (m.x0 + m.x1) / 2, y: (m.y0 + m.y1) / 2 + (m.y1 - m.y0) * 0.12 })),
   };
