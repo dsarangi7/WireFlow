@@ -72,7 +72,7 @@
     { "@type": "Question", "name": "Who decides the SSC, ACDP and MSM names?",
       "acceptedAnswer": { "@type": "Answer", "text": "WireFlow proposes them (SSC1 and ACDP1 are the ones closest to the MSM) and the engineer confirms or renames every label and enters the number of modules per SSC." } },
     { "@type": "Question", "name": "Does WireFlow draw the cables already?",
-      "acceptedAnswer": { "@type": "Answer", "text": "Yes. After the engineer confirms the SSCs and their module counts, Generate wiring chooses which modules each SSC wires and their order so that no power cables cross, and draws the series power, communication and bus cables. The engineer then finishes the A3 wiring sheet (title block, power plugs, cable routes) and downloads it as a PDF in the AYK drawing format." } }
+      "acceptedAnswer": { "@type": "Answer", "text": "Yes. After confirming the SSCs and their module counts, the engineer clicks each SSC's modules in order; WireFlow then draws the series power, communication and bus cables along the risers and checks that no power cables cross. The engineer then finishes the A3 wiring sheet (title block, power plugs, cable routes) and downloads it as a PDF in the AYK drawing format." } }
   ]
 }
 </script>
@@ -198,7 +198,7 @@
           <li><span>1</span><h3>Import the drawing</h3><p>Convert the DWG with the included script (it uses your installed AutoCAD) and drop the DXF into WireFlow.</p></li>
           <li><span>2</span><h3>Teach each part once</h3><p>Box one battery module and click its terminals; box one SSC with its connector strip, one junction box, ACDP and MSM.</p></li>
           <li><span>3</span><h3>Confirm the rack</h3><p>Check the proposed SSC, ACDP and MSM names and enter how many modules each SSC controls.</p></li>
-          <li><span>4</span><h3>Generate the wiring</h3><p>Module numbering S1-M1 &hellip; with no power crossings, cables routed along the risers, then an A3 wiring sheet you finish on screen and download as PDF.</p></li>
+          <li><span>4</span><h3>Number and wire</h3><p>Click each SSC&rsquo;s modules in order (S1-M1 &hellip;); cables are routed along the risers and checked for power crossings, then an A3 wiring sheet you finish on screen and download as PDF.</p></li>
         </ol>
       </div>
     </section>
@@ -245,7 +245,7 @@
           <div class="road-col">
             <h3><span class="dot dot-next"></span>Next</h3>
             <ul>
-              <li>Engineer edits to the suggested numbering</li>
+              <li>Harness numbers from measured cable lengths</li>
               <li>Cable lengths with slack and part numbers</li>
               <li>Visio output</li>
             </ul>
@@ -262,7 +262,7 @@
         <details><summary>Do my drawings leave my computer?</summary><p>No. The drawing is read and stored in your browser on your device. There is no account and no upload.</p></details>
         <details><summary>Our drawings are flat exports with no blocks or text. Does that work?</summary><p>Yes. You box one example of each part and click its terminals once; WireFlow finds every identical copy by its exact geometry.</p></details>
         <details><summary>Who decides the SSC, ACDP and MSM names?</summary><p>WireFlow proposes them (SSC1 and ACDP1 are the ones closest to the MSM) and the engineer confirms or renames every label and enters the number of modules per SSC.</p></details>
-        <details><summary>Does WireFlow draw the cables already?</summary><p>Yes. After the engineer confirms the SSCs and their module counts, Generate wiring chooses which modules each SSC wires and their order so that no power cables cross, and draws the series power, communication and bus cables. The engineer then finishes the A3 wiring sheet (title block, power plugs, cable routes) and downloads it as a PDF in the AYK drawing format.</p></details>
+        <details><summary>Does WireFlow draw the cables already?</summary><p>Yes. After confirming the SSCs and their module counts, the engineer clicks each SSC's modules in order; WireFlow then draws the series power, communication and bus cables along the risers and checks that no power cables cross. The engineer then finishes the A3 wiring sheet (title block, power plugs, cable routes) and downloads it as a PDF in the AYK drawing format.</p></details>
       </div>
     </section>
 

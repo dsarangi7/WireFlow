@@ -263,12 +263,16 @@ engine code.
   on the drawing) and a pair; two SSCs can share one junction box, one on its
   left pair (P1) and one on its right pair (P2). One pair cannot go to two SSCs.
   Choices are kept in `cad.wiring.jbMap` (by SSC position).
-- **Engineer numbering**: after Generate wiring, click a module (or its
+- **Numbering is always the engineer's** (decided 18 Nov 2026): the tool does
+  not number modules on its own. After numbering, the Wiring card offers
+  **Number again**, **Delete wiring** and **Undo** (the last wiring change:
+  delete, renumber, swap, junction box or pair; kept for the session).
+  Module ids are not drawn; S1-M1 labels appear once a module is numbered.
+- **Engineer numbering**: after numbering, click a module (or its
   S3-M5 label) to give it another number or SSC. The module that has that
   number swaps with it (every SSC keeps its count) and the wiring is re-routed
   in the new order (`cadWirePlan(..., {orders})`). Crossings that the new order
-  causes are reported, not refused. **Back to the suggested numbering** resets
-  it. Edited orders are saved per SSC (by its position, so renaming an SSC keeps
+  causes are reported, not refused. Edited orders are saved per SSC (by its position, so renaming an SSC keeps
   them). SSC / ACDP / MSM names are renamed the same way (click, or Show).
 - **Example rack**: `#/example` (buttons on the product page and Drawings
   home) loads rack 111 with its parts taught and labels confirmed, built by

@@ -355,7 +355,7 @@ async function renderDashboard() {
         <li><b>1</b><span>Import DXF</span></li>
         <li><b>2</b><span>Teach each part once</span></li>
         <li><b>3</b><span>Confirm SSCs, ACDPs, MSM and modules per SSC</span></li>
-        <li><b>4</b><span>Generate wiring and download the PDF sheet</span></li>
+        <li><b>4</b><span>Number the modules, then download the PDF sheet</span></li>
       </ol>
 
       <section class="dash-list" aria-labelledby="list-title">
@@ -650,6 +650,7 @@ async function renderCadPage(id) {
   let wiring = cad.wiring && cad.wiring.plan ? cad.wiring.plan : null;
   let focusKey = null;   /* part highlighted by Show / rename */
   let numbering = null;  /* engineer numbers the modules by clicking: {list, i, picked: {sscKey: [moduleIds]}} */
+  const wiringHistory = [];
   let showWiring = true;
 
   shell(`
@@ -800,11 +801,17 @@ async function renderCadPage(id) {
     for (const st of wiring.strings) o[keyOf.get(st.name)] = st.modules.slice();
     return o;
   }
+  /* undo: the wiring settings before each change (this session) */
+  function rememberWiring() {
+    wiringHistory.push(JSON.stringify(cad.wiring || {}));
+    if (wiringHistory.length > 30) wiringHistory.shift();
+  }
   async function replan(orders, okText) {
+    rememberWiring();
     const inp = wiringInputs();
     let plan;
     try { plan = cadWirePlan(components, inp.sscs, { pair: inp.pair, orders: orders || undefined }); } catch (e) { plan = { ok: false, errors: [e.message] }; }
-    if (!plan.ok) { say(plan.errors.join(' '), 'warn'); return false; }
+    if (!plan.ok) { wiringHistory.pop(); say(plan.errors.join(' '), 'warn'); return false; }
     wiring = cadWireSave(plan, inp.key);
     cad.wiring = Object.assign({}, cad.wiring, { pair: inp.pair, plan: wiring, orders: plan.custom ? orders : undefined });
     await persist();
@@ -813,7 +820,7 @@ async function renderCadPage(id) {
     return true;
   }
   function openModuleEdit(mod, sx, sy) {
-    if (!wiring) { say('Generate the wiring first; then click a module to change its number.'); return; }
+    if (!wiring) { say('Number the modules first (Wiring card: Number modules by clicking); then click a module to change its number.'); return; }
     const st = wiring.strings.find(s => s.modules.includes(mod.id));
     if (!st) return;
     const idx = st.modules.indexOf(mod.id);
@@ -924,7 +931,7 @@ async function renderCadPage(id) {
       ctx.fillRect(a[0], a[1], b[0] - a[0], b[1] - a[1]);
       const unwired = cadKind(c.kind).wired === false;
       const named = cadNamed(c.kind);
-      if (c.id && (b[0] - a[0] > 46 || named) && !(c.kind === 'module' && wiring && showWiring && !teach)) {
+      if (c.id && c.kind !== 'module' && (b[0] - a[0] > 46 || named)) {
         const saved = cad.labels[cadCompKey(c)];
         const text = c.kind === 'jb' && c.jbName ? c.jbName : cadCompLabel(c, cad.labels) + (named && !(saved && saved.confirmed) ? ' ?' : '');
         if (named && !c.preview) {
@@ -1100,7 +1107,6 @@ async function renderCadPage(id) {
         ${(wiring.warnings || []).filter(w => !/crossing/.test(w)).map(w => `<p class="warn small">${esc(w)}</p>`).join('')}
         <table class="cad-wire-table"><thead><tr><th>SSC</th><th>Modules</th><th>Power</th><th>Comm</th></tr></thead><tbody>${rows}</tbody></table>
         <p class="muted small">Cables · length along the drawn route, without slack. S1-M1 is the module wired to S− and N. <b>Click a module</b> on the drawing to change its number.</p>
-        ${wiring.custom ? `<p class="small cad-wire-custom">Numbering edited by hand. <button class="btn btn-ghost btn-xs" id="cad-wire-suggest">Back to the suggested numbering</button></p>` : ''}
         <label class="cad-wire-show"><input type="checkbox" id="cad-wire-show" ${showWiring ? 'checked' : ''}> Show wiring on the drawing</label>
         <a class="btn btn-primary btn-sm cad-wire-go" href="#/sheet/${project.id}">Open the wiring sheet →</a>
         <p class="muted small">Edit the A3 sheet (title block, power plugs, cable routes, labels) and download it as PDF.</p>`;
@@ -1108,7 +1114,7 @@ async function renderCadPage(id) {
     box.innerHTML = `<div class="cad-label-card cad-wire-card">
       <h4><span class="cad-swatch" style="background:#ef4444"></span>Wiring
         <span class="chip ${wiring && !wiring.crossings.length ? 'chip-ok' : 'chip-warn'}">${wiring ? (wiring.crossings.length ? 'Check crossings' : 'Generated') : 'Not generated'}</span></h4>
-      <p class="muted small">Power in series S− → M1 → … → S+, communication N → M1 → … → S, bus B+ / B− to the junction box. The tool chooses which modules each SSC wires, and their order, so that no power cables cross.</p>
+      <p class="muted small">You number the modules by clicking them in order, SSC by SSC. The tool then draws power in series S− → M1 → … → S+, communication N → M1 → … → S and bus B+ / B− to the junction box, along the risers, and checks that no power cables cross.</p>
       ${todo.length ? `<ul class="cad-wire-todo">${todo.map(t => `<li>${esc(t)}</li>`).join('')}</ul>` : ''}
       <div class="cad-wire-row">
         <label for="cad-wire-pair">Junction box connectors</label>
@@ -1119,8 +1125,12 @@ async function renderCadPage(id) {
       </div>
       <p class="muted small">Used on every junction box unless an SSC below says otherwise.</p>
       ${jbTable(inp)}
-      <button class="btn btn-primary btn-sm cad-wire-go" id="cad-wire-number" ${todo.length ? 'disabled' : ''} title="Click each SSC's modules in order: M1 (wired to S− and N), M2, …">Number modules by clicking</button>
-      <button class="btn btn-ghost btn-sm cad-wire-go" id="cad-wire-go" ${todo.length ? 'disabled' : ''}>${wiring ? (wiring.custom ? 'Generate again (keeps your numbering)' : 'Generate again') : 'Let the tool number and wire'}</button>
+      ${!wiring && cad.wiring && cad.wiring.orders && !todo.length ? `<button class="btn btn-primary btn-sm cad-wire-go" id="cad-wire-redraw" title="A setting changed; draw the wiring again with your numbering">Draw the wiring again (your numbering)</button>` : ''}
+      <button class="btn ${wiring || (cad.wiring && cad.wiring.orders) ? 'btn-ghost' : 'btn-primary'} btn-sm cad-wire-go" id="cad-wire-number" ${todo.length ? 'disabled' : ''} title="Click each SSC's modules in order: M1 (wired to S− and N), M2, …">${wiring || (cad.wiring && cad.wiring.orders) ? 'Number again' : 'Number modules by clicking'}</button>
+      <div class="cad-wire-actions">
+        ${wiring || (cad.wiring && cad.wiring.orders) ? `<button class="btn btn-ghost btn-sm" id="cad-wire-delete" title="Remove the wiring and the numbering from this drawing">Delete wiring</button>` : ''}
+        ${wiringHistory.length ? `<button class="btn btn-ghost btn-sm" id="cad-wire-undo" title="Take back the last wiring change">Undo</button>` : ''}
+      </div>
       ${result}
     </div>`;
     box.querySelectorAll('[data-jb-ssc]').forEach(sel => sel.onchange = async () => {
@@ -1129,40 +1139,37 @@ async function renderCadPage(id) {
       const row = Object.assign({}, map[k] || {});
       if (sel.dataset.what === 'jb') row.jb = sel.value || undefined; else row.pair = sel.value || undefined;
       if (!row.jb && !row.pair) delete map[k]; else map[k] = row;
+      rememberWiring();
       cad.wiring = Object.assign({}, cad.wiring, { jbMap: map });
       delete cad.wiring.plan; wiring = null;
       await persist(); renderWiring(); viewer.redraw();
     });
     $('cad-wire-pair').onchange = async e => {
+      rememberWiring();
       cad.wiring = Object.assign({}, cad.wiring, { pair: e.target.value });
       delete cad.wiring.plan; wiring = null;
       await persist(); renderWiring(); viewer.redraw();
     };
     $('cad-wire-number').onclick = () => startNumbering();
-    $('cad-wire-go').onclick = () => {
-      const btn = $('cad-wire-go');
-      btn.disabled = true; btn.textContent = 'Working out the wiring…';
-      setTimeout(async () => {
-        const inp2 = wiringInputs();
-        let plan;
-        const orders = cad.wiring && cad.wiring.orders;
-        try { plan = cadWirePlan(components, inp2.sscs, { pair: inp2.pair, orders: orders }); } catch (e) { plan = { ok: false, errors: [e.message] }; }
-        if (!plan.ok) { say(plan.errors.join(' '), 'warn'); renderWiring(); return; }
-        wiring = cadWireSave(plan, inp2.key);
-        showWiring = true;
-        cad.wiring = Object.assign({}, cad.wiring, { pair: inp2.pair, plan: wiring, orders: plan.custom ? orders : undefined });
-        await persist();
-        renderWiring(); viewer.redraw();
-        say(plan.crossings.length ? `Wiring generated with ${plan.crossings.length} power crossing(s) to check.` : `Wiring generated: ${plan.cables.length} cables, no power crossings.`, plan.crossings.length ? 'warn' : 'cad-ok');
-      }, 30);
+    if ($('cad-wire-redraw')) $('cad-wire-redraw').onclick = () => replan(cad.wiring.orders, 'Wiring drawn again with your numbering.');
+    if ($('cad-wire-delete')) $('cad-wire-delete').onclick = async () => {
+      rememberWiring();
+      cad.wiring = Object.assign({}, cad.wiring);
+      delete cad.wiring.plan; delete cad.wiring.orders;
+      wiring = null;
+      await persist(); renderWiring(); viewer.redraw();
+      say('Wiring and numbering deleted. Undo brings them back.', 'cad-ok');
     };
-    if (wiring) {
-      $('cad-wire-show').onchange = e => { showWiring = e.target.checked; viewer.redraw(); };
-      if ($('cad-wire-suggest')) $('cad-wire-suggest').onclick = async () => {
-        delete cad.wiring.orders;
-        await replan(null, 'Suggested numbering restored.');
-      };
-    }
+    if ($('cad-wire-undo')) $('cad-wire-undo').onclick = async () => {
+      const prev = wiringHistory.pop();
+      if (prev == null) return;
+      cad.wiring = JSON.parse(prev);
+      wiring = cad.wiring.plan || null;
+      showWiring = true;
+      await persist(); renderWiring(); viewer.redraw();
+      say('Last wiring change undone.', 'cad-ok');
+    };
+    if (wiring) $('cad-wire-show').onchange = e => { showWiring = e.target.checked; viewer.redraw(); };
   }
 
   function recognise() {
@@ -1604,7 +1611,7 @@ async function renderSheetPage(id) {
   if (!project || !record || !record.blob) { shell(`<div class="empty"><h3>Drawing not found</h3>${back}</div>`, 'dash'); return; }
   const cad = (project.config && project.config.cad) || {};
   const wiring = cad.wiring && cad.wiring.plan;
-  if (!wiring) { shell(`<div class="empty"><h3>No wiring yet</h3><p>Generate the wiring on the drawing first.</p>${back}</div>`, 'dash'); return; }
+  if (!wiring) { shell(`<div class="empty"><h3>No wiring yet</h3><p>Number the modules on the drawing first (Wiring card: Number modules by clicking).</p>${back}</div>`, 'dash'); return; }
   let flat;
   try { flat = cadFlatten(cadParseDxf(await record.blob.text())); } catch (e) { shell(`<div class="empty"><h3>Could not read the drawing</h3><p>${esc(e.message)}</p>${back}</div>`, 'dash'); return; }
   const jbs = (cad.components || []).filter(c => c.kind === 'jb');

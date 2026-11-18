@@ -594,3 +594,6 @@ body:has(.sh-page) .topbar { display: none; }
 .cad-jb-table select { max-width: 100%; font-size: 12px; padding: 3px 4px; }
 .cad-jb-table td, .cad-jb-table th { white-space: normal; }
 .cad-jb-need th, .cad-jb-need select { color: #fbbf24; border-color: #f59e0b !important; }
+
+.cad-wire-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 4px 0 8px; }
+.cad-wire-actions:empty { display: none; }
