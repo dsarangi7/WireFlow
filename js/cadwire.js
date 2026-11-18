@@ -131,13 +131,33 @@ function cadwDirectRoute(a, b, midY) {
 }
 
 /** Jump between consecutive modules in the string (power + -> -, or comm N -> S). */
-function cadwJump(m1, m2, t1, t2, cols) {
+/** Slight C-shaped curve between two terminals, sagging below (dir -1) or bowing above (dir +1). */
+function cadwCurve(t1, t2, sag, dir) {
+  const pts = [];
+  const span = t2.x - t1.x;
+  const c1 = [t1.x + span * 0.18, t1.y + dir * sag * 1.33], c2 = [t2.x - span * 0.18, t2.y + dir * sag * 1.33];
+  for (let i = 0; i <= 20; i++) {
+    const t = i / 20, u = 1 - t;
+    pts.push([u * u * u * t1.x + 3 * u * u * t * c1[0] + 3 * u * t * t * c2[0] + t * t * t * t2.x,
+      u * u * u * t1.y + 3 * u * u * t * c1[1] + 3 * u * t * t * c2[1] + t * t * t * t2.y]);
+  }
+  pts.curve = true;
+  return pts;
+}
+
+/** Jump between consecutive modules in the string (power + -> -, or comm N -> S). */
+function cadwJump(m1, m2, t1, t2, cols, kind) {
   const sameCol = m1._col === m2._col;
   if (sameCol) return [[[t1.x, t1.y], [t2.x, t2.y]]];
-  /* across columns: round the modules (above or below) when they sit side by side ... */
+  const sideBySide = Math.abs(m1._col - m2._col) === 1 && Math.abs(m1.y0 - m2.y0) < (m1.y1 - m1.y0) * 0.5;
+  if (sideBySide) {
+    /* AYK drawing style: a slight C curve under (or over) the modules, power sagging deeper than comm */
+    const sag = kind === 'power' ? 130 : 55;
+    return [cadwCurve(t1, t2, sag, -1), cadwCurve(t1, t2, sag, 1)];
+  }
+  /* other column changes: round the modules or through the riser channel between the columns */
   const below = Math.min(m1.y0, m2.y0) - 14, above = Math.max(m1.y1, m2.y1) + 14;
   const out = [above, below].map(y => cadwClean([[t1.x, t1.y], [t1.x, y], [t2.x, y], [t2.x, t2.y]]));
-  /* ... or through the riser channel between the two columns (outer lanes) */
   if (cols && Math.abs(m1._col - m2._col) === 1) {
     const l = cols[Math.min(m1._col, m2._col)], r = cols[Math.max(m1._col, m2._col)];
     const gx = (l.x1 + r.x0) / 2, step = Math.min(CADW_LANE, Math.max(4, (r.x0 - l.x1 - 12) / 9));
@@ -291,7 +311,7 @@ function cadwPlanString(st, cols, jb, pair, placed, gapUse) {
     for (let i = 0; i + 1 < order.length; i++) {
       const a = order[i], b = order[i + 1];
       for (const [kind, ra, rb] of [['power', 'power+', 'power-'], ['comm', 'comm-N', 'comm-S']]) {
-        const opts = cadwJump(a, b, cadwTerm(a, ra), cadwTerm(b, rb), cols);
+        const opts = cadwJump(a, b, cadwTerm(a, ra), cadwTerm(b, rb), cols, kind);
         let pick = null;
         for (const pts of opts) {
           const cab = { kind: kind, pts: pts };
@@ -300,7 +320,7 @@ function cadwPlanString(st, cols, jb, pair, placed, gapUse) {
           if (!pick || v < pick.v) pick = { v: v, pts: pts };
         }
         const cab = { id: `${tag} ${label.get(a)}→${label.get(b)} ${kind}`, ssc: st.s.name, kind: kind,
-          from: `${label.get(a)} ${ra === 'power+' ? '+' : 'N'}`, to: `${label.get(b)} ${rb === 'power-' ? '−' : 'S'}`, pts: pick.pts, opts: opts };
+          from: `${label.get(a)} ${ra === 'power+' ? '+' : 'N'}`, to: `${label.get(b)} ${rb === 'power-' ? '−' : 'S'}`, pts: pick.pts, curve: !!pick.pts.curve, opts: opts };
         jumps.push(cab); prePlaced.push(cab);
       }
     }
@@ -314,7 +334,7 @@ function cadwPlanString(st, cols, jb, pair, placed, gapUse) {
         const v = others.reduce((n, c) => n + cadwCrossings(cab, c), 0) * 1e6 + cadwLen(pts);
         if (!pick || v < pick.v) pick = { v: v, pts: pts };
       }
-      j.pts = pick.pts; j.box = null;
+      j.pts = pick.pts; j.curve = !!pick.pts.curve; j.box = null;
     }
     for (const j of jumps) delete j.opts;
     const first = order[0], last = order[order.length - 1];
@@ -427,52 +447,13 @@ function cadwOutline(boxes) {
   return merged;
 }
 
-/* ---------- exports ---------- */
-/** Cable list as CSV (one row per cable, lengths in mm along the drawn route). */
-function cadWireCsv(plan) {
-  const q = v => /[",\n]/.test(String(v)) ? '"' + String(v).replace(/"/g, '""') + '"' : String(v);
-  const rows = [['SSC', 'Type', 'From', 'To', 'Drawn length (mm)']];
-  for (const c of plan.cables) rows.push([c.ssc, c.kind === 'power' ? 'Power' : 'Communication', c.from, c.to, Math.round(cadwLen(c.pts))]);
-  return rows.map(r => r.map(q).join(',')).join('\r\n') + '\r\n';
-}
-
-/**
- * Wiring as an AutoCAD DXF (R12, millimetres) in the SAME coordinates as the
- * imported drawing: copy it and PASTEORIG into the rack drawing. Layers:
- * WF-POWER (red), WF-COMM (green), WF-NUMBER (magenta labels), WF-GROUP (yellow outlines).
- */
-function cadWireDxf(plan, opts) {
-  opts = opts || {};
-  const text = opts.textHeight || 40;
-  const out = [];
-  const g = (code, v) => { out.push(String(code)); out.push(String(v)); };
-  const f = v => (Math.round(v * 1000) / 1000).toString();
-  const layers = [['WF-POWER', 1], ['WF-COMM', 3], ['WF-NUMBER', 6], ['WF-GROUP', 2]];
-  g(0, 'SECTION'); g(2, 'HEADER'); g(9, '$ACADVER'); g(1, 'AC1009'); g(9, '$INSUNITS'); g(70, 4); g(0, 'ENDSEC');
-  g(0, 'SECTION'); g(2, 'TABLES'); g(0, 'TABLE'); g(2, 'LAYER'); g(70, layers.length);
-  for (const [name, color] of layers) { g(0, 'LAYER'); g(2, name); g(70, 0); g(62, color); g(6, 'CONTINUOUS'); }
-  g(0, 'ENDTAB'); g(0, 'ENDSEC');
-  g(0, 'SECTION'); g(2, 'ENTITIES');
-  const line = (layer, a, b) => { g(0, 'LINE'); g(8, layer); g(10, f(a[0])); g(20, f(a[1])); g(30, 0); g(11, f(b[0])); g(21, f(b[1])); g(31, 0); };
-  for (const c of plan.cables) for (let i = 1; i < c.pts.length; i++) line(c.kind === 'power' ? 'WF-POWER' : 'WF-COMM', c.pts[i - 1], c.pts[i]);
-  for (const o of plan.outline || []) for (const s of o.segs) line('WF-GROUP', s[0], s[1]);
-  for (const st of plan.strings) {
-    for (const l of st.labels) {
-      g(0, 'TEXT'); g(8, 'WF-NUMBER'); g(10, f(l.x)); g(20, f(l.y)); g(30, 0); g(40, text); g(1, l.text);
-      g(72, 1); g(73, 2); g(11, f(l.x)); g(21, f(l.y)); g(31, 0);
-    }
-  }
-  g(0, 'ENDSEC'); g(0, 'EOF');
-  return out.join('\r\n') + '\r\n';
-}
-
 /** Plain, storable copy of a plan (no component objects), as kept with the drawing. */
 function cadWireSave(plan, key) {
   const r = v => Math.round(v * 100) / 100;
   return {
     key: key, pair: plan.pair, generated: new Date().toISOString(),
     crossings: plan.crossings.slice(), warnings: plan.warnings.slice(),
-    cables: plan.cables.map(c => ({ id: c.id, ssc: c.ssc, kind: c.kind, from: c.from, to: c.to, pts: c.pts.map(p => [r(p[0]), r(p[1])]) })),
+    cables: plan.cables.map(c => ({ id: c.id, ssc: c.ssc, kind: c.kind, from: c.from, to: c.to, curve: !!c.curve, pts: c.pts.map(p => [r(p[0]), r(p[1])]) })),
     strings: plan.strings.map(st => ({ name: st.name, tag: st.tag, modules: st.modules.map(m => m.id),
       labels: st.labels.map(l => ({ id: l.id, text: l.text, x: r(l.x), y: r(l.y) })) })),
     outline: plan.outline.map(o => ({ ssc: o.ssc, segs: o.segs.map(sg => sg.map(p => [r(p[0]), r(p[1])])) })),

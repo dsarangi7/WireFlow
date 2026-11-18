@@ -226,17 +226,29 @@ engine code.
   junction box is taught with its four connectors). The plan is saved with
   the drawing and reused until an input changes (SSC names / counts, parts,
   junction-box pair).
-- Exports: **Download for AutoCAD (DXF)** — R12 DXF in the drawing's own
-  millimetre coordinates on layers WF-POWER (red), WF-COMM (green),
-  WF-NUMBER (labels), WF-GROUP (outlines); in AutoCAD open it, copy, and
-  PASTEORIG into the rack drawing. **Cable list (CSV)** — SSC, type, from,
-  to, drawn length.
+- Output (decided 18 Nov 2026): **PDF only** — no DXF or CSV. After
+  Generate wiring, **Open the wiring sheet** shows the A3 sheet in AYK's
+  DWG2396 format (`js/sheet.js`, `js/pdf.js`): border with zones A–F / 8–1,
+  Notes 1–2, confidentiality and tolerance blocks, boxed bold legend on top of
+  the title block, AYK POWER LTD. logo, the string note and the harness note.
+  Only the title-block fields are editable (revision rows, document / design
+  number and name, bank size and weight, scale, sheet). On the sheet the
+  engineer can drag a cable's middle section, module labels, the power-plug
+  labels and the grounding-point label; **Undo all moves** resets them.
+  Power Plug A (blue) and B (yellow) leave the RIGHT end of every junction
+  box and run up past the rack top (Note 2); one checkbox hides them all.
+  Grounding point (Note 1) at the rack's bottom-right. Module labels S1-M1 …
+  are on the PDF. Side-by-side modules in adjacent columns are joined by a
+  slight C curve (power deeper than comm), as AYK draws them. The PDF is
+  vector, A3 landscape, Helvetica, made in the browser (≈2 MB, <0.5 s on 111).
+- **Example rack**: `#/example` (buttons on the product page and Drawings
+  home) loads rack 111 with its parts taught and labels confirmed, built by
+  `node tools/make-example.js <rack-111.dxf>` into `assets/examples/`.
 - Verified on 111: 140 cables (75 power, 65 comm), no power crossings, for
   pair 1 and pair 2; uneven counts 10/14/12/12/12 also crossing-free.
-  AutoCAD 2024 opens the DXF (AUDIT: 0 errors; 155 power lines, 105 comm
-  lines, 60 labels). Planning takes ≈0.7 s in Node, ≈2.5 s in the browser.
-- Not yet: engineer edits to the suggested numbering, cable slack / part
-  numbers, Visio output. Lengths are along the drawn route only.
+  Planning takes ≈0.7 s in Node, ≈2.5 s in the browser.
+- Not yet: engineer edits to the suggested numbering, harness numbers and
+  cable lengths on the sheet.
 
 ## Decided on 18 November 2026 (wiring step)
 

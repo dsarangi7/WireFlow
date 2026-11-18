@@ -53,7 +53,7 @@
     "Engineer confirms every SSC, ACDP and MSM label",
     "Module count per SSC checked against the drawing",
     "Automatic wiring per SSC with no power cable crossings",
-    "Wiring exported as AutoCAD DXF on dedicated layers, plus a cable list",
+    "A3 wiring sheet in the AYK drawing format, edited on screen and downloaded as PDF",
     "Runs in the browser; drawings stay on the device"
   ]
 }
@@ -72,7 +72,7 @@
     { "@type": "Question", "name": "Who decides the SSC, ACDP and MSM names?",
       "acceptedAnswer": { "@type": "Answer", "text": "WireFlow proposes them (SSC1 and ACDP1 are the ones closest to the MSM) and the engineer confirms or renames every label and enters the number of modules per SSC." } },
     { "@type": "Question", "name": "Does WireFlow draw the cables already?",
-      "acceptedAnswer": { "@type": "Answer", "text": "Yes. After the engineer confirms the SSCs and their module counts, Generate wiring chooses which modules each SSC wires and their order so that no power cables cross, draws the series power, communication and bus cables, and exports them as an AutoCAD DXF on WF-POWER and WF-COMM layers plus a cable list." } }
+      "acceptedAnswer": { "@type": "Answer", "text": "Yes. After the engineer confirms the SSCs and their module counts, Generate wiring chooses which modules each SSC wires and their order so that no power cables cross, and draws the series power, communication and bus cables. The engineer then finishes the A3 wiring sheet (title block, power plugs, cable routes) and downloads it as a PDF in the AYK drawing format." } }
   ]
 }
 </script>
@@ -108,7 +108,7 @@
           <p class="lead">WireFlow reads the rack drawing you already have, in true millimetres. Teach it one battery module, one SSC and one junction box &mdash; it finds every other copy, places every terminal and applies AYK's wiring and numbering rules. Your engineers check and confirm instead of drawing by hand.</p>
           <div class="hero-cta">
             <a class="btn-site btn-site-primary btn-site-lg" href="#/app">Open WireFlow</a>
-            <a class="btn-site btn-site-ghost btn-site-lg" href="#how">See how it works</a>
+            <a class="btn-site btn-site-ghost btn-site-lg" href="#/example">Try the example rack</a>
           </div>
           <ul class="hero-trust">
             <li>No account</li><li>Drawings stay on your device</li><li>Works with flat SolidWorks/AutoCAD exports</li>
@@ -198,7 +198,7 @@
           <li><span>1</span><h3>Import the drawing</h3><p>Convert the DWG with the included script (it uses your installed AutoCAD) and drop the DXF into WireFlow.</p></li>
           <li><span>2</span><h3>Teach each part once</h3><p>Box one battery module and click its terminals; box one SSC with its connector strip, one junction box, ACDP and MSM.</p></li>
           <li><span>3</span><h3>Confirm the rack</h3><p>Check the proposed SSC, ACDP and MSM names and enter how many modules each SSC controls.</p></li>
-          <li><span>4</span><h3>Generate the wiring</h3><p>Module numbering S1-M1 &hellip; with no power crossings, cables routed along the risers, and a DXF back to AutoCAD on its own layers.</p></li>
+          <li><span>4</span><h3>Generate the wiring</h3><p>Module numbering S1-M1 &hellip; with no power crossings, cables routed along the risers, then an A3 wiring sheet you finish on screen and download as PDF.</p></li>
         </ol>
       </div>
     </section>
@@ -238,7 +238,8 @@
               <li>Module count per SSC, checked against the drawing</li>
               <li>Saved parts reused on the next rack; parts export (JSON)</li>
               <li>Automatic wiring per SSC with no power crossings</li>
-              <li>AutoCAD DXF of the wiring (WF-POWER, WF-COMM, WF-NUMBER, WF-GROUP) and a cable list (CSV)</li>
+              <li>A3 wiring sheet in the AYK format: editable title block, power plugs A / B, grounding point, PDF download</li>
+              <li>Example rack to try every step without your own drawing</li>
             </ul>
           </div>
           <div class="road-col">
@@ -261,7 +262,7 @@
         <details><summary>Do my drawings leave my computer?</summary><p>No. The drawing is read and stored in your browser on your device. There is no account and no upload.</p></details>
         <details><summary>Our drawings are flat exports with no blocks or text. Does that work?</summary><p>Yes. You box one example of each part and click its terminals once; WireFlow finds every identical copy by its exact geometry.</p></details>
         <details><summary>Who decides the SSC, ACDP and MSM names?</summary><p>WireFlow proposes them (SSC1 and ACDP1 are the ones closest to the MSM) and the engineer confirms or renames every label and enters the number of modules per SSC.</p></details>
-        <details><summary>Does WireFlow draw the cables already?</summary><p>Yes. After the engineer confirms the SSCs and their module counts, Generate wiring chooses which modules each SSC wires and their order so that no power cables cross, draws the series power, communication and bus cables, and exports them as an AutoCAD DXF on WF-POWER and WF-COMM layers plus a cable list.</p></details>
+        <details><summary>Does WireFlow draw the cables already?</summary><p>Yes. After the engineer confirms the SSCs and their module counts, Generate wiring chooses which modules each SSC wires and their order so that no power cables cross, and draws the series power, communication and bus cables. The engineer then finishes the A3 wiring sheet (title block, power plugs, cable routes) and downloads it as a PDF in the AYK drawing format.</p></details>
       </div>
     </section>
 
@@ -301,6 +302,8 @@
 <script src="js/rack.js"></script>
 <script src="js/cad.js"></script>
 <script src="js/cadwire.js"></script>
+<script src="js/pdf.js"></script>
+<script src="js/sheet.js"></script>
 <script src="js/numbering.js"></script>
 <script src="js/sscplan.js"></script>
 <script src="js/frontview.js"></script>

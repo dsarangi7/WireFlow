@@ -270,8 +270,10 @@ async function route() {
   document.title = 'WireFlow';
   if (h.startsWith('#/project/')) { renderProjectPage(+h.split('/')[2]); return; }
   if (h.startsWith('#/cad/')) { renderCadPage(+h.split('/')[2]); return; }
+  if (h.startsWith('#/sheet/')) { renderSheetPage(+h.split('/')[2]); return; }
   switch (h) {
     case '#/app': renderDashboard(); return;
+    case '#/example': openExampleRack().catch(e => { shell(`<div class="empty"><h3>Could not open the example</h3><p>${esc(e.message)}</p><a class="btn btn-primary" href="#/app">Back</a></div>`, 'dash'); }); return;
     case '#/login': location.replace('#/app'); return;
     case '#/integrations': renderIntegrations(); return;
     default: renderDashboard();
@@ -331,6 +333,7 @@ async function renderDashboard() {
           <p>Import an AutoCAD rack drawing, teach each part once and confirm the rack.</p>
         </div>
         <div class="dash-actions">
+          <a class="btn-site btn-site-ghost" href="#/example">Open the example rack</a>
           <button class="btn-site btn-site-ghost" id="studio-open-session">Open saved session</button>
           <button class="btn-site btn-site-primary" id="studio-import-button">Import DXF</button>
         </div>
@@ -352,13 +355,13 @@ async function renderDashboard() {
         <li><b>1</b><span>Import DXF</span></li>
         <li><b>2</b><span>Teach each part once</span></li>
         <li><b>3</b><span>Confirm SSCs, ACDPs, MSM and modules per SSC</span></li>
-        <li><b>4</b><span>Generate wiring and download for AutoCAD</span></li>
+        <li><b>4</b><span>Generate wiring and download the PDF sheet</span></li>
       </ol>
 
       <section class="dash-list" aria-labelledby="list-title">
         <div class="dash-list-head"><h2 id="list-title">Your drawings</h2><span>${cadProjects.length} drawing${cadProjects.length === 1 ? '' : 's'}</span></div>
         ${cadProjects.length ? `<div class="d-grid">${cadProjects.map(cadCard).join('')}</div>`
-          : `<div class="d-empty"><b>No drawings yet</b><span>Import a DXF above to start. Parts you teach are reused on the next rack.</span></div>`}
+          : `<div class="d-empty"><b>No drawings yet</b><span>Import a DXF above to start, or <a href="#/example">open the example rack</a> (60 modules, parts already taught) to try every step.</span></div>`}
       </section>
 
       <details class="dash-legacy">
@@ -677,12 +680,15 @@ async function renderCadPage(id) {
             </div>
             <div id="cad-labels"></div>
             <div id="cad-wiring"></div>
-            <div id="cad-sigs"></div>
-            <div class="cad-part-actions">
-              <button class="btn btn-ghost btn-sm" id="cad-use-library">Use saved parts</button>
-              <button class="btn btn-ghost btn-sm" id="cad-download" disabled>Download parts (JSON)</button>
-            </div>
             <p class="small" id="cad-status" role="status"></p>
+            <details class="cad-taught" id="cad-taught">
+              <summary>Taught parts</summary>
+              <p class="muted small">One pattern per part type. <b>Remove</b> takes it off this drawing; <b>Forget</b> also deletes it from the parts saved on this device. Use them when a part was taught wrongly.</p>
+              <div id="cad-sigs"></div>
+              <div class="cad-part-actions">
+                <button class="btn btn-ghost btn-sm" id="cad-use-library">Use saved parts</button>
+              </div>
+            </details>
           </section>
           <details class="cad-drawing-info">
             <summary>Drawing</summary>
@@ -831,11 +837,8 @@ async function renderCadPage(id) {
         <table class="cad-wire-table"><thead><tr><th>SSC</th><th>Modules</th><th>Power</th><th>Comm</th></tr></thead><tbody>${rows}</tbody></table>
         <p class="muted small">Cables · length along the drawn route, without slack. S1-M1 is the module wired to S− and N.</p>
         <label class="cad-wire-show"><input type="checkbox" id="cad-wire-show" ${showWiring ? 'checked' : ''}> Show wiring on the drawing</label>
-        <div class="cad-part-actions">
-          <button class="btn btn-primary btn-sm" id="cad-wire-dxf">Download for AutoCAD (DXF)</button>
-          <button class="btn btn-ghost btn-sm" id="cad-wire-csv">Cable list (CSV)</button>
-        </div>
-        <p class="muted small">Same coordinates as your rack drawing. In AutoCAD: open the DXF, select all, Copy (Ctrl+C), then in your rack drawing use PASTEORIG (paste to original coordinates). Layers WF-POWER (red), WF-COMM (green), WF-NUMBER, WF-GROUP.</p>`;
+        <a class="btn btn-primary btn-sm cad-wire-go" href="#/sheet/${project.id}">Open the wiring sheet →</a>
+        <p class="muted small">Edit the A3 sheet (title block, power plugs, cable routes, labels) and download it as PDF.</p>`;
     }
     box.innerHTML = `<div class="cad-label-card cad-wire-card">
       <h4><span class="cad-swatch" style="background:#ef4444"></span>Wiring
@@ -876,9 +879,6 @@ async function renderCadPage(id) {
     };
     if (wiring) {
       $('cad-wire-show').onchange = e => { showWiring = e.target.checked; viewer.redraw(); };
-      const base = (project.name || 'rack').replace(/[^\w.-]+/g, '-');
-      $('cad-wire-dxf').onclick = () => download(`${base}-wiring.dxf`, cadWireDxf(wiring), 'application/dxf');
-      $('cad-wire-csv').onclick = () => download(`${base}-cables.csv`, cadWireCsv(wiring), 'text/csv');
     }
   }
 
@@ -1011,7 +1011,7 @@ async function renderCadPage(id) {
       await persist();
       say(`Part forgotten on this drawing${keep.length < lib.length ? ' and deleted from this device' : ''}.`);
     });
-    $('cad-download').disabled = !components.length;
+    $('cad-taught').querySelector('summary').textContent = `Taught parts (${cad.signatures.length})`;
   }
 
   async function persist() {
@@ -1123,19 +1123,6 @@ async function renderCadPage(id) {
     say(`${lib.length} saved part${lib.length === 1 ? '' : 's'} applied.`);
   };
 
-  $('cad-download').onclick = () => {
-    const out = {
-      format: 'ayk-wireflow-cad-parts', version: 1, drawing: project.cad_file || project.name, units: sum.units,
-      components: components.map(c => ({ id: c.id, kind: c.kind, label: cadCompLabel(c, cad.labels),
-        wired: cadKind(c.kind).wired !== false,
-        labelConfirmed: cadNamed(c.kind) ? !!(cad.labels[cadCompKey(c)] && cad.labels[cadCompKey(c)].confirmed) : true,
-        modules: c.kind === 'ssc' ? ((cad.labels[cadCompKey(c)] || {}).modules || null) : undefined,
-        box: [c.x0, c.y0, c.x1, c.y1].map(v => +v.toFixed(3)),
-        terminals: (c.terminals || []).map(t => ({ role: t.role, x: +t.x.toFixed(3), y: +t.y.toFixed(3) })) })),
-    };
-    download(`${project.name || 'rack'}-parts.json`, JSON.stringify(out, null, 2), 'application/json');
-  };
-
   /* Open: saved parts for this drawing, else the device library. */
   if (cad.signatures.length) { recognise(); if (renamedTerminals) persist(); }
   else {
@@ -1153,6 +1140,272 @@ async function renderCadPage(id) {
 /** Canvas viewer for flattened CAD geometry: wheel zoom at the cursor, drag to
  *  pan, live coordinates in drawing units, two-point measure that snaps to
  *  circle centres, and teaching modes (box / pick) with an overlay hook. */
+
+/* ============================================================
+ * Wiring sheet editor (A3, AYK DWG2396 format) -> PDF
+ * The rack is painted on a canvas; the sheet (frame, title block,
+ * wiring, labels) is SVG on top so parts of it can be dragged.
+ * ============================================================ */
+const SHEET_PX = 7;   // canvas pixels per sheet millimetre
+let sheetLogoCache = null;
+async function sheetLogo() {
+  if (sheetLogoCache) return sheetLogoCache;
+  const img = new Image();
+  img.src = 'assets/ayk-logo-sheet.png';
+  await img.decode();
+  const c = document.createElement('canvas');
+  c.width = img.naturalWidth; c.height = img.naturalHeight;
+  const x = c.getContext('2d');
+  x.fillStyle = '#ffffff'; x.fillRect(0, 0, c.width, c.height); x.drawImage(img, 0, 0);
+  const blob = await new Promise(r => c.toBlob(r, 'image/jpeg', 0.92));
+  sheetLogoCache = { bytes: new Uint8Array(await blob.arrayBuffer()), w: c.width, h: c.height, src: 'assets/ayk-logo-sheet.png' };
+  return sheetLogoCache;
+}
+
+/** The example rack (AYK rack 111) with its parts taught and labels confirmed,
+    opened as a normal drawing so people can try every step. One copy per browser. */
+async function openExampleRack() {
+  const all = await localProjects();
+  const have = all.find(p => p.example === 'rack-111');
+  if (have) { location.replace('#/cad/' + have.id); return; }
+  shell('<div class="loading">Loading the example rack…</div>', 'dash');
+  const [res, parts] = await Promise.all([
+    fetch('assets/examples/rack-111.dxf.gz'),
+    fetch('assets/examples/rack-111-parts.json').then(r => { if (!r.ok) throw new Error('Example parts not found.'); return r.json(); }),
+  ]);
+  if (!res.ok) throw new Error('Example drawing not found.');
+  const raw = new Uint8Array(await res.arrayBuffer());
+  let text;
+  if (raw[0] === 0x1f && raw[1] === 0x8b) {
+    text = await new Response(new Blob([raw]).stream().pipeThrough(new DecompressionStream('gzip'))).text();
+  } else text = new TextDecoder().decode(raw);   /* a server already unzipped it */
+  const now = new Date().toISOString();
+  const project = { name: parts.name || 'Example rack', vessel: '', drawing_no: '', product_family: '', modules_per_string: 0,
+    config: { rules: { ...DEFAULT_RULES }, exceptions: [], spans: [], cad: { signatures: parts.signatures, labels: parts.labels, components: [] } },
+    status: 'draft', revision: 'A', created_at: now, updated_at: now, underlay_kind: 'cad', cad_file: parts.file || 'example.dxf', example: 'rack-111' };
+  project.id = await localAddProject(project);
+  await localPutUnderlay(project.id, new Blob([text], { type: 'application/dxf' }), 'cad');
+  project.underlay_url = `local-underlay:${project.id}`;
+  await localPutProject(project);
+  location.replace('#/cad/' + project.id);
+}
+
+async function renderSheetPage(id) {
+  shell('<div class="loading">Opening the wiring sheet…</div>', 'dash');
+  let project, record;
+  try { project = await localProject(id); record = await localGetUnderlay(id); } catch (e) {}
+  const back = `<a class="btn btn-primary" href="#/cad/${id}">Back to the drawing</a>`;
+  if (!project || !record || !record.blob) { shell(`<div class="empty"><h3>Drawing not found</h3>${back}</div>`, 'dash'); return; }
+  const cad = (project.config && project.config.cad) || {};
+  const wiring = cad.wiring && cad.wiring.plan;
+  if (!wiring) { shell(`<div class="empty"><h3>No wiring yet</h3><p>Generate the wiring on the drawing first.</p>${back}</div>`, 'dash'); return; }
+  let flat;
+  try { flat = cadFlatten(cadParseDxf(await record.blob.text())); } catch (e) { shell(`<div class="empty"><h3>Could not read the drawing</h3><p>${esc(e.message)}</p>${back}</div>`, 'dash'); return; }
+  const jbs = (cad.components || []).filter(c => c.kind === 'jb');
+  const st = sheetSettings(cad.sheet, project.name);
+  const logo = await sheetLogo().catch(() => null);
+  const F = st.fields;
+  const fieldRow = (key, label) => `<label class="sh-field"><span>${label}</span><input type="text" data-f="${key}" value="${esc(F[key] || '')}" maxlength="60"></label>`;
+  const revRows = () => F.revs.map((r, i) => `<tr>${['rev', 'date', 'desn', 'dran', 'chkd', 'states', 'notes'].map(k =>
+    `<td><input type="text" data-rev="${i}" data-k="${k}" value="${esc(r[k] || '')}" maxlength="${k === 'notes' ? 24 : 12}" aria-label="${k}"></td>`).join('')}
+    <td>${F.revs.length > 1 ? `<button class="btn btn-ghost btn-xs" data-rev-del="${i}" title="Remove this revision row">×</button>` : ''}</td></tr>`).join('');
+
+  shell(`
+    <div class="cad-page sh-page">
+      <header class="cad-head">
+        <a class="back" href="#/cad/${id}">← Drawing</a>
+        <h1>${esc(project.name)} · wiring sheet</h1>
+        <span class="chip">A3 · PDF</span>
+        <div class="cad-tools">
+          <button class="btn btn-ghost btn-sm" id="sh-zoom-out" title="Zoom out">−</button>
+          <button class="btn btn-ghost btn-sm" id="sh-zoom-fit">Fit</button>
+          <button class="btn btn-ghost btn-sm" id="sh-zoom-in" title="Zoom in">+</button>
+          <button class="btn btn-primary btn-sm" id="sh-pdf">Download PDF</button>
+        </div>
+      </header>
+      <div class="sh-body">
+        <div class="sh-stage" id="sh-stage"><div class="sh-paper" id="sh-paper"><canvas id="sh-rack"></canvas><svg id="sh-svg" viewBox="0 0 ${A3_W} ${A3_H}" xmlns="http://www.w3.org/2000/svg"><g id="sh-g" transform="translate(0 ${A3_H}) scale(1 -1)"></g></svg></div></div>
+        <aside class="cad-info sh-side">
+          <section>
+            <h3>On the sheet</h3>
+            <label class="cad-wire-show"><input type="checkbox" id="sh-plugs" ${st.plugs ? 'checked' : ''}> Customer power plugs A / B (Note 2) on every junction box</label>
+            <label class="sh-field"><span>Scale</span><select id="sh-scale"><option value="auto">Automatic</option>${SHEET_SCALES.map(v => `<option value="${v}" ${String(F.scale) === String(v) ? 'selected' : ''}>1:${v}</option>`).join('')}</select></label>
+            <p class="muted small">Drag a cable's middle section, a module label, the plug labels or the grounding-point label to move it. Curved jumps stay as drawn.</p>
+            <button class="btn btn-ghost btn-sm" id="sh-reset">Undo all moves</button>
+          </section>
+          <section>
+            <h3>Title block</h3>
+            ${fieldRow('docNumber', 'Document Number')}${fieldRow('docType', 'Document Type')}
+            ${fieldRow('designNumber', 'Design Number')}${fieldRow('designName', 'Design Name')}
+            ${fieldRow('bankSize', 'Bank Size')}${fieldRow('bankWeight', 'Bank Weight')}
+            ${fieldRow('sheet', 'Sheet')}
+            <h4>Revisions</h4>
+            <div class="sh-revs"><table><thead><tr><th>REV.</th><th>DATE</th><th>DESN BY</th><th>DRAN BY</th><th>CHKD BY</th><th>STATES</th><th>NOTES</th><th></th></tr></thead><tbody id="sh-revs">${revRows()}</tbody></table></div>
+            <button class="btn btn-ghost btn-sm" id="sh-rev-add">Add revision</button>
+          </section>
+          <p class="small" id="sh-status" role="status"></p>
+        </aside>
+      </div>
+    </div>`, 'dash');
+
+  const $ = q => document.getElementById(q);
+  const say = (m, k) => { $('sh-status').textContent = m || ''; $('sh-status').className = 'small ' + (k || ''); };
+  const model = () => ({ flat: flat, bounds: flat.bounds, jbs: jbs, wiring: wiring, settings: st, logo: logo });
+  let zoom = 1, P = null, rackKey = '';
+  const save = async () => {
+    cad.sheet = { fields: Object.assign({}, F, { scaleText: undefined }), plugs: st.plugs, edits: st.edits };
+    project.updated_at = new Date().toISOString();
+    try { await localPutProject(project); } catch (e) { say('Could not save: ' + e.message, 'warn'); }
+  };
+
+  function paintRack() {
+    const key = P.scale + '|' + P.X(0) + '|' + P.Y(0);
+    if (key === rackKey) return;
+    rackKey = key;
+    const cv = $('sh-rack');
+    cv.width = A3_W * SHEET_PX; cv.height = A3_H * SHEET_PX;
+    const ctx = cv.getContext('2d');
+    ctx.clearRect(0, 0, cv.width, cv.height);
+    ctx.strokeStyle = '#374151'; ctx.lineWidth = 0.6;
+    const X = x => P.X(x) * SHEET_PX, Y = y => (A3_H - P.Y(y)) * SHEET_PX;
+    const path = new Path2D();
+    for (const pl of flat.polylines) {
+      const a = pl.pts;
+      path.moveTo(X(a[0]), Y(a[1]));
+      for (let i = 2; i < a.length; i += 2) path.lineTo(X(a[i]), Y(a[i + 1]));
+      if (pl.closed) path.closePath();
+    }
+    for (const c of flat.circles) { path.moveTo(X(c.cx + c.r), Y(c.cy)); path.arc(X(c.cx), Y(c.cy), c.r * P.k * SHEET_PX, 0, Math.PI * 2); }
+    ctx.stroke(path);
+  }
+  function render() {
+    const svg = sheetSvgTarget();
+    P = sheetDraw(svg, Object.assign(model(), { rack: false, interactive: true, logo: logo ? { src: logo.src, w: logo.w, h: logo.h } : null }));
+    $('sh-g').innerHTML = svg.svg();
+    paintRack();
+  }
+  function applyZoom() {
+    const stage = $('sh-stage');
+    const fit = Math.min((stage.clientWidth - 24) / A3_W, (stage.clientHeight - 24) / A3_H);
+    const pxmm = Math.max(0.5, fit * zoom);
+    $('sh-paper').style.width = A3_W * pxmm + 'px';
+    $('sh-paper').style.height = A3_H * pxmm + 'px';
+  }
+  render(); applyZoom();
+  new ResizeObserver(applyZoom).observe($('sh-stage'));
+  $('sh-zoom-in').onclick = () => { zoom = Math.min(6, zoom * 1.4); applyZoom(); };
+  $('sh-zoom-out').onclick = () => { zoom = Math.max(0.6, zoom / 1.4); applyZoom(); };
+  $('sh-zoom-fit').onclick = () => { zoom = 1; applyZoom(); };
+
+  /* ---- title block and options ---- */
+  const side = document.querySelector('.sh-side');
+  side.addEventListener('input', e => {
+    const t = e.target;
+    if (t.dataset.f) F[t.dataset.f] = t.value;
+    else if (t.dataset.rev != null) F.revs[+t.dataset.rev][t.dataset.k] = t.value;
+    else return;
+    render(); save();
+  });
+  $('sh-plugs').onchange = e => { st.plugs = e.target.checked; render(); save(); };
+  $('sh-scale').onchange = e => { F.scale = e.target.value; render(); save(); };
+  const bindRevs = () => {
+    $('sh-revs').innerHTML = revRows();
+    $('sh-revs').querySelectorAll('[data-rev-del]').forEach(b => b.onclick = () => { F.revs.splice(+b.dataset.revDel, 1); bindRevs(); render(); save(); });
+  };
+  bindRevs();
+  $('sh-rev-add').onclick = () => {
+    if (F.revs.length >= 4) { say('The title block has room for 4 revision rows.', 'warn'); return; }
+    const last = F.revs[F.revs.length - 1] || {};
+    F.revs.push({ rev: String((+last.rev || 0) + 1), date: sheetDefaults().revs[0].date, desn: last.desn || '', dran: last.dran || '', chkd: last.chkd || '', states: '', notes: '' });
+    bindRevs(); render(); save();
+  };
+  $('sh-reset').onclick = () => { st.edits = { cables: {}, labels: {}, ground: null, plugLabel: null }; render(); save(); say('All moves undone.'); };
+
+  /* ---- dragging on the sheet ---- */
+  const svgEl = $('sh-svg');
+  const toSheet = (ev) => {
+    const pt = svgEl.createSVGPoint(); pt.x = ev.clientX; pt.y = ev.clientY;
+    const q = pt.matrixTransform($('sh-g').getScreenCTM().inverse());
+    return [q.x, q.y];
+  };
+  let drag = null;
+  svgEl.addEventListener('pointerdown', ev => {
+    const s0 = toSheet(ev);
+    const dEl = ev.target.closest('[data-drag]');
+    const cEl = ev.target.closest('.sh-cable, .sh-hit');
+    if (dEl) {
+      const kind = dEl.dataset.drag;
+      const lab = kind === 'label' ? wiring.strings.flatMap(s => s.labels).find(l => l.id === dEl.dataset.id) : null;
+      drag = { kind: kind, start: s0, el: dEl, id: dEl.dataset.id,
+        orig: kind === 'label' ? (st.edits.labels[dEl.dataset.id] || [lab.x, lab.y]).slice()
+          : kind === 'plug' ? (st.edits.plugLabel || [-30, -2]).slice() : (st.edits.ground || [0, 0]).slice() };
+    } else if (cEl) {
+      const cab = wiring.cables.find(c => c.id === cEl.dataset.id);
+      if (!cab) return;
+      if (cab.curve) { say('Curved jumps between side-by-side modules stay as drawn.'); return; }
+      const pts = (st.edits.cables[cab.id] || cab.pts).map(p => p.slice());
+      /* nearest middle section (not the first or last stub into a terminal) */
+      const d = [(s0[0] - P.X(0)) / P.k, (s0[1] - P.Y(0)) / P.k];
+      let best = -1, bd = Infinity;
+      for (let i = 1; i < pts.length - 2; i++) {
+        const a = pts[i], b = pts[i + 1];
+        const len2 = (b[0] - a[0]) ** 2 + (b[1] - a[1]) ** 2 || 1;
+        const t = Math.max(0, Math.min(1, ((d[0] - a[0]) * (b[0] - a[0]) + (d[1] - a[1]) * (b[1] - a[1])) / len2));
+        const dist = Math.hypot(d[0] - a[0] - t * (b[0] - a[0]), d[1] - a[1] - t * (b[1] - a[1]));
+        if (dist < bd) { bd = dist; best = i; }
+      }
+      if (best < 0) { say('This cable runs straight between two terminals; there is no middle section to move.'); return; }
+      const a = pts[best], b = pts[best + 1];
+      drag = { kind: 'cable', start: s0, el: cEl, cab: cab, pts: pts, seg: best, horiz: Math.abs(b[1] - a[1]) < Math.abs(b[0] - a[0]), orig: pts.map(p => p.slice()) };
+    } else return;
+    svgEl.setPointerCapture(ev.pointerId);
+    ev.preventDefault();
+  });
+  svgEl.addEventListener('pointermove', ev => {
+    if (!drag) return;
+    const s1 = toSheet(ev);
+    const dx = s1[0] - drag.start[0], dy = s1[1] - drag.start[1];
+    if (drag.kind === 'cable') {
+      const i = drag.seg, o = drag.orig, p = drag.pts;
+      if (drag.horiz) { p[i][1] = o[i][1] + dy / P.k; p[i + 1][1] = o[i + 1][1] + dy / P.k; }
+      else { p[i][0] = o[i][0] + dx / P.k; p[i + 1][0] = o[i + 1][0] + dx / P.k; }
+      const pts = p.map(q => P.X(q[0]).toFixed(3) + ',' + P.Y(q[1]).toFixed(3)).join(' ');
+      svgEl.querySelectorAll(`[data-id="${CSS.escape(drag.cab.id)}"]`).forEach(el => el.setAttribute('points', pts));
+      drag.moved = true;
+    } else {
+      /* sheet units, Y up inside the flipped group */
+      if (drag.t0 == null) drag.t0 = drag.el.getAttribute('transform') || '';
+      drag.el.setAttribute('transform', `translate(${dx} ${dy}) ${drag.t0}`);
+      drag.dx = dx; drag.dy = dy; drag.moved = true;
+    }
+  });
+  const end = () => {
+    if (!drag) return;
+    const d = drag; drag = null;
+    if (!d.moved) return;
+    if (d.kind === 'cable') st.edits.cables[d.cab.id] = d.pts.map(p => [Math.round(p[0] * 100) / 100, Math.round(p[1] * 100) / 100]);
+    else if (d.kind === 'label') st.edits.labels[d.id] = [d.orig[0] + d.dx / P.k, d.orig[1] + d.dy / P.k];
+    else if (d.kind === 'plug') st.edits.plugLabel = [d.orig[0] + d.dx, d.orig[1] + d.dy];
+    else if (d.kind === 'ground') st.edits.ground = [d.orig[0] + d.dx, d.orig[1] + d.dy];
+    render(); save();
+  };
+  svgEl.addEventListener('pointerup', end);
+  svgEl.addEventListener('pointercancel', end);
+
+  /* ---- PDF ---- */
+  $('sh-pdf').onclick = async () => {
+    const btn = $('sh-pdf');
+    btn.disabled = true; btn.textContent = 'Making the PDF…';
+    try {
+      const bytes = await sheetPdf(model());
+      const name = ((F.docNumber ? F.docNumber + ' ' : '') + (F.designNumber ? F.designNumber + ' ' : '') + 'Wiring Diagram').replace(/[\\/:*?"<>|]+/g, '-');
+      download(name + '.pdf', bytes, 'application/pdf');
+      say(`PDF ready: ${(bytes.length / 1e6).toFixed(1)} MB, A3, scale 1:${P.scale}.`, 'cad-ok');
+    } catch (e) { say('Could not make the PDF: ' + e.message, 'warn'); }
+    btn.disabled = false; btn.textContent = 'Download PDF';
+  };
+}
+
 function cadViewer(stage, flat, opts) {
   const canvas = stage.querySelector('canvas');
   const ctx = canvas.getContext('2d');

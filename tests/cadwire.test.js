@@ -9,8 +9,7 @@ const fs = require('fs');
 const path = require('path');
 const ROOT = path.resolve(__dirname, '..');
 const W = new Function(fs.readFileSync(path.join(ROOT, 'js', 'cadwire.js'), 'utf8') +
-  '\nreturn { cadWirePlan, cadWireCsv, cadWireDxf, cadwColumns, cadwSegCross, cadwPowerCrossings, cadwLen };')();
-const C = new Function(fs.readFileSync(path.join(ROOT, 'js', 'cad.js'), 'utf8') + '\nreturn { cadParseDxf };')();
+  '\nreturn { cadWirePlan, cadwColumns, cadwSegCross, cadwPowerCrossings, cadwLen };')();
 
 let passed = 0; const failed = [];
 function ok(name, cond, info) { if (cond) passed++; else failed.push(name + (info ? '  [' + info + ']' : '')); console.log((cond ? 'PASS  ' : 'FAIL  ') + name + (info ? '  [' + info + ']' : '')); }
@@ -87,7 +86,14 @@ ok('111: series chain M1 + → M2 − … M11 + → M12 −',
   s1.modules.every((m, i) => i === 11 || has(tp(m, 'power+'), tp(s1.modules[i + 1], 'power-'))));
 ok('111: comm chain M1 N → M2 S …', s1.modules.every((m, i) => i === 11 || has(tp(m, 'comm-N'), tp(s1.modules[i + 1], 'comm-S'))));
 ok('111: long cables are horizontal/vertical runs (riser style)',
-  plan.cables.filter(c => c.pts.length > 2).every(c => c.pts.every((p, i) => i === 0 || p[0] === c.pts[i - 1][0] || p[1] === c.pts[i - 1][1])));
+  plan.cables.filter(c => c.pts.length > 2 && !c.curve).every(c => c.pts.every((p, i) => i === 0 || p[0] === c.pts[i - 1][0] || p[1] === c.pts[i - 1][1])));
+const curves = plan.cables.filter(c => c.curve);
+ok('111: side-by-side modules in adjacent columns are joined by a C curve (power and comm)',
+  curves.some(c => c.kind === 'power') && curves.some(c => c.kind === 'comm') &&
+  curves.every(c => c.pts.length > 10), curves.length + ' curves');
+const sagOf = c => { const ys = c.pts.map(p => p[1]); const ends = Math.min(c.pts[0][1], c.pts[c.pts.length - 1][1]); return Math.max(ends - Math.min(...ys), Math.max(...ys) - Math.max(c.pts[0][1], c.pts[c.pts.length - 1][1])); };
+ok('111: power curves sag deeper than comm curves',
+  Math.min(...curves.filter(c => c.kind === 'power').map(sagOf)) > Math.max(...curves.filter(c => c.kind === 'comm').map(sagOf)));
 ok('111: one group outline per SSC', plan.outline.length === 5 && plan.outline.every(o => o.segs.length >= 4));
 
 /* pair P2 uses the right-hand JB connectors on every junction box */
@@ -108,20 +114,6 @@ ok('refused: counts do not add up to the modules', !bad.ok && /add up to 59/.tes
 const noJb = rack111().map(c => c.kind === 'jb' ? Object.assign({}, c, { terminals: [] }) : c);
 const nj = W.cadWirePlan(noJb, sscList(noJb), {});
 ok('refused: junction box terminals not taught', !nj.ok && /junction box has no P1 terminals/.test(nj.errors.join()), nj.errors[0]);
-
-/* ---------- exports ---------- */
-const csv = W.cadWireCsv(plan);
-ok('CSV: header + one row per cable', csv.trim().split('\r\n').length === plan.cables.length + 1);
-ok('CSV: lists SSC1 B+ to the junction box', /SSC1,Power,B\+,JB P1\+,\d+/.test(csv));
-const dxf = W.cadWireDxf(plan);
-const back = C.cadParseDxf(dxf);
-const lines = back.entities.filter(e => e.type === 'LINE');
-ok('DXF: reads back with our own DXF reader', lines.length > 0, lines.length + ' lines');
-ok('DXF: power on WF-POWER, comm on WF-COMM, labels on WF-NUMBER',
-  lines.some(e => e.layer === 'WF-POWER') && lines.some(e => e.layer === 'WF-COMM') &&
-  back.entities.filter(e => e.type === 'TEXT' && e.layer === 'WF-NUMBER').length === 60);
-ok('DXF: same coordinates as the rack drawing (millimetres)',
-  lines.every(e => e.x1 > 2700 && e.x1 < 7900 && e.y1 > 100 && e.y1 < 2050));
 
 console.log('\n' + (failed.length ? 'FAILED ' + failed.length + ':\n  ' + failed.join('\n  ') : 'Wiring tests passed: ' + passed));
 process.exitCode = failed.length ? 1 : 0;

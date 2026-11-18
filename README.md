@@ -141,11 +141,15 @@ docs/guided-workspace.md  Guided post-login workspace, progress derivation and A
 js/aps.js           Autodesk APS client (token, OSS upload, translate, viewer)
 js/app.js           Router, landing page, auth (email OTP), dashboard, workspace UI
 js/cad.js           AutoCAD DXF reader, teach-once part recognition, SSC/ACDP/MSM numbering
-js/cadwire.js       Automatic rack wiring on a DXF: groups, order, riser routes, no power crossings, DXF/CSV export
+js/cadwire.js       Automatic rack wiring on a DXF: groups, order, riser routes, C curves, no power crossings
+js/sheet.js         A3 wiring sheet in AYK's DWG2396 format (editor SVG + PDF from one layout)
+js/pdf.js           Minimal vector PDF writer (lines, text, logo), no libraries
+tools/make-example.js  Builds the example rack (assets/examples/) from rack-111.dxf
 tools/make-hero-animation.py  Builds the animated rack picture on the product page
 tests/drawing.test.js  regression suite (node tests/drawing.test.js)
 tests/cad.test.js      DXF reader and recognition
 tests/cadwire.test.js  wiring planner on rack 111 geometry
+tests/sheet.test.js    PDF writer and wiring sheet
 ```
 
 ## Running locally
@@ -167,6 +171,7 @@ those local projects, so completed drawing packages should also be exported to f
 node tests/drawing.test.js
 node tests/cad.test.js
 node tests/cadwire.test.js
+node tests/sheet.test.js
 ```
 
 Covers: netlist/validation regression, release-gate matrix, sheet bounds at extreme

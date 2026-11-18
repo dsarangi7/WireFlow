@@ -534,3 +534,31 @@ body:has(.cad-page) .topbar { display: none; }
 .cad-wire-table th, .cad-wire-table td { text-align: left; padding: 4px 6px; border-bottom: 1px solid rgba(148,163,184,.18); white-space: nowrap; }
 .cad-wire-table thead th { font-weight: 600; opacity: .75; }
 .cad-wire-show { display: flex; gap: 8px; align-items: center; font-size: 13px; margin: 8px 0; }
+
+/* Wiring sheet editor (A3 -> PDF) */
+.sh-page { height: 100vh; }
+body:has(.sh-page) .topbar { display: none; }
+.sh-body { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 360px; }
+.sh-stage { overflow: auto; background: #1b2436; display: grid; place-items: center; padding: 12px; }
+.sh-paper { position: relative; background: #fff; box-shadow: 0 10px 40px rgba(0,0,0,.45); flex: none; }
+.sh-paper canvas, .sh-paper svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+.sh-paper svg { touch-action: none; }
+.sh-paper .sh-cable, .sh-paper .sh-hit { cursor: grab; pointer-events: stroke; }
+.sh-paper [data-drag] { cursor: move; }
+.sh-paper [data-drag]:hover, .sh-paper .sh-hit:hover { filter: drop-shadow(0 0 0.6px #2563eb); }
+.sh-side { background: #0b1226; }
+.sh-side section { margin-bottom: 18px; }
+.sh-side h3 { font-size: 13px; letter-spacing: .08em; text-transform: uppercase; opacity: .8; margin: 0 0 10px; }
+.sh-side h4 { font-size: 13px; margin: 14px 0 6px; }
+.sh-field { display: grid; grid-template-columns: 130px minmax(0, 1fr); gap: 8px; align-items: center; margin: 6px 0; font-size: 13px; }
+.sh-field input, .sh-field select { width: 100%; min-width: 0; }
+.sh-revs { overflow-x: auto; }
+.sh-revs table { border-collapse: collapse; font-size: 11px; }
+.sh-revs th { font-weight: 600; opacity: .75; padding: 2px; text-align: left; white-space: nowrap; }
+.sh-revs td { padding: 2px; }
+.sh-revs input { width: 64px; font-size: 12px; padding: 4px 5px; }
+.sh-revs td:first-child input { width: 34px; }
+.sh-revs td:nth-child(7) input { width: 110px; }
+.cad-taught { margin-top: 12px; }
+.cad-taught > summary { cursor: pointer; font-weight: 600; font-size: 13px; padding: 6px 0; }
+@media (max-width: 900px) { .sh-body { grid-template-columns: 1fr; grid-template-rows: 60vh auto; } .sh-side { border-left: 0; } .sh-page { height: auto; } }
