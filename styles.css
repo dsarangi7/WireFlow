@@ -584,3 +584,6 @@ body:has(.sh-page) .topbar { display: none; }
 
 .cad-wire-custom { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; color: #d8b4fe; }
 .cad-pop select { min-width: 0; }
+
+.cad-teach-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
+.cad-pop-del { color: #fca5a5 !important; }

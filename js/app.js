@@ -678,6 +678,7 @@ async function renderCadPage(id) {
                 <select id="cad-kind">${CAD_KINDS.map(k => `<option value="${k.id}">${esc(k.label)}</option>`).join('')}</select>
                 <button class="btn btn-primary btn-sm" id="cad-teach">Box one example</button>
               </div>
+              <div class="cad-teach-actions" id="cad-teach-actions" hidden></div>
               <p class="muted small">Drag a box around one complete copy. Every identical copy is then found. Then click its terminals once, left to right: module S, N, −, + · SSC S, N, S+, B+, B−, S− · junction box +, −, +, −.</p>
             </div>
             <div id="cad-labels"></div>
@@ -748,13 +749,22 @@ async function renderCadPage(id) {
       <label>Name <input name="label" value="${esc(cadCompLabel(hit, cad.labels))}" maxlength="24" autocomplete="off"></label>
       ${hit.kind === 'ssc' ? `<label>Modules <input name="modules" type="number" min="1" step="1" value="${saved.modules || ''}"></label>` : ''}
       <p class="muted small">Using a name another ${esc(k.label)} has swaps the two names.</p>
-      <div><button class="btn btn-primary btn-xs" type="submit">Save</button> <button class="btn btn-ghost btn-xs" type="button" data-x>Cancel</button></div>`;
+      <div><button class="btn btn-primary btn-xs" type="submit">Save</button> <button class="btn btn-ghost btn-xs" type="button" data-x>Cancel</button>
+        <button class="btn btn-ghost btn-xs cad-pop-del" type="button" data-del title="This is not a ${esc(k.label)}: remove this one copy">Remove this one</button></div>`;
     const stage = $('cad-stage');
     stage.appendChild(pop);
     pop.style.left = Math.min(Math.max(8, sx + 12), stage.clientWidth - pop.offsetWidth - 8) + 'px';
     pop.style.top = Math.min(Math.max(8, sy - 20), stage.clientHeight - pop.offsetHeight - 8) + 'px';
     pop.querySelector('input').select();
     pop.querySelector('[data-x]').onclick = closeRename;
+    pop.querySelector('[data-del]').onclick = async () => {
+      if (hit.manual) cad.manual = (cad.manual || []).filter(m => !(m.kind === hit.kind && m.x0 === hit.x0 && m.y0 === hit.y0));
+      else (cad.excluded = cad.excluded || []).push(key);
+      delete cad.labels[key];
+      closeRename();
+      recognise(); await persist();
+      say(`One ${k.label} removed (${cadCompLabel(hit, cad.labels)}). Use Remove in the Parts list to take them all off.`, 'cad-ok');
+    };
     pop.addEventListener('keydown', e => { if (e.key === 'Escape') { e.stopPropagation(); closeRename(); } });
     pop.onsubmit = async e => {
       e.preventDefault();
@@ -1032,6 +1042,11 @@ async function renderCadPage(id) {
 
   function recognise() {
     components = cad.signatures.length ? cadRecognise(index, cad.signatures) : [];
+    /* copies the engineer removed one by one, and parts marked by hand (ACDP / MSM) */
+    const excluded = new Set(cad.excluded || []);
+    components = components.filter(c => !excluded.has(cadCompKey(c)));
+    (cad.manual || []).forEach((m, i) => components.push({ id: m.kind + '-hand-' + (i + 1), kind: m.kind, name: cadKind(m.kind).label,
+      x0: m.x0, y0: m.y0, x1: m.x1, y1: m.y1, terminals: [], manual: true, detail: Infinity }));
     /* proposed ACDP / MSM numbers: ACDP1 = closest to the MSM */
     const nums = cadProposeNumbers(components);
     components.forEach(c => { if (nums.has(c)) c.proposal = nums.get(c); });
@@ -1158,6 +1173,8 @@ async function renderCadPage(id) {
       const kind = b.dataset.removeKind;
       const before = cad.signatures.length;
       cad.signatures = cad.signatures.filter(s => s.kind !== kind);
+      cad.manual = (cad.manual || []).filter(m => m.kind !== kind);
+      cad.excluded = (cad.excluded || []).filter(k => !k.startsWith(kind + '@'));
       fromLibrary = false;
       recognise();
       await persist();
@@ -1205,9 +1222,28 @@ async function renderCadPage(id) {
     try { await localPutProject(project); } catch (e) { say('Could not save to this browser: ' + e.message, 'warn'); }
   }
 
+  /* ACDP / MSM: save every copy found, or only the boxed one (marked by hand) */
+  function teachActions(n) {
+    const box = $('cad-teach-actions');
+    if (!n && n !== 0) { box.hidden = true; box.innerHTML = ''; return; }
+    const label = cadKind(teach.kind).label;
+    box.hidden = false;
+    box.innerHTML = `<button class="btn btn-primary btn-sm" id="cad-save-all" ${n ? '' : 'disabled'}>Save all ${n} (Enter)</button>
+      <button class="btn btn-ghost btn-sm" id="cad-save-one" title="Mark just the boxed area as one ${esc(label)}, without finding copies">Only the boxed one</button>`;
+    $('cad-save-all').onclick = () => finishTeach();
+    $('cad-save-one').onclick = async () => {
+      const t = teach;
+      (cad.manual = cad.manual || []).push({ kind: t.kind, x0: t.box.x0, y0: t.box.y0, x1: t.box.x1, y1: t.box.y1 });
+      teach = null; teachActions(null); prompt(''); viewer.setMode('pan'); teachButton(false);
+      recognise(); await persist();
+      say(`${label} marked by hand. Box another missed one the same way if needed.`, 'cad-ok');
+    };
+  }
+
   function cancelTeach() {
     if (!teach) return false;
     teach = null;
+    teachActions(null);
     prompt('');
     viewer.setMode('pan');
     teachButton(false);
@@ -1244,7 +1280,10 @@ async function renderCadPage(id) {
       sig = cadRefineSignature(index, sig);
       sig.id = teach.kind + '-' + Date.now().toString(36);
     } catch (e) { say(e.message, 'warn'); return; }
-    const hits = cadFindMatches(index, sig);
+    const all = cadFindMatches(index, sig);
+    const detail = sig.features.length;
+    const hits = all.filter(h => !components.some(c => c.kind !== teach.kind && (c.detail || 0) > detail && cadOverlap(h, c) >= 0.5));
+    const dropped = all.length - hits.length;
     teach.box = box; teach.sig = sig; teach.hits = hits;
     /* copies that overlap parts of another kind mean the box caught a neighbour */
     const overlap = (a, b) => {
@@ -1254,7 +1293,7 @@ async function renderCadPage(id) {
     };
     const clash = new Map();
     for (const h of hits) for (const c of components) {
-      if (c.kind === teach.kind || overlap(h, c) < 0.3) continue;
+      if (c.kind === teach.kind || overlap(h, c) < 0.3 || (c.detail || 0) > detail) continue;
       clash.set(c.kind, (clash.get(c.kind) || new Set()).add(h));
     }
     const warn = clash.size ? ` · ⚠ ${Math.max(...[...clash.values()].map(v => v.size))} of them overlap ${[...clash.keys()].map(k => cadKind(k).label + 's').join(' and ')}: the box probably caught a neighbouring part. Press Esc and draw a tighter box` : '';
@@ -1262,7 +1301,8 @@ async function renderCadPage(id) {
       /* back-wired part: nothing to click, just check the count and save */
       teach.step = 'terminals'; teach.roles = null; teach.picked = []; teach.noTerminals = true;
       viewer.setMode('pan');
-      prompt(`Found ${hits.length} ${cadKind(teach.kind).label}. No wiring needed. Press Enter to save · Wrong count? Esc and box again${warn}`);
+      prompt(`Found ${hits.length} ${cadKind(teach.kind).label}${dropped ? ` (${dropped} more matched inside other parts and were left out)` : ''}. Save all, or keep only the boxed one · Wrong? Cancel and box again${warn}`);
+      teachActions(hits.length);
     } else if (CAD_TERMINAL_ROLES[teach.kind]) {
       teach.step = 'terminals'; teach.roles = CAD_TERMINAL_ROLES[teach.kind].slice(); teach.picked = [];
       viewer.setMode('pick');
@@ -1294,6 +1334,7 @@ async function renderCadPage(id) {
   async function finishTeach() {
     if (!teach || teach.step !== 'terminals') return;
     const t = teach;
+    teachActions(null);
     t.sig.terminals = t.picked.map(p => ({ role: p.role, dx: +(p.x - t.sig.x0).toFixed(4), dy: +(p.y - t.sig.y0).toFixed(4) }));
     /* an earlier pattern of the same kind that finds any of the same copies is replaced
        (it was taught wrongly); one that finds other copies stays (a second variant) */

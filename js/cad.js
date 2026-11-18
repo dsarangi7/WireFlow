@@ -652,6 +652,27 @@ function cadFindMatches(index, sig, opts) {
   return kept;
 }
 
+/** Coarse grid of all features (built once per index) to count what lies inside a box. */
+function cadBoxGrid(index) {
+  if (index._boxGrid) return index._boxGrid;
+  const q = 100, cells = new Map();
+  for (const f of index.features) {
+    const k = Math.floor(f.x / q) + ',' + Math.floor(f.y / q);
+    const b = cells.get(k); if (b) b.push(f); else cells.set(k, [f]);
+  }
+  return (index._boxGrid = { q: q, cells: cells });
+}
+/** Number of features lying completely inside a box. */
+function cadCountInside(grid, x0, y0, x1, y1) {
+  const q = grid.q, e = 1e-6;
+  let n = 0;
+  for (let i = Math.floor(x0 / q); i <= Math.floor(x1 / q); i++) for (let j = Math.floor(y0 / q); j <= Math.floor(y1 / q); j++) {
+    const b = grid.cells.get(i + ',' + j);
+    if (b) for (const f of b) if (f.x0 >= x0 - e && f.x1 <= x1 + e && f.y0 >= y0 - e && f.y1 <= y1 + e) n++;
+  }
+  return n;
+}
+
 /**
  * Strips a freshly taught signature down to the geometry its copies share.
  * The taught example may contain extra lines that are not part of the
@@ -666,7 +687,8 @@ function cadFindMatches(index, sig, opts) {
  * @return {Object} New signature with `features` reduced and `taughtFeatures` count; unchanged if no copies exist.
  */
 function cadRefineSignature(index, sig, opts) {
-  const o = Object.assign({ tol: 0.1, bar: 0.15, keyBar: 0.25, spread: 0.6, support: 0.5 }, opts || {});
+  const o = Object.assign({ tol: 0.1, bar: 0.15, keyBar: 0.25, spread: 0.6, support: 0.5, extra: 0.5 }, opts || {});
+  const grid = cadBoxGrid(index);
   const feats = sig.features;
   const keyId = new Map();
   for (const f of feats) if (!keyId.has(f.key)) keyId.set(f.key, keyId.size);
@@ -715,18 +737,29 @@ function cadRefineSignature(index, sig, opts) {
        bolts or rail clips shares one kind only and must not vote. */
     let kinds = 0;
     for (let k = 0; k < keysHit.length; k++) kinds += keysHit[k];
-    if (ok / feats.length >= o.bar && kinds / keyId.size >= o.keyBar) copies.push(has);
+    if (ok / feats.length >= o.bar && kinds / keyId.size >= o.keyBar) {
+      /* geometry inside this copy's box that the taught part does not have */
+      const inside = cadCountInside(grid, off[0], off[1], off[0] + sig.w, off[1] + sig.h);
+      copies.push({ has: has, score: ok / feats.length, extra: inside ? Math.max(0, inside - ok) / inside : 0 });
+    }
   }
-  if (!copies.length) return keep({ copiesSeen: 0 });
+  /* Only real copies vote. A real copy has nothing of its own inside its box
+     (it may only lack extras of the taught example, like a rail through the
+     bottom row). A look-alike part (an SSC sharing the MSM's enclosure) has
+     its own geometry there; if it voted, nine SSCs would outvote the real
+     MSM and strip exactly the screen, arrow and emergency stop that tell the
+     two apart. */
+  const voters = copies.filter(c => c.extra <= o.extra).map(c => c.has);
+  if (!voters.length) return keep({ copiesSeen: 0, lookAlikes: copies.length });
   const core = [];
   for (let i = 0; i < feats.length; i++) {
     let n = 0;
-    for (const c of copies) n += c[i];
-    if (n / copies.length >= o.support) core.push(feats[i]);
+    for (const c of voters) n += c[i];
+    if (n / voters.length >= o.support) core.push(feats[i]);
   }
   /* Too little left means the example has no real repeats: keep it whole. */
-  if (core.length < Math.max(8, 0.15 * feats.length)) return keep({ copiesSeen: copies.length });
-  return keep({ features: core, copiesSeen: copies.length });
+  if (core.length < Math.max(8, 0.15 * feats.length)) return keep({ copiesSeen: voters.length });
+  return keep({ features: core, copiesSeen: voters.length, lookAlikes: copies.length - voters.length });
 }
 
 /**
@@ -740,7 +773,7 @@ function cadRefineSignature(index, sig, opts) {
 function cadRecognise(index, sigs, opts) {
   const all = [];
   sigs.forEach((sig, si) => {
-    for (const m of cadFindMatches(index, sig, opts)) all.push(Object.assign({ kind: sig.kind, name: sig.name, sig: si, size: sig.w * sig.h }, m));
+    for (const m of cadFindMatches(index, sig, opts)) all.push(Object.assign({ kind: sig.kind, name: sig.name, sig: si, size: sig.w * sig.h, detail: sig.features.length }, m));
   });
   all.sort((a, b) => b.size - a.size || b.score - a.score);
   const kept = [];
@@ -753,8 +786,24 @@ function cadRecognise(index, sigs, opts) {
   kept.sort((a, b) => (a.kind < b.kind ? -1 : a.kind > b.kind ? 1 : 0) || a.x0 - b.x0 || b.y0 - a.y0);
   return kept.map(c => {
     n[c.kind] = (n[c.kind] || 0) + 1;
-    return { id: c.kind + '-' + n[c.kind], kind: c.kind, name: c.name, x0: c.x0, y0: c.y0, x1: c.x1, y1: c.y1, score: c.score, mirrored: c.mirrored, terminals: c.terminals };
-  });
+    return { id: c.kind + '-' + n[c.kind], kind: c.kind, name: c.name, x0: c.x0, y0: c.y0, x1: c.x1, y1: c.y1, score: c.score, mirrored: c.mirrored, terminals: c.terminals, detail: c.detail };
+  }).filter((c, i, list) => !cadOutranked(c, list));
+}
+
+/** Share of the smaller box covered by the other one (0..1). */
+function cadOverlap(a, b) {
+  const w = Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0), h = Math.min(a.y1, b.y1) - Math.max(a.y0, b.y0);
+  if (w <= 0 || h <= 0) return 0;
+  return (w * h) / Math.min((a.x1 - a.x0) * (a.y1 - a.y0), (b.x1 - b.x0) * (b.y1 - b.y0));
+}
+/**
+ * A copy is dropped when it largely overlaps a copy of ANOTHER part type that
+ * was taught with more detail (more features). Example: an MSM shares its
+ * enclosure with the SSCs, so the MSM pattern also fits inside every SSC; the
+ * SSC, taught with far more detail, keeps those places.
+ */
+function cadOutranked(c, list) {
+  return list.some(o => o !== c && o.kind !== c.kind && (o.detail || 0) > (c.detail || 0) && cadOverlap(c, o) >= 0.5);
 }
 
 /**

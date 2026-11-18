@@ -7,7 +7,7 @@ const fs = require('fs');
 const path = require('path');
 const src = fs.readFileSync(path.join(__dirname, '../js/cad.js'), 'utf8');
 const C = new Function(src + '\nreturn { cadParseDxf, cadFlatten, cadToSvg, cadSummary, cadBulgePts, cadSplinePts, cadArcSegments,' +
-  ' cadFeatures, cadFeatureIndex, cadTeachSignature, cadRefineSignature, cadFindMatches, cadRecognise, cadProposeNumbers };')();
+  ' cadFeatures, cadFeatureIndex, cadTeachSignature, cadRefineSignature, cadFindMatches, cadRecognise, cadProposeNumbers, cadOutranked, cadOverlap };')();
 
 let passed = 0;
 function check(name, fn) { fn(); passed++; }
@@ -421,5 +421,50 @@ if (real) {
     console.log(`  ${path.basename(real)}: ${s.entities} entities, ${s.width.toFixed(1)} x ${s.height.toFixed(1)} ${s.units}`);
   });
 }
+
+check('look-alike parts: teaching the MSM does not pick up SSCs that share its enclosure', () => {
+  const rect = (x0, y0, x1, y1) => [['LINE', 10, x0, 20, y0, 11, x1, 21, y0], ['LINE', 10, x1, 20, y0, 11, x1, 21, y1], ['LINE', 10, x1, 20, y1, 11, x0, 21, y1], ['LINE', 10, x0, 20, y1, 11, x0, 21, y0]];
+  /* shared enclosure: frame, door line, 8 bolts, 2 hinges */
+  const enclosure = (x, y) => [...rect(x, y, x + 420, y + 290), ['LINE', 10, x + 5, 20, y + 270, 11, x + 415, 21, y + 270],
+    ...[0, 1, 2, 3, 4, 5, 6, 7].map(k => ['CIRCLE', 10, x + 30 + k * 51, 20, y + 280, 40, 3]),
+    ...rect(x + 2, y + 120, x + 12, y + 200), ...rect(x + 408, y + 120, x + 418, y + 200)];
+  /* MSM: big screen with an arrow, emergency stop, network socket */
+  const msm = (x, y) => [...enclosure(x, y), ...rect(x + 120, y + 20, x + 400, y + 240),
+    ['LINE', 10, x + 260, 20, y + 60, 11, x + 260, 21, y + 200], ['LINE', 10, x + 250, 20, y + 180, 11, x + 260, 21, y + 200], ['LINE', 10, x + 270, 20, y + 180, 11, x + 260, 21, y + 200],
+    ['CIRCLE', 10, x + 60, 20, y + 160, 40, 30], ['CIRCLE', 10, x + 60, 20, y + 160, 40, 22], ...rect(x + 40, y + 40, x + 80, y + 80)];
+  /* SSC: its own window, key switch and a strip of six flanged connectors (dense, like the real one) */
+  const ssc = (x, y) => [...enclosure(x, y), ...rect(x + 230, y + 120, x + 330, y + 220), ...rect(x + 240, y + 130, x + 320, y + 210),
+    ['CIRCLE', 10, x + 120, 20, y + 170, 40, 14], ['CIRCLE', 10, x + 120, 20, y + 170, 40, 9], ['CIRCLE', 10, x + 120, 20, y + 170, 40, 4],
+    ...[0, 1, 2, 3, 4, 5].flatMap(k => [['CIRCLE', 10, x + 70 + k * 50, 20, y + 40, 40, 9], ['CIRCLE', 10, x + 70 + k * 50, 20, y + 40, 40, 6], ['CIRCLE', 10, x + 70 + k * 50, 20, y + 40, 40, 3],
+      ...[[-12, -12], [12, -12], [-12, 12], [12, 12]].map(d => ['CIRCLE', 10, x + 70 + k * 50 + d[0], 20, y + 40 + d[1], 40, 1.5])]),
+    ...rect(x + 40, y + 20, x + 380, y + 60)];
+  const ents = [...msm(0, 0), ...msm(4000, 0)];
+  for (let i = 0; i < 9; i++) ents.push(...ssc(500 + i * 450, 600));
+  const index = C.cadFeatureIndex(C.cadFeatures(C.cadFlatten(C.cadParseDxf(dxf(ents)))), 1);
+  const raw = C.cadTeachSignature(index, { x0: -1, y0: -1, x1: 421, y1: 291 }, { kind: 'msm' });
+  const sig = C.cadRefineSignature(index, raw);
+  const hits = C.cadFindMatches(index, sig);
+  assert.strictEqual(hits.length, 2, 'found ' + hits.length);
+  assert.ok(sig.features.length >= raw.features.length * 0.9, 'screen, arrow and emergency stop kept: ' + sig.features.length + ' of ' + raw.features.length);
+  /* and with the SSCs taught too, recognition keeps 9 SSCs and 2 MSMs */
+  const sscSig = C.cadRefineSignature(index, C.cadTeachSignature(index, { x0: 499, y0: 599, x1: 921, y1: 891 }, { kind: 'ssc' }));
+  const comps = C.cadRecognise(index, [sscSig, sig]);
+  assert.strictEqual(comps.filter(c => c.kind === 'ssc').length, 9);
+  assert.strictEqual(comps.filter(c => c.kind === 'msm').length, 2);
+  /* even an MSM pattern that does fit inside the SSCs loses those places to the more detailed SSC */
+  const comps2 = C.cadRecognise(index, [sscSig, Object.assign({}, raw, { features: raw.features.filter((f, i) => i < 23) })]);
+  assert.strictEqual(comps2.filter(c => c.kind === 'msm').length, 2, 'msm ' + comps2.filter(c => c.kind === 'msm').length);
+});
+
+check('a part matched inside a more detailed part of another type is dropped (MSM inside SSC)', () => {
+  const ssc = { kind: 'ssc', detail: 5000, x0: 0, y0: 0, x1: 340, y1: 400 };
+  const fake = { kind: 'msm', detail: 1400, x0: 20, y0: 60, x1: 430, y1: 350 };
+  const real = { kind: 'msm', detail: 1400, x0: 1000, y0: 0, x1: 1430, y1: 290 };
+  const jb = { kind: 'jb', detail: 600, x0: -10, y0: 420, x1: 400, y1: 520 };
+  const list = [ssc, fake, real, jb];
+  assert.ok(cadOk(list).join() === 'ssc,msm@1000,jb', cadOk(list).join());
+  function cadOk(l) { return l.filter(c => !C.cadOutranked(c, l)).map(c => c.kind === 'msm' ? 'msm@' + c.x0 : c.kind); }
+  near(C.cadOverlap(ssc, fake), (320 * 290) / (410 * 290), 1e-9, 'overlap share of the smaller box');
+});
 
 console.log(`CAD reader tests passed: ${passed}${real ? '' : ' (set WIREFLOW_DXF to also check a real drawing)'}`);

@@ -241,6 +241,17 @@ engine code.
   are on the PDF. Side-by-side modules in adjacent columns are joined by a
   slight C curve (power deeper than comm), as AYK draws them. The PDF is
   vector, A3 landscape, Helvetica, made in the browser (≈2 MB, <0.5 s on 111).
+- **Parts that look alike** (e.g. an MSM shares its enclosure with the SSCs):
+  a copy that largely overlaps (>= 50 %) a part of another type taught with
+  more detail is dropped (`cadOutranked`), both while teaching and on every
+  recognition. For ACDP / MSM, **Only the boxed one** marks just the boxed
+  area by hand (for a missed copy, or when there are only one or two); the
+  rack popover has **Remove this one** for a single wrong copy. Hand marks
+  (`cad.manual`) and removed copies (`cad.excluded`) are saved with the drawing.
+  When a part is taught, the clean-up step (`cadRefineSignature`) only lets
+  copies vote that have little geometry of their own inside the box (at most
+  half): a dense look-alike (an SSC for an MSM) can no longer strip the
+  screen, arrow and emergency stop that make the MSM unique.
 - **Engineer numbering**: after Generate wiring, click a module (or its
   S3-M5 label) to give it another number or SSC. The module that has that
   number swaps with it (every SSC keeps its count) and the wiring is re-routed
