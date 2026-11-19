@@ -9,7 +9,7 @@ const fs = require('fs');
 const path = require('path');
 const ROOT = path.resolve(__dirname, '..');
 const W = new Function(fs.readFileSync(path.join(ROOT, 'js', 'cadwire.js'), 'utf8') +
-  '\nreturn { cadWirePlan, cadwColumns, cadwSegCross, cadwPowerCrossings, cadwLen };')();
+  '\nreturn { cadWirePlan, cadwColumns, cadwSegCross, cadwPowerCrossings, cadwLen, cadWireGuide };')();
 
 let passed = 0; const failed = [];
 function ok(name, cond, info) { if (cond) passed++; else failed.push(name + (info ? '  [' + info + ']' : '')); console.log((cond ? 'PASS  ' : 'FAIL  ') + name + (info ? '  [' + info + ']' : '')); }
@@ -61,7 +61,7 @@ ok('111: 5 strings of 12 modules', plan.strings.length === 5 && plan.strings.eve
 ok('111: every module used exactly once', new Set(plan.strings.flatMap(s => s.modules.map(m => m.id))).size === 60);
 ok('111: NO power cable crossings anywhere in the rack', plan.crossings.length === 0, JSON.stringify(plan.crossings.slice(0, 3)));
 const power = plan.cables.filter(c => c.kind === 'power'), comm = plan.cables.filter(c => c.kind === 'comm');
-/* per string: 11 jumps + S-, S+, B+, B- = 15 power; 11 jumps + N, S = 13 comm */
+/* per string: 11 jumps + S-, S+, B+, B- = 15 power; 11 jumps + S, N = 13 comm */
 ok('111: 15 power and 13 communication cables per SSC', power.length === 75 && comm.length === 65, power.length + ' / ' + comm.length);
 const s1 = plan.strings.find(s => s.name === 'SSC1');
 ok('111: labels S1-M1 … S1-M12', s1.labels.map(l => l.text).join() === Array.from({ length: 12 }, (_, i) => 'S1-M' + (i + 1)).join());
@@ -79,12 +79,14 @@ const near = (p, t) => Math.hypot(p[0] - t.x, p[1] - t.y) < 1e-6;
 const has = (a, b) => plan.cables.some(c => { const [p, q] = ends(c); return (near(p, a) && near(q, b)) || (near(p, b) && near(q, a)); });
 ok('111: SSC1 S− → M1 −', has(tp(s1.ssc, 'S-'), tp(s1.modules[0], 'power-')));
 ok('111: SSC1 M12 + → S+', has(tp(s1.ssc, 'S+'), tp(s1.modules[11], 'power+')));
-ok('111: SSC1 N → M1 S', has(tp(s1.ssc, 'N'), tp(s1.modules[0], 'comm-S')));
-ok('111: SSC1 M12 N → S', has(tp(s1.ssc, 'S'), tp(s1.modules[11], 'comm-N')));
+ok('111: SSC1 S → M1 N', has(tp(s1.ssc, 'S'), tp(s1.modules[0], 'comm-N')));
+ok('111: SSC1 M12 S → N', has(tp(s1.ssc, 'N'), tp(s1.modules[11], 'comm-S')));
 ok('111: SSC1 B+ → JB P1+, B− → JB P1−', has(tp(s1.ssc, 'B+'), tp(s1.jb, 'P1+')) && has(tp(s1.ssc, 'B-'), tp(s1.jb, 'P1-')));
 ok('111: series chain M1 + → M2 − … M11 + → M12 −',
   s1.modules.every((m, i) => i === 11 || has(tp(m, 'power+'), tp(s1.modules[i + 1], 'power-'))));
-ok('111: comm chain M1 N → M2 S …', s1.modules.every((m, i) => i === 11 || has(tp(m, 'comm-N'), tp(s1.modules[i + 1], 'comm-S'))));
+ok('111: comm chain M1 S → M2 N …', s1.modules.every((m, i) => i === 11 || has(tp(m, 'comm-S'), tp(s1.modules[i + 1], 'comm-N'))));
+ok('111: no reversed comm (SSC N → M1 S or Mk N → Mk+1 S)', !has(tp(s1.ssc, 'N'), tp(s1.modules[0], 'comm-S')) &&
+  s1.modules.every((m, i) => i === 11 || !has(tp(m, 'comm-N'), tp(s1.modules[i + 1], 'comm-S'))));
 ok('111: long cables are horizontal/vertical runs (riser style)',
   plan.cables.filter(c => c.pts.length > 2 && !c.curve).every(c => c.pts.every((p, i) => i === 0 || p[0] === c.pts[i - 1][0] || p[1] === c.pts[i - 1][1])));
 const curves = plan.cables.filter(c => c.curve);
@@ -216,6 +218,57 @@ ok('refused: junction box terminals not taught', !nj.ok && /has no P1 terminals/
   const lenient = swap.cables.filter(c => c.ssc === A.name && / → /.test(c.id) && !/JB/.test(c.id));
   const horiz = c => c.pts.slice(1).some((q, i) => Math.abs(q[1] - c.pts[i][1]) < 0.01 && Math.abs(q[0] - c.pts[i][0]) > 300);
   ok('trays: the far string\'s cables cross over on a rail', lenient.length === 4 && lenient.every(horiz));
+}
+
+/* ---------- a rack drawn at 1:44 (rack 1111): distances follow the module size ---------- */
+{
+  const { rack1111, sscs1111 } = require('./fixtures/rack-1111.js');
+  const rc = rack1111(), ss = sscs1111(rc);
+  /* a plain engineer numbering: column by column, top to bottom, cut by the SSC counts */
+  const mods = rc.filter(c => c.kind === 'module').sort((a, b) => (a.x0 - b.x0) || (b.y0 - a.y0));
+  const orders = {};
+  let at = 0;
+  for (const s of ss.slice().sort((a, b) => a.comp.x0 - b.comp.x0 || b.comp.y0 - a.comp.y0)) { orders[s.key] = mods.slice(at, at + s.count).map(m => m.id); at += s.count; }
+  const t0 = Date.now();
+  const pl = W.cadWirePlan(rc, ss, { pair: 'P1', tray: 'CR', orders: orders });
+  const ms = Date.now() - t0;
+  ok('1:44 rack: planned with the engineer numbering', pl.ok && pl.custom, pl.errors.join(' | '));
+  ok('1:44 rack: planned quickly', ms < 6000, ms + ' ms');
+  const k = 9 / 400.45, x0 = Math.min(...rc.map(c => c.x0)), x1 = Math.max(...rc.map(c => c.x1)), y0 = Math.min(...rc.map(c => c.y0)), y1 = Math.max(...rc.map(c => c.y1));
+  const out = pl.cables.filter(c => c.pts.some(p => p[0] < x0 - 50 * k || p[0] > x1 + 50 * k || p[1] < y0 - 50 * k || p[1] > y1 + 50 * k));
+  ok('1:44 rack: no cable leaves the rack (no giant loops)', out.length === 0, out.map(c => c.id).slice(0, 3).join(', '));
+  const curves = pl.cables.filter(c => c.curve);
+  const sag = c => Math.max(...c.pts.map(p => Math.abs(p[1] - c.pts[0][1])));
+  ok('1:44 rack: jumps sag at most one module height', curves.every(c => sag(c) <= 4.2), Math.max(0, ...curves.map(sag)).toFixed(2));
+  /* the guide while numbering */
+  const gd = W.cadWireGuide(rc, ss, { pair: 'P1', tray: 'CR', suggest: false });
+  const first = gd.next(ss[0].key, [], []);
+  const ssc = ss[0].comp;
+  ok('guide: M1 is offered next to the SSC', first.ids.length > 0 && first.ids.every(id => { const m = rc.find(c => c.id === id); return Math.abs((m.x0 + m.x1) / 2 - (ssc.x0 + ssc.x1) / 2) < 11; }));
+  const m1 = rc.find(c => c.id === first.ids[0]);
+  const nx = gd.next(ss[0].key, [m1.id], [m1.id]);
+  ok('guide: next modules are beside or above / below the last one', nx.ids.length > 0 && nx.ids.every(id => { const m = rc.find(c => c.id === id); return Math.abs(m.x0 - m1.x0) < 11 && Math.abs(m.y0 - m1.y0) < 13; }));
+}
+
+/* ---------- two module sizes (the same module taught with two different boxes) ---------- */
+{
+  const rc = rack111();
+  let i = 0;
+  const two = rc.map(c => c.kind === 'module' && (i++ % 2) ? Object.assign({}, c, { x1: c.x1 + 60, y1: c.y1 + 30 }) : c);
+  const a = W.cadWirePlan(rc, sscList(rc), { pair: 'P1' }), b = W.cadWirePlan(two, sscList(two), { pair: 'P1' });
+  ok('two module sizes: still 10 columns', W.cadwColumns(two).length === 10);
+  ok('two module sizes: planned like one size', b.ok && b.crossings.length === a.crossings.length && b.strings.length === a.strings.length, b.errors.join(' | '));
+}
+
+/* ---------- suggested numbering: one block per SSC, no power crossings ---------- */
+{
+  const rc = rack111();
+  const pl = W.cadWirePlan(rc, sscList(rc), { pair: 'P1', tray: 'CR' });
+  ok('suggestion: found for rack 111', !!pl.suggested);
+  ok('suggestion: no power crossings', pl.ok && pl.crossings.length === 0, pl.crossings.length);
+  const byId = new Map(rc.map(c => [c.id, c]));
+  const adj = (p, q) => { const a = byId.get(p), b = byId.get(q); const dx = Math.abs(a.x0 - b.x0), dy = Math.abs(a.y0 - b.y0); return dx < 1 || (dy < 1 && dx < 510); };
+  ok('suggestion: every jump stays in the column or goes to the module beside', !!pl.suggested && Object.values(pl.suggested).every(o => o.every((id, n) => !n || adj(o[n - 1], id))));
 }
 
 /* ---------- cable tray for B+ / B- (CL / CR) ---------- */

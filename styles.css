@@ -425,7 +425,7 @@ body:has(.cad-page) .main { padding: 0; max-width: none; }
 @media (max-width: 800px) { .cad-body { grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr) auto; } .cad-info { border-left: 0; border-top: 1px solid rgba(120,145,185,.18); max-height: 40vh; } }
 
 /* CAD parts: teach once, find every copy */
-.cad-prompt { position: absolute; left: 50%; bottom: 44px; transform: translateX(-50%); max-width: calc(100% - 32px); padding: 8px 14px; border-radius: 8px; background: #f97316; color: #fff; font-weight: 600; font-size: 13px; box-shadow: 0 6px 18px rgba(0,0,0,.35); pointer-events: none; text-align: center; }
+.cad-prompt { position: absolute; left: 50%; bottom: 44px; transform: translateX(-50%); max-width: calc(100% - 32px); padding: 12px 20px; border-radius: 10px; background: #ffffff; color: #0b1220; border-left: 6px solid #f97316; font-weight: 700; font-size: 18px; line-height: 1.4; box-shadow: 0 8px 24px rgba(0,0,0,.45); pointer-events: none; text-align: center; }
 .cad-parts { margin-bottom: 18px; }
 .cad-teach { margin: 12px 0; padding: 12px; border: 1px solid rgba(120,145,185,.22); border-radius: 10px; }
 .cad-teach label { display: block; color: #f3f6fc; font-weight: 600; margin-bottom: 6px; }
@@ -599,3 +599,8 @@ body:has(.sh-page) .topbar { display: none; }
 .cad-wire-actions:empty { display: none; }
 
 select.cad-need { border-color: #f59e0b; box-shadow: 0 0 0 2px rgba(245, 158, 11, .25); }
+
+/* status notes under the wiring card: white and large enough to read at a glance */
+#cad-status { color: #ffffff; font-size: 15.5px; font-weight: 600; line-height: 1.45; }
+#cad-status.warn { color: #ffffff; background: rgba(245, 158, 11, .18); border-left: 4px solid #f59e0b; padding: 6px 10px; border-radius: 6px; }
+#cad-status.cad-ok { color: #ffffff; background: rgba(34, 197, 94, .14); border-left: 4px solid #22c55e; padding: 6px 10px; border-radius: 6px; }

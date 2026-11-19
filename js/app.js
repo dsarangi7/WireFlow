@@ -861,17 +861,37 @@ async function renderCadPage(id) {
     if (!inp.sscs.every(s => s.confirmed && s.count >= 1)) { say('Confirm the SSC numbers and module counts first.', 'warn'); return; }
     const list = inp.sscs.slice().sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }))
       .map(s => ({ key: s.key, name: s.name, count: s.count, tag: 'S' + ((String(s.name).match(/\d+/) || [''])[0]) }));
-    numbering = { list: list, i: 0, picked: {} };
+    numbering = { list: list, i: 0, picked: {}, guide: null };
     closeRename();
     showWiring = false;
     window.addEventListener('keydown', numberKeys);
     numberPrompt(); viewer.redraw();
+    /* the guide (good next modules, and a suggested numbering if one keeps every power
+       cable apart) takes a moment on a big rack: work it out after the prompt shows */
+    say('Working out which modules to click next…');
+    const run = numbering;
+    setTimeout(() => {
+      if (numbering !== run) return;
+      try { run.guide = cadWireGuide(components, inp.sscs, { pair: inp.pair, tray: inp.tray }); } catch (e) { console.error('Numbering guide failed', e); run.guide = null; }
+      numberPrompt(); viewer.redraw();
+    }, 30);
+  }
+  /* good next clicks for the SSC being numbered */
+  function numberHint() {
+    if (!numbering || !numbering.guide) return { ids: [], suggested: null };
+    const st = numbering.list[numbering.i];
+    const taken = Object.values(numbering.picked).flat();
+    return numbering.guide.next(st.key, numbering.picked[st.key] || [], taken);
   }
   function numberPrompt() {
     const st = numbering.list[numbering.i];
     const n = (numbering.picked[st.key] || []).length;
-    prompt(`${st.name}: click module ${n + 1} of ${st.count} (${st.tag}-M${n + 1}) · start with the module wired to S− and N · Backspace undoes · Esc stops`);
-    say(`Numbering ${st.name} (${numbering.i + 1} of ${numbering.list.length} SSCs).`);
+    const hint = numberHint();
+    const where = !numbering.guide ? '' : hint.suggested ? ' · click the bright green module (suggested: keeps power cables apart)'
+      : hint.ids.length ? (n ? ' · click a green module: it is next to ' + st.tag + '-M' + n : ' · start next to ' + st.name + ' (green)') : '';
+    prompt(`${st.name}: click module ${n + 1} of ${st.count} (${st.tag}-M${n + 1})${where} · Backspace undoes · Esc stops`);
+    if (numbering.guide) say(`Numbering ${st.name} (${numbering.i + 1} of ${numbering.list.length} SSCs, ${n} of ${st.count} modules done).` +
+      (numbering.guide.suggested ? ' A suggested numbering with no power crossings is shown in bright green.' : ' No numbering without power crossings was found for this rack; green modules are the ones next to the last click.'));
   }
   function numberKeys(e) {
     if (!numbering || (e.target && /INPUT|TEXTAREA|SELECT/.test(e.target.tagName))) return;
@@ -899,8 +919,10 @@ async function renderCadPage(id) {
     const owner = numbering.list.find(st => (numbering.picked[st.key] || []).includes(m.id));
     if (owner) { const at = numbering.picked[owner.key].indexOf(m.id) + 1; say(`That module is already ${owner.tag}-M${at}. Backspace undoes the last click.`, 'warn'); return; }
     const st = numbering.list[numbering.i];
+    const hint = numberHint();
     const arr = numbering.picked[st.key] = numbering.picked[st.key] || [];
     arr.push(m.id);
+    const off = numbering.guide && hint.ids.length && !hint.ids.includes(m.id);
     if (arr.length >= st.count) {
       if (numbering.i + 1 < numbering.list.length) { numbering.i++; numberPrompt(); viewer.redraw(); return; }
       /* every SSC numbered: wire it in this order */
@@ -914,11 +936,23 @@ async function renderCadPage(id) {
       return;
     }
     numberPrompt(); viewer.redraw();
+    if (off) say(`${st.tag}-M${arr.length} is not next to ${arr.length > 1 ? st.tag + '-M' + (arr.length - 1) : st.name}: its cable has to run along a tray and may cross another power cable. Backspace undoes.`, 'warn');
   }
 
   function closeRename() { const p = document.getElementById('cad-pop'); if (p) p.remove(); if (focusKey) { focusKey = null; viewer.redraw(); } }
 
-  function drawOverlay(ctx, toScreen, scale) {
+  /* drawings come in mm or scaled down (one rack is 1:44): sizes on screen are set per
+     real millimetre, from the battery module width (400 mm) */
+  let unitMemo = null;
+  function mmPerUnit() {
+    if (unitMemo && unitMemo.list === components) return unitMemo.k;
+    const ws = components.filter(c => c.kind === 'module').map(c => c.x1 - c.x0).sort((a, b) => a - b);
+    const k = ws.length ? ws[ws.length >> 1] / 400.45 : 1;
+    unitMemo = { list: components, k: k > 0 ? k : 1 };
+    return unitMemo.k;
+  }
+  function drawOverlay(ctx, toScreen, scaleRaw) {
+    const scale = scaleRaw * mmPerUnit();
     const list = teach && teach.hits ? teach.hits.map(h => Object.assign({ kind: teach.kind, preview: true }, h)) : components;
     for (const c of list) {
       const a = toScreen(c.x0, c.y1), b = toScreen(c.x1, c.y0);
@@ -968,8 +1002,21 @@ async function renderCadPage(id) {
     }
     if (numbering) {
       ctx.save();
+      const hint = numberHint();
+      for (const id of hint.ids) {
+        const m = components.find(c => c.id === id);
+        if (!m) continue;
+        const a = toScreen(m.x0, m.y1), b = toScreen(m.x1, m.y0);
+        const sug = id === hint.suggested;
+        ctx.fillStyle = sug ? 'rgba(34,197,94,.38)' : 'rgba(34,197,94,.14)';
+        ctx.fillRect(a[0], a[1], b[0] - a[0], b[1] - a[1]);
+        ctx.strokeStyle = sug ? '#4ade80' : 'rgba(74,222,128,.85)'; ctx.lineWidth = sug ? 4 : 2; ctx.setLineDash(sug ? [] : [6, 4]);
+        ctx.strokeRect(a[0] + 1, a[1] + 1, b[0] - a[0] - 2, b[1] - a[1] - 2);
+        ctx.setLineDash([]);
+      }
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      const fs = Math.round(Math.max(11, Math.min(22, 34 * scale)));
+      const mp = (() => { const m = components.find(c => c.kind === 'module'); if (!m) return 200; return Math.abs(toScreen(m.x1, m.y0)[0] - toScreen(m.x0, m.y0)[0]); })();
+      const fs = Math.round(Math.max(8, Math.min(22, 34 * scale, mp / 5.2)));
       for (const st of numbering.list) for (const [i, id] of (numbering.picked[st.key] || []).entries()) {
         const m = components.find(c => c.id === id);
         if (!m) continue;
@@ -1010,6 +1057,8 @@ async function renderCadPage(id) {
 
   /* ---------- wiring (AYK rules, see js/cadwire.js) ---------- */
   function drawWiring(ctx, toScreen, scale) {
+    /* labels never wider than the module they sit on */
+    const modPx = (() => { const m = components.find(c => c.kind === 'module'); if (!m) return 200; const a = toScreen(m.x0, m.y0), b = toScreen(m.x1, m.y0); return Math.abs(b[0] - a[0]); })();
     const bad = new Set((wiring.crossings || []).flatMap(x => [x.a, x.b]));
     ctx.save();
     ctx.lineJoin = 'round'; ctx.lineCap = 'round';
@@ -1027,7 +1076,7 @@ async function renderCadPage(id) {
       if (bad.has(c.id)) { ctx.strokeStyle = '#ffffff'; ctx.lineWidth = w + 4; ctx.stroke(); }
       ctx.strokeStyle = kind === 'power' ? '#ef4444' : '#22c55e'; ctx.lineWidth = w; ctx.stroke();
     }
-    const fs = Math.round(Math.max(9, Math.min(22, 34 * scale)));
+    const fs = Math.round(Math.max(7, Math.min(22, 34 * scale, modPx / 5.2)));
     ctx.font = '700 ' + fs + 'px Inter, system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     for (const st of wiring.strings) for (const l of st.labels) {
       const q = toScreen(l.x, l.y);
@@ -1122,7 +1171,7 @@ async function renderCadPage(id) {
     box.innerHTML = `<div class="cad-label-card cad-wire-card">
       <h4><span class="cad-swatch" style="background:#ef4444"></span>Wiring
         <span class="chip ${wiring && !wiring.crossings.length ? 'chip-ok' : 'chip-warn'}">${wiring ? (wiring.crossings.length ? 'Check crossings' : 'Generated') : 'Not generated'}</span></h4>
-      <p class="muted small">You number the modules by clicking them in order, SSC by SSC. The tool then draws power in series S− → M1 → … → S+, communication N → M1 → … → S and bus B+ / B− to the junction box, along the risers, and checks that no power cables cross.</p>
+      <p class="muted small">You number the modules by clicking them in order, SSC by SSC. The tool then draws power in series S− → M1 → … → S+, communication S → M1 N, Mk S → Mk+1 N, last S → N and bus B+ / B− to the junction box, along the risers, and checks that no power cables cross.</p>
       ${todo.length ? `<ul class="cad-wire-todo">${todo.map(t => `<li>${esc(t)}</li>`).join('')}</ul>` : ''}
       <div class="cad-wire-row">
         <label for="cad-wire-pair">Junction box connectors</label>
