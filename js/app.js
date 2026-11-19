@@ -806,14 +806,37 @@ async function renderCadPage(id) {
     wiringHistory.push(JSON.stringify(cad.wiring || {}));
     if (wiringHistory.length > 30) wiringHistory.shift();
   }
+  /* numbering saved by module position (kind@x,y); ids are looked up when it is used, so
+     re-teaching a part (which can renumber the ids) does not scramble it. Older projects
+     saved ids: those are used as they are. */
+  function orderKeys(byId) {
+    const key = new Map(components.map(c => [c.id, cadCompKey(c)]));
+    const o = {};
+    for (const k in byId || {}) o[k] = byId[k].map(id => key.get(id) || id);
+    return o;
+  }
+  function orderIds(saved) {
+    if (!saved) return null;
+    const id = new Map(components.map(c => [cadCompKey(c), c.id]));
+    const o = {};
+    for (const k in saved) o[k] = saved[k].map(x => id.get(x) || x);
+    return o;
+  }
   async function replan(orders, okText) {
     rememberWiring();
     const inp = wiringInputs();
     let plan;
     try { plan = cadWirePlan(components, inp.sscs, { pair: inp.pair, tray: inp.tray, orders: orders || undefined }); } catch (e) { plan = { ok: false, errors: [e.message] }; }
-    if (!plan.ok) { wiringHistory.pop(); say(plan.errors.join(' '), 'warn'); return false; }
+    if (!plan.ok) { wiringHistory.pop(); say(plan.errors.join(' ') + (orders ? ' Your numbering is kept: fix this and press Draw the wiring again.' : ''), 'warn'); return false; }
+    /* the engineer's numbering no longer fits (module counts or parts changed): keep it and
+       the wiring as they are rather than drawing another numbering over them */
+    if (orders && !plan.custom) {
+      wiringHistory.pop();
+      say('Your numbering is kept, but it no longer fits the drawing (an SSC module count or a part changed). Put the counts back and press Draw the wiring again, or use Number again.', 'warn');
+      return false;
+    }
     wiring = cadWireSave(plan, inp.key);
-    cad.wiring = Object.assign({}, cad.wiring, { pair: inp.pair, plan: wiring, orders: plan.custom ? orders : undefined });
+    cad.wiring = Object.assign({}, cad.wiring, { pair: inp.pair, plan: wiring, orders: orders ? orderKeys(orders) : cad.wiring && cad.wiring.orders });
     await persist();
     renderWiring(); viewer.redraw();
     say(okText + (plan.crossings.length ? ` ⚠ ${plan.crossings.length} power crossing(s) with this numbering, outlined in white.` : ' No power crossings.'), plan.crossings.length ? 'warn' : 'cad-ok');
@@ -855,20 +878,36 @@ async function renderCadPage(id) {
     };
   }
 
-  /* ---- number the modules by clicking them in order, SSC by SSC ---- */
-  function startNumbering() {
+  /* ---- number the modules by clicking them in order, SSC by SSC ----
+     The engineer's numbering is never thrown away unless they ask (Delete wiring, or
+     Start numbering over): every click is saved at once (cad.wiring.draft), Esc only
+     pauses, and the finished numbering (cad.wiring.orders) is kept even when the wiring
+     cannot be drawn yet. Both are saved by module position, so they survive re-teaching. */
+  const numberedCount = d => d ? Object.values(d.picked || {}).reduce((n, a) => n + a.length, 0) : 0;
+  function startNumbering(fresh) {
     const inp = wiringInputs();
     if (!inp.sscs.every(s => s.confirmed && s.count >= 1)) { say('Confirm the SSC numbers and module counts first.', 'warn'); return; }
     const list = inp.sscs.slice().sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }))
       .map(s => ({ key: s.key, name: s.name, count: s.count, tag: 'S' + ((String(s.name).match(/\d+/) || [''])[0]) }));
-    numbering = { list: list, i: 0, picked: {}, guide: null };
+    /* carry on from the saved clicks, unless the engineer chose to start over */
+    const draft = !fresh && cad.wiring && cad.wiring.draft;
+    const picked = {};
+    if (draft) {
+      const ids = orderIds(draft.picked) || {};
+      const known = new Set(components.filter(c => c.kind === 'module').map(c => c.id));
+      for (const st of list) picked[st.key] = (ids[st.key] || []).filter(id => known.has(id)).slice(0, st.count);
+    }
+    let i = list.findIndex(st => (picked[st.key] || []).length < st.count);
+    if (i < 0) i = list.length - 1;
+    numbering = { list: list, i: i, picked: picked, guide: null };
     closeRename();
     showWiring = false;
     window.addEventListener('keydown', numberKeys);
     numberPrompt(); viewer.redraw();
+    if (draft) say(`Continuing your saved numbering: ${numberedCount({ picked: picked })} modules already numbered.`, 'cad-ok');
     /* the guide (good next modules, and a suggested numbering if one keeps every power
        cable apart) takes a moment on a big rack: work it out after the prompt shows */
-    say('Working out which modules to click next…');
+    if (!draft) say('Working out which modules to click next…');
     const run = numbering;
     setTimeout(() => {
       if (numbering !== run) return;
@@ -889,7 +928,7 @@ async function renderCadPage(id) {
     const hint = numberHint();
     const where = !numbering.guide ? '' : hint.suggested ? ' · click the bright green module (suggested: keeps power cables apart)'
       : hint.ids.length ? (n ? ' · click a green module: it is next to ' + st.tag + '-M' + n : ' · start next to ' + st.name + ' (green)') : '';
-    prompt(`${st.name}: click module ${n + 1} of ${st.count} (${st.tag}-M${n + 1})${where} · Backspace undoes · Esc stops`);
+    prompt(`${st.name}: click module ${n + 1} of ${st.count} (${st.tag}-M${n + 1})${where} · Backspace undoes · Esc pauses (your clicks are saved)`);
     if (numbering.guide) say(`Numbering ${st.name} (${numbering.i + 1} of ${numbering.list.length} SSCs, ${n} of ${st.count} modules done).` +
       (numbering.guide.suggested ? ' A suggested numbering with no power crossings is shown in bright green.' : ' No numbering without power crossings was found for this rack; green modules are the ones next to the last click.'));
   }
@@ -901,15 +940,23 @@ async function renderCadPage(id) {
       let arr = numbering.picked[st.key] || [];
       if (!arr.length && numbering.i > 0) { numbering.i--; st = numbering.list[numbering.i]; arr = numbering.picked[st.key] || []; }
       arr.pop();
+      saveDraft();
       numberPrompt(); viewer.redraw();
     }
   }
+  /* every click is saved straight away, so nothing is lost by Esc, a refresh or a crash */
+  function saveDraft() {
+    if (!numbering) return;
+    cad.wiring = Object.assign({}, cad.wiring, { draft: { picked: orderKeys(numbering.picked), saved: new Date().toISOString() } });
+    persist().catch(e => say('Could not save the numbering: ' + e.message, 'warn'));
+  }
   function cancelNumbering() {
     if (!numbering) return false;
+    const n = numberedCount(numbering);
     numbering = null;
     window.removeEventListener('keydown', numberKeys);
     prompt(''); showWiring = true; viewer.redraw();
-    say('Numbering stopped. Nothing was changed.');
+    say(n ? `Numbering paused. Your ${n} numbered module${n === 1 ? ' is' : 's are'} saved: press Continue numbering to carry on.` : 'Numbering stopped. Nothing was changed.', n ? 'cad-ok' : '');
     renderWiring();
     return true;
   }
@@ -922,17 +969,23 @@ async function renderCadPage(id) {
     const hint = numberHint();
     const arr = numbering.picked[st.key] = numbering.picked[st.key] || [];
     arr.push(m.id);
+    saveDraft();
     const off = numbering.guide && hint.ids.length && !hint.ids.includes(m.id);
     if (arr.length >= st.count) {
       if (numbering.i + 1 < numbering.list.length) { numbering.i++; numberPrompt(); viewer.redraw(); return; }
-      /* every SSC numbered: wire it in this order */
+      /* every SSC numbered: keep the numbering first, then wire it in this order */
       const picked = numbering.picked;
       numbering = null;
       window.removeEventListener('keydown', numberKeys);
       prompt(''); showWiring = true;
+      rememberWiring();
+      cad.wiring = Object.assign({}, cad.wiring, { orders: orderKeys(picked) });
+      delete cad.wiring.draft;
+      await persist();
       const left = components.filter(c => c.kind === 'module').length - Object.values(picked).reduce((n, a) => n + a.length, 0);
       if (left) say(`${left} module${left === 1 ? ' was' : 's were'} not numbered; check the SSC module counts.`, 'warn');
-      await replan(picked, 'Modules numbered by hand; wiring drawn in your order.');
+      const ok = await replan(picked, 'Modules numbered by hand; wiring drawn in your order.');
+      if (!ok) renderWiring();
       return;
     }
     numberPrompt(); viewer.redraw();
@@ -1145,6 +1198,9 @@ async function renderCadPage(id) {
     const jbs = components.filter(c => c.kind === 'jb');
     const jbTaught = jbs.length && jbs.every(j => (j.terminals || []).length === 4);
     const todo = [];
+    /* a numbering in progress (saved click by click) */
+    const draftN = numberedCount(cad.wiring && cad.wiring.draft);
+    const totalN = inp.sscs.reduce((n, s) => n + (s.count || 0), 0);
     if (!ready) todo.push('Confirm the SSC numbers and module counts above.');
     if (!jbs.length) todo.push('Teach the junction box (the box at the top of each SSC column).');
     else if (!jbTaught) todo.push('Teach the junction box again and click its four connectors left to right (+, −, +, −).');
@@ -1191,8 +1247,11 @@ async function renderCadPage(id) {
       <p class="muted small">The pair and the tray (B+ / B− from the SSC up to the junction box) are used for every SSC unless an SSC below says otherwise.</p>
       ${jbTable(inp)}
       ${!wiring && cad.wiring && cad.wiring.orders && !todo.length ? `<button class="btn btn-primary btn-sm cad-wire-go" id="cad-wire-redraw" title="A setting changed; draw the wiring again with your numbering">Draw the wiring again (your numbering)</button>` : ''}
-      <button class="btn ${wiring || (cad.wiring && cad.wiring.orders) ? 'btn-ghost' : 'btn-primary'} btn-sm cad-wire-go" id="cad-wire-number" ${todo.length ? 'disabled' : ''} title="Click each SSC's modules in order: M1 (wired to S− and N), M2, …">${wiring || (cad.wiring && cad.wiring.orders) ? 'Number again' : 'Number modules by clicking'}</button>
+      ${draftN ? `<button class="btn btn-primary btn-sm cad-wire-go" id="cad-wire-number" ${todo.length ? 'disabled' : ''} title="Carry on numbering from the last module you clicked">Continue numbering (${draftN} of ${totalN} done)</button>`
+        : `<button class="btn ${wiring || (cad.wiring && cad.wiring.orders) ? 'btn-ghost' : 'btn-primary'} btn-sm cad-wire-go" id="cad-wire-number" ${todo.length ? 'disabled' : ''} title="Click each SSC's modules in order: M1 (wired to S− and N), M2, …${cad.wiring && cad.wiring.orders ? ' Your current numbering stays until the new one is finished.' : ''}">${wiring || (cad.wiring && cad.wiring.orders) ? 'Number again' : 'Number modules by clicking'}</button>`}
+      ${draftN ? `<p class="muted small">Your clicks are saved as you go${cad.wiring.orders ? '; the finished numbering stays until this one is complete' : ''}.</p>` : ''}
       <div class="cad-wire-actions">
+        ${draftN ? `<button class="btn btn-ghost btn-sm" id="cad-wire-restart" title="Clear the modules numbered so far and start again from S1-M1">Start numbering over</button>` : ''}
         ${wiring || (cad.wiring && cad.wiring.orders) ? `<button class="btn btn-ghost btn-sm" id="cad-wire-delete" title="Remove the wiring and the numbering from this drawing">Delete wiring</button>` : ''}
         ${wiringHistory.length ? `<button class="btn btn-ghost btn-sm" id="cad-wire-undo" title="Take back the last wiring change">Undo</button>` : ''}
       </div>
@@ -1222,11 +1281,20 @@ async function renderCadPage(id) {
       await persist(); renderWiring(); viewer.redraw();
     };
     $('cad-wire-number').onclick = () => startNumbering();
-    if ($('cad-wire-redraw')) $('cad-wire-redraw').onclick = () => replan(cad.wiring.orders, 'Wiring drawn again with your numbering.');
-    if ($('cad-wire-delete')) $('cad-wire-delete').onclick = async () => {
+    if ($('cad-wire-redraw')) $('cad-wire-redraw').onclick = () => replan(orderIds(cad.wiring.orders), 'Wiring drawn again with your numbering.');
+    if ($('cad-wire-restart')) $('cad-wire-restart').onclick = async () => {
+      if (!confirm(`Start numbering over? The ${draftN} module${draftN === 1 ? '' : 's'} numbered so far will be cleared.`)) return;
       rememberWiring();
       cad.wiring = Object.assign({}, cad.wiring);
-      delete cad.wiring.plan; delete cad.wiring.orders;
+      delete cad.wiring.draft;
+      await persist(); renderWiring();
+      startNumbering(true);
+    };
+    if ($('cad-wire-delete')) $('cad-wire-delete').onclick = async () => {
+      if (!confirm('Delete the wiring and the module numbering of this drawing? Undo brings them back during this session.')) return;
+      rememberWiring();
+      cad.wiring = Object.assign({}, cad.wiring);
+      delete cad.wiring.plan; delete cad.wiring.orders; delete cad.wiring.draft;
       wiring = null;
       await persist(); renderWiring(); viewer.redraw();
       say('Wiring and numbering deleted. Undo brings them back.', 'cad-ok');
