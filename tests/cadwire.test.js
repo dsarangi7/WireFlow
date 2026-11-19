@@ -186,6 +186,38 @@ ok('refused: junction box terminals not taught', !nj.ok && /has no P1 terminals/
   ok('awkward numbering: no detours outside the rack (crossings are reported instead)', outside(messy).length === 0, outside(messy).map(c => c.id).slice(0, 3).join(', '));
 }
 
+/* ---------- long cables run in the trays and rails, never over a part ---------- */
+{
+  const rc = rack111();
+  const bodies = rc.filter(c => ['module', 'ssc', 'jb', 'msm'].includes(c.kind));
+  const inBox = (p, c) => p[0] >= c.x0 - 0.5 && p[0] <= c.x1 + 0.5 && p[1] >= c.y0 - 0.5 && p[1] <= c.y1 + 0.5;
+  const over = pl => pl.cables.filter(c => / → /.test(c.id)).filter(c => {
+    const own = bodies.filter(o => inBox(c.pts[0], o) || inBox(c.pts[c.pts.length - 1], o));
+    for (let i = 1; i < c.pts.length; i++) {
+      const p = c.pts[i - 1], q = c.pts[i];
+      const x0 = Math.min(p[0], q[0]), x1 = Math.max(p[0], q[0]), y0 = Math.min(p[1], q[1]), y1 = Math.max(p[1], q[1]);
+      if (bodies.some(o => !own.includes(o) && x1 > o.x0 + 1 && x0 < o.x1 - 1 && y1 > o.y0 + 1 && y0 < o.y1 - 1)) return true;
+    }
+    return false;
+  });
+  const auto = W.cadWirePlan(rc, sscList(rc), { pair: 'P1', tray: 'CR' });
+  ok('trays: no long cable of the suggested wiring runs over a part', auto.ok && over(auto).length === 0, over(auto).map(c => c.id).slice(0, 3).join(', '));
+  /* the engineer gives SSC1 the modules of a string two columns away: its long cables must
+     go up a tray, across a rail between the rows and down the tray of the far column */
+  const ss = sscList(rc), orders = {};
+  const byName = n => auto.strings.find(s => s.name === n);
+  const far = ss.slice().sort((a, b) => a.comp._col - b.comp._col);
+  const A = far[0], B = far.find(s => s.comp._col >= A.comp._col + 2 && s.count === A.count);
+  for (const s of ss) orders[s.key] = byName(s.name).modules.map(m => m.id);
+  if (B) { const t = orders[A.key]; orders[A.key] = orders[B.key]; orders[B.key] = t; }
+  const swap = W.cadWirePlan(rc, ss, { pair: 'P1', tray: 'CR', orders: orders });
+  ok('trays: a string two columns away is still planned', !!B && swap.ok && swap.custom, swap.errors.join(' | '));
+  ok('trays: its long cables never run over a part', over(swap).length === 0, over(swap).map(c => c.id).slice(0, 3).join(', '));
+  const lenient = swap.cables.filter(c => c.ssc === A.name && / → /.test(c.id) && !/JB/.test(c.id));
+  const horiz = c => c.pts.slice(1).some((q, i) => Math.abs(q[1] - c.pts[i][1]) < 0.01 && Math.abs(q[0] - c.pts[i][0]) > 300);
+  ok('trays: the far string\'s cables cross over on a rail', lenient.length === 4 && lenient.every(horiz));
+}
+
 /* ---------- cable tray for B+ / B- (CL / CR) ---------- */
 {
   const rc = rack111();
