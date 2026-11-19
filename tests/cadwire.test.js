@@ -186,6 +186,9 @@ ok('refused: junction box terminals not taught', !nj.ok && /has no P1 terminals/
   const messy = W.cadWirePlan(rc, ss, { pair: 'P1', orders: orders });
   ok('awkward numbering: plan still made', messy.ok && messy.custom, messy.errors.join(' | '));
   ok('awkward numbering: no detours outside the rack (crossings are reported instead)', outside(messy).length === 0, outside(messy).map(c => c.id).slice(0, 3).join(', '));
+  /* the second look (jumps may bow the other way, long cables re-pick their route) keeps
+     the crossings of this numbering well under the 74 of a single greedy pass */
+  ok('awkward numbering: second look cuts power crossings', messy.crossings.length <= 66, messy.crossings.length);
 }
 
 /* ---------- long cables run in the trays and rails, never over a part ---------- */

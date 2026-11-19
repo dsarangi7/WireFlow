@@ -62,21 +62,25 @@ function checkPdf(bytes) {
   ok('sheet: scale chosen from standard scales so the rack fits', [10, 15, 20, 25, 30].includes(P.scale), '1:' + P.scale);
   ok('sheet: rack inside the drawing area', P.X(bounds.minX) > 14 && P.X(bounds.maxX) < 406 && P.Y(bounds.minY) > 80, [P.X(bounds.minX), P.X(bounds.maxX), P.Y(bounds.minY)].map(v => v.toFixed(1)).join(' '));
   const svg = L.sheetSvgTarget();
-  L.sheetDraw(svg, { bounds: bounds, jbs: jbs, wiring: wiring, settings: st, interactive: true });
+  const parts = comps.filter(c => c.kind === 'ssc').map((c, i) => ({ id: 'part:' + c.id, text: 'SSC' + (i + 1), x: (c.x0 + c.x1) / 2, y: (c.y0 + c.y1) / 2 }))
+    .concat([{ id: 'part:msm', text: 'MSM1', x: 7500, y: 1500 }]);
+  L.sheetDraw(svg, { bounds: bounds, jbs: jbs, parts: parts, wiring: wiring, settings: st, interactive: true });
   const out = svg.svg();
   ok('sheet SVG: 140 cables, each with its id for editing', (out.match(/class="sh-cable"/g) || []).length === 140);
   ok('sheet SVG: 60 module labels S1-M1 …', (out.match(/>S\d-M\d+</g) || []).length === 60);
   ok('sheet SVG: blue and yellow plug leads on all 5 junction boxes', (out.match(/stroke="#0ea5e9"/g) || []).length >= 5 && (out.match(/stroke="#f2b600"/g) || []).length >= 5);
-  ok('sheet SVG: Power PlugA / PlugB labels with Note2', /Power PlugA/.test(out) && /Power PlugB/.test(out) && /Note2/.test(out));
+  ok('sheet SVG: plug leads labelled "Note 2" only (no Power PlugA / PlugB)', />Note 2</.test(out) && !/Power Plug/.test(out));
+  ok('sheet SVG: SSC and MSM names on the sheet', ['SSC1', 'SSC5', 'MSM1'].every(t => out.includes('>' + t + '<')));
+  ok('sheet SVG: scale is NTS', out.includes('SCALE: NTS'));
   ok('sheet SVG: grounding point with Note1', /Grounding Point/.test(out) && /\(Note1\)/.test(out));
-  ok('sheet SVG: title block fields filled', ['DWG2396', 'S10164', '576 kWh', '5675 kg', 'Wiring Diagram', 'SCALE: 1:', 'SHEET 1 OF 1', 'AYK POWER LTD.'].every(v => out.includes(v)));
+  ok('sheet SVG: title block fields filled', ['DWG2396', 'S10164', '576 kWh', '5675 kg', 'Wiring Diagram', 'SCALE: NTS', 'SHEET 1 OF 1', 'AYK POWER LTD.'].every(v => out.includes(v)));
   ok('sheet SVG: fixed notes, legend and string note', /This Rack has 5 strings/.test(out) && /Cat6 Ethernet/.test(out) && /M6_L16_Button Screw/.test(out) && /DO NOT SCALE DRAWING/.test(out));
 
   const noPlug = L.sheetSettings({ plugs: false }, 'x');
   const svg2 = L.sheetSvgTarget();
   L.sheetDraw(svg2, { bounds: bounds, jbs: jbs, wiring: wiring, settings: noPlug, interactive: true });
   const out2 = svg2.svg();
-  ok('plugs switched off: no blue/yellow leads, labels or customer legend', !/#0ea5e9|#f2b600/.test(out2) && !/Power Plug/.test(out2) && !/Customer Side/.test(out2));
+  ok('plugs switched off: no blue/yellow leads, labels or customer legend', !/#0ea5e9|#f2b600/.test(out2) && !/Note 2/.test(out2) && !/Customer Side/.test(out2));
 
   /* edits move a cable and a label */
   const cab = wiring.cables.find(c => c.pts.length > 3 && !c.curve);

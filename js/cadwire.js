@@ -174,6 +174,15 @@ function cadwRails(cols, xa, xb) {
   cols._rails.set(key, rails);
   return rails;
 }
+/** Rails a long cable may cross on: the three nearest its ends, plus the rail along the
+    bottom and the one along the top of the rack, so a cable can go round under (or over)
+    the modules instead of crossing a jump between rows (the engineer's way). */
+function cadwRailChoice(rails, a, b, mid) {
+  const near = rails.slice().sort((p, q) => (Math.abs(p.y - a.y) + Math.abs(p.y - b.y)) - (Math.abs(q.y - a.y) + Math.abs(q.y - b.y)) || Math.abs(p.y - mid) - Math.abs(q.y - mid)).slice(0, 3);
+  const byY = rails.slice().sort((p, q) => p.y - q.y);
+  for (const r of [byY[0], byY[byY.length - 1]]) if (r && near.indexOf(r) < 0) near.push(r);
+  return near;
+}
 const CADW_SLOTS = [0, -1, 1, -2, 2, -3, 3, -4, 4, -5, 5, -6, 6, -7, 7, -8, 8];
 function cadwLaneX(t, slot) { return t.x + slot * Math.min(cadwU(CADW_LANE), Math.max(cadwU(1.5), (t.gap - cadwU(8)) / 17)); }
 function cadwLaneY(r, slot) { return r.y + slot * Math.min(cadwU(CADW_LANE), Math.max(cadwU(1.5), (r.h - cadwU(6)) / 17)); }
@@ -193,7 +202,7 @@ function cadwTrayRoutes(a, b, traysA, traysB, cols, stubsA, stubsB, used, nearB)
     /* to a junction box: across the rail next to the box (over the top of the rack),
        never through the middle of the modules */
     const rails = nearB ? cadwRails(cols, ta.x, tb.x).slice().sort((p, q) => Math.abs(p.y - b.y) - Math.abs(q.y - b.y)).slice(0, 1)
-      : cadwRails(cols, ta.x, tb.x).slice().sort((p, q) => (Math.abs(p.y - a.y) + Math.abs(p.y - b.y)) - (Math.abs(q.y - a.y) + Math.abs(q.y - b.y)) || Math.abs(p.y - mid) - Math.abs(q.y - mid)).slice(0, 3);
+      : cadwRailChoice(cadwRails(cols, ta.x, tb.x), a, b, mid);
     const [sA] = free(ta.x, 1), [sB] = free(tb.x, 1);
     if (sA === undefined || sB === undefined) continue;
     const xA = cadwLaneX(ta, sA), xB = cadwLaneX(tb, sB);
@@ -618,7 +627,6 @@ function cadwPlanString(st, cols, jb, pair, placed, gapUse, jbName, tray) {
       }
       j.pts = pick.pts; j.curve = !!pick.pts.curve; j.box = null;
     }
-    for (const j of jumps) delete j.opts;
     const first = order[0], last = order[order.length - 1];
     const longPower = [
       { key: 'S-', from: [ssc, 'S-'], to: [first, 'power-'], name: `${tag} S− → ${label.get(first)} −` },
@@ -666,28 +674,74 @@ function cadwPlanString(st, cols, jb, pair, placed, gapUse, jbName, tray) {
         const inside = cadwKeepInside(cands, cols.bounds, true).map(c => ({ c: c, len: cadwLen(c.pts) })).sort((p, q) => p.len - q.len);
         for (const { c, len } of inside) {
           if (pick && pick.v <= len) break;
-          const cab = { kind: kind, pts: c.pts };
-          const x = pool.reduce((n, z) => n + cadwCrossings(cab, z), 0);
+          /* count crossings, stopping as soon as this route cannot beat the best one */
+          let x = 0;
+          for (const z of pool) { x += cadwCrossings(c, z); if (pick && x * 1e6 + len >= pick.v) break; }
           const v = x * 1e6 + len;
           if (!pick || v < pick.v) pick = { v: v, x: x, c: c };
         }
         for (const [key, slot] of pick.c.lanes) { if (!lanesUsed.has(key)) lanesUsed.set(key, new Set()); lanesUsed.get(key).add(slot); }
         k++;
         if (kind === 'power') crossings += pick.x;
-        cables.push({ id: spec.name, ssc: st.s.name, kind: kind, from: spec.name.split(' → ')[0].replace(tag + ' ', ''), to: spec.name.split(' → ')[1], pts: pick.c.pts });
+        cables.push({ id: spec.name, ssc: st.s.name, kind: kind, from: spec.name.split(' → ')[0].replace(tag + ' ', ''), to: spec.name.split(' → ')[1], pts: pick.c.pts, _cands: inside, _lanes: pick.c.lanes });
       };
       for (const spec of perm) place(spec, 'power');
+      /* second look: each long power cable re-picks its route now that the others are known
+         (cables placed early chose blindly between equally short routes) */
+      const base = new Map(Array.from(gapUse, ([x, set]) => [x, new Set(set)]));
+      /* this permutation's own copy of the jumps: a jump may now bow the other way
+         (e.g. a curve under the bottom row moves up so S+ can pass under the rack) */
+      const J = jumps.map(j => Object.assign({}, j, { box: null }));
+      const pre = placed.filter(z => z.kind === 'power');
+      const mine = () => J.filter(z => z.kind === 'power').concat(cables);
+      for (const j of J) if (j.kind === 'power' && j.opts.length > 1) { j._cands = j.opts.map(pts => ({ c: { pts: pts, lanes: [] }, len: cadwLen(pts) })).sort((u, w) => u.len - w.len); j._lanes = []; }
+      /* only cables that cross something are looked at again; stop once nothing changes */
+      const crossesAny = cab => pre.concat(mine()).some(z => z !== cab && cadwCrossings(cab, z));
+      /* a permutation that starts far worse than the best so far is not worth the second look */
+      const worth = !best || crossings <= best.x + 2;
+      for (let round = 0; worth && round < 3; round++) {
+        const todo = cables.concat(J.filter(j => j._cands)).filter(crossesAny);
+        if (!todo.length) break;
+        let changed = false;
+        for (const cab of todo) {
+        const busy = new Map(Array.from(base, ([x, set]) => [x, new Set(set)]));
+        for (const o of cables) if (o !== cab) for (const [key, slot] of o._lanes) { if (!busy.has(key)) busy.set(key, new Set()); busy.get(key).add(slot); }
+        const others = pre.concat(mine().filter(o => o !== cab));
+        let best = null;
+        for (const { c, len } of cab._cands) {
+          if (best && best.v <= len) break;
+          if (c.lanes.some(([key, slot]) => busy.has(key) && busy.get(key).has(slot))) continue;
+          let x = 0;
+          for (const z of others) { x += cadwCrossings(c, z); if (best && x * 1e6 + len >= best.v) break; }
+          const v = x * 1e6 + len;
+          if (!best || v < best.v) best = { v: v, c: c };
+        }
+        if (best && best.c.pts !== cab.pts) { cab.pts = best.c.pts; cab._lanes = best.c.lanes; cab.box = null; if (cab.opts) cab.curve = !!best.c.pts.curve; changed = true; }
+        }
+        if (!changed) break;
+      }
+      /* every power crossing of this string: with earlier strings and inside the string */
+      crossings = 0;
+      const pw = mine();
+      for (let i = 0; i < pw.length; i++) {
+        crossings += pre.reduce((n, z) => n + cadwCrossings(pw[i], z), 0);
+        for (let j = i + 1; j < pw.length; j++) crossings += cadwCrossings(pw[i], pw[j]);
+      }
+      for (const j of J) { delete j._cands; delete j._lanes; }
+      lanesUsed.clear();
+      for (const [x, set] of base) lanesUsed.set(x, new Set(set));
+      for (const o of cables) for (const [key, slot] of o._lanes) { if (!lanesUsed.has(key)) lanesUsed.set(key, new Set()); lanesUsed.get(key).add(slot); }
       for (const spec of longComm) place(spec, 'comm');
-      const all = jumps.concat(cables);
+      for (const o of cables) { delete o._cands; delete o._lanes; }
+      const all = J.concat(cables);
       const powerLen = all.filter(c => c.kind === 'power').reduce((s, c) => s + cadwLen(c.pts), 0);
       const totalLen = all.reduce((s, c) => s + cadwLen(c.pts), 0);
-      const pool = placed.filter(c => c.kind === 'power');
-      const jumpX = jumps.filter(c => c.kind === 'power').reduce((n, c) => n + pool.reduce((m, z) => m + cadwCrossings(c, z), 0), 0);
-      const score = (crossings + jumpX) * 1e6 + powerLen + totalLen * 0.01;
-      if (!best || score < best.score) best = { score: score, cables: all, order: order, label: label, lanes: lanesUsed };
+      const score = crossings * 1e6 + powerLen + totalLen * 0.01;
+      if (!best || score < best.score) best = { score: score, x: crossings, cables: all, order: order, label: label, lanes: lanesUsed };
     }
   }
   if (!best) return null;
+  for (const c of best.cables) delete c.opts;
   for (const [x, n] of best.lanes) gapUse.set(x, n);
   const string = {
     name: st.s.name, tag: tag, ssc: ssc, jb: jb, jbName: jbName, pair: pair, far: st.far,

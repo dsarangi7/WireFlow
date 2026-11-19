@@ -237,7 +237,8 @@ function sheetFrame(doc, st, nStrings, logo) {
 function sheetDraw(doc, model) {
   const st = model.settings;
   const P = sheetPlace(model.bounds, model.jbs, st);
-  st.fields.scaleText = '1:' + P.scale;
+  /* AYK sheets are never to scale */
+  st.fields.scaleText = 'NTS';
   const W = model.wiring;
   const E = st.edits;
   const ia = !!model.interactive;
@@ -283,13 +284,11 @@ function sheetDraw(doc, model) {
       };
       const g = { cls: 'sh-drag', data: { drag: 'plug' } };
       if (ia) doc.group(true, g);
-      doc.text('Power PlugB', xr, yB, { size: 2.6, bold: true, color: SHEET_COLORS.plugB, align: 'right' });
-      doc.text('Note2', xr + 0.4, yB + 1.8, { size: 1.3, bold: true, color: SHEET_COLORS.plugB });
-      doc.text('Power PlugA', xr - 4, yA, { size: 2.6, bold: true, color: SHEET_COLORS.plugA, align: 'right' });
-      doc.text('Note2', xr - 3.6, yA + 1.8, { size: 1.3, bold: true, color: SHEET_COLORS.plugA });
+      /* one "Note 2" label with an arrow to each lead (no plug names on the sheet) */
+      doc.text('Note 2', xr, yB, { size: 3.4, align: 'right' });
       if (ia) doc.group(false);
-      arrow(xr + 1, yB - 1, tb[0], tb[1] - 9, SHEET_COLORS.plugB);
-      arrow(xr - 3, yA - 1, ta[0], ta[1] - 15, SHEET_COLORS.plugA);
+      arrow(xr + 1, yB + 0.8, tb[0], tb[1] - 9, SHEET_COLORS.plugB);
+      arrow(xr + 1, yB - 0.6, ta[0], ta[1] - 15, SHEET_COLORS.plugA);
     }
     if (ia) doc.group(false);
   }
@@ -307,6 +306,12 @@ function sheetDraw(doc, model) {
   for (const s of W.strings) for (const l of s.labels) {
     const p = (E.labels && E.labels[l.id]) || [l.x, l.y];
     doc.text(l.text, P.X(p[0]), P.Y(p[1]) - 0.9, { size: 2.6, bold: true, color: SHEET_COLORS.label, align: 'center', cls: ia ? 'sh-drag' : null, data: ia ? { drag: 'label', id: l.id } : null });
+  }
+
+  /* SSC / MSM names on their parts (SSC1 …, MSM1), as on the drawing */
+  for (const l of model.parts || []) {
+    const p = (E.labels && E.labels[l.id]) || [l.x, l.y];
+    doc.text(l.text, P.X(p[0]), P.Y(p[1]) - 1.2, { size: 3.4, bold: true, color: SHEET_COLORS.label, align: 'center', cls: ia ? 'sh-drag' : null, data: ia ? { drag: 'label', id: l.id } : null });
   }
 
   /* grounding point (Note 1): arrow up to the bolt hole on the rack's bottom-right upright */

@@ -1686,6 +1686,9 @@ async function renderSheetPage(id) {
   let flat;
   try { flat = cadFlatten(cadParseDxf(await record.blob.text())); } catch (e) { shell(`<div class="empty"><h3>Could not read the drawing</h3><p>${esc(e.message)}</p>${back}</div>`, 'dash'); return; }
   const jbs = (cad.components || []).filter(c => c.kind === 'jb');
+  /* SSC and MSM names for the sheet, centred on each part */
+  const parts = (cad.components || []).filter(c => c.kind === 'ssc' || c.kind === 'msm').map(c => ({
+    id: 'part:' + cadCompKey(c), text: cadCompLabel(c, cad.labels || {}), x: (c.x0 + c.x1) / 2, y: c.y0 + (c.y1 - c.y0) * 0.62 }));
   const st = sheetSettings(cad.sheet, project.name);
   const logo = await sheetLogo().catch(() => null);
   const F = st.fields;
@@ -1714,7 +1717,7 @@ async function renderSheetPage(id) {
           <section>
             <h3>On the sheet</h3>
             <label class="cad-wire-show"><input type="checkbox" id="sh-plugs" ${st.plugs ? 'checked' : ''}> Customer power plugs A / B (Note 2) on every junction box</label>
-            <label class="sh-field"><span>Scale</span><select id="sh-scale"><option value="auto">Automatic</option>${SHEET_SCALES.map(v => `<option value="${v}" ${String(F.scale) === String(v) ? 'selected' : ''}>1:${v}</option>`).join('')}</select></label>
+            <label class="sh-field" title="The title block always says SCALE: NTS; this only sets how large the rack is drawn on the A3 sheet"><span>Rack size on sheet</span><select id="sh-scale"><option value="auto">Fit the sheet</option>${SHEET_SCALES.map(v => `<option value="${v}" ${String(F.scale) === String(v) ? 'selected' : ''}>1:${v}</option>`).join('')}</select></label>
             <p class="muted small">Drag a cable's middle section, a module label, the plug labels or the grounding-point label to move it. Curved jumps stay as drawn.</p>
             <button class="btn btn-ghost btn-sm" id="sh-reset">Undo all moves</button>
           </section>
@@ -1735,7 +1738,7 @@ async function renderSheetPage(id) {
 
   const $ = q => document.getElementById(q);
   const say = (m, k) => { $('sh-status').textContent = m || ''; $('sh-status').className = 'small ' + (k || ''); };
-  const model = () => ({ flat: flat, bounds: flat.bounds, jbs: jbs, wiring: wiring, settings: st, logo: logo });
+  const model = () => ({ flat: flat, bounds: flat.bounds, jbs: jbs, parts: parts, wiring: wiring, settings: st, logo: logo });
   let zoom = 1, P = null, rackKey = '';
   const save = async () => {
     cad.sheet = { fields: Object.assign({}, F, { scaleText: undefined }), plugs: st.plugs, edits: st.edits };
@@ -1821,7 +1824,7 @@ async function renderSheetPage(id) {
     const cEl = ev.target.closest('.sh-cable, .sh-hit');
     if (dEl) {
       const kind = dEl.dataset.drag;
-      const lab = kind === 'label' ? wiring.strings.flatMap(s => s.labels).find(l => l.id === dEl.dataset.id) : null;
+      const lab = kind === 'label' ? wiring.strings.flatMap(s => s.labels).concat(parts).find(l => l.id === dEl.dataset.id) : null;
       drag = { kind: kind, start: s0, el: dEl, id: dEl.dataset.id,
         orig: kind === 'label' ? (st.edits.labels[dEl.dataset.id] || [lab.x, lab.y]).slice()
           : kind === 'plug' ? (st.edits.plugLabel || [-30, -2]).slice() : (st.edits.ground || [0, 0]).slice() };
