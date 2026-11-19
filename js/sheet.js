@@ -108,7 +108,7 @@ function sheetSvgTarget() {
       o = o || {};
       const anchor = o.align === 'center' ? 'middle' : o.align === 'right' ? 'end' : 'start';
       const rot = o.rot ? ` rotate(${-o.rot})` : '';
-      parts.push(`<text transform="translate(${n(x)} ${n(y)}) scale(1 -1)${rot}" font-family="Helvetica, Arial, sans-serif" font-size="${n(o.size || 2.5)}"${o.bold ? ' font-weight="700"' : ''} fill="${o.color || '#000'}" text-anchor="${anchor}"${attrs(o)}>${esc(pdfNorm(str))}</text>`);
+      parts.push(`<text transform="translate(${n(x)} ${n(y)}) scale(1 -1)${rot}" font-family="Arial, Helvetica, sans-serif" font-size="${n(o.size || 2.5)}"${o.bold ? ' font-weight="700"' : ''} fill="${o.color || '#000'}" text-anchor="${anchor}"${attrs(o)}>${esc(pdfNorm(str))}</text>`);
       return api;
     },
     image(src, pxW, pxH, x, y, w, h) {

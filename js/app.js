@@ -1718,7 +1718,8 @@ async function renderSheetPage(id) {
             <h3>On the sheet</h3>
             <label class="cad-wire-show"><input type="checkbox" id="sh-plugs" ${st.plugs ? 'checked' : ''}> Customer power plugs A / B (Note 2) on every junction box</label>
             <label class="sh-field" title="The title block always says SCALE: NTS; this only sets how large the rack is drawn on the A3 sheet"><span>Rack size on sheet</span><select id="sh-scale"><option value="auto">Fit the sheet</option>${SHEET_SCALES.map(v => `<option value="${v}" ${String(F.scale) === String(v) ? 'selected' : ''}>1:${v}</option>`).join('')}</select></label>
-            <p class="muted small">Drag a cable's middle section, a module label, the plug labels or the grounding-point label to move it. Curved jumps stay as drawn.</p>
+            <p class="muted small"><b>Edit the wiring:</b> drag a cable's middle section to move it (also into the other tray) · drag a curved jump up or down to change its curve · <b>double-click</b> a cable to add a bend there, then drag it · <b>right-click</b> a cable to put it back on its planned route. Labels, the Note 2 label and the grounding-point label can be dragged too.</p>
+            <p class="small" id="sh-cross" role="status"></p>
             <button class="btn btn-ghost btn-sm" id="sh-reset">Undo all moves</button>
           </section>
           <section>
@@ -1771,6 +1772,20 @@ async function renderSheetPage(id) {
     P = sheetDraw(svg, Object.assign(model(), { rack: false, interactive: true, logo: logo ? { src: logo.src, w: logo.w, h: logo.h } : null }));
     $('sh-g').innerHTML = svg.svg();
     paintRack();
+    markCrossings();
+  }
+  /* power cables crossing each other with the edits applied: outlined, and counted */
+  const planned = (wiring.crossings || []).length;
+  function markCrossings() {
+    const cables = wiring.cables.map(c => Object.assign({}, c, { pts: (st.edits.cables && st.edits.cables[c.id]) || c.pts, box: null }));
+    const x = cadwPowerCrossings(cables);
+    const bad = new Set(x.flatMap(p => [p.a, p.b]));
+    $('sh-g').querySelectorAll('.sh-cable').forEach(el => el.classList.toggle('sh-x', bad.has(el.dataset.id)));
+    const el = $('sh-cross');
+    if (!el) return x;
+    el.className = 'small ' + (x.length > planned ? 'warn' : x.length ? '' : 'cad-ok');
+    el.textContent = x.length ? `${x.length} power cable crossing${x.length === 1 ? '' : 's'} on the sheet (outlined)${x.length > planned ? ` — ${x.length - planned} more than the planned wiring` : ''}.` : 'No power cables cross.';
+    return x;
   }
   function applyZoom() {
     const stage = $('sh-stage');
@@ -1809,6 +1824,29 @@ async function renderSheetPage(id) {
     bindRevs(); render(); save();
   };
   $('sh-reset').onclick = () => { st.edits = { cables: {}, labels: {}, ground: null, plugLabel: null }; render(); save(); say('All moves undone.'); };
+  /* after an edit: tell the engineer straight away when it adds a power crossing */
+  const afterEdit = (what, id) => {
+    render(); save();
+    const x = markCrossings();
+    const mine = x.filter(p => p.a === id || p.b === id);
+    if (mine.length) say(`${what} ⚠ It now crosses ${mine.map(p => p.a === id ? p.b : p.a).join(', ')} (outlined). Move it again or right-click it to undo.`, 'warn');
+    else if (x.length > planned) say(`${what} Other edited cables still cross (outlined).`, 'warn');
+    else say(what, 'cad-ok');
+  };
+  const drawingPt = s0 => [(s0[0] - P.X(0)) / P.k, (s0[1] - P.Y(0)) / P.k];
+  /* nearest section of a polyline to a point (drawing units); skips zero-length sections */
+  const nearestSeg = (pts, d, from, to) => {
+    let best = -1, bd = Infinity;
+    for (let i = from; i < to; i++) {
+      const a = pts[i], b = pts[i + 1];
+      const len2 = (b[0] - a[0]) ** 2 + (b[1] - a[1]) ** 2;
+      if (len2 < 1e-12) continue;
+      const t = Math.max(0, Math.min(1, ((d[0] - a[0]) * (b[0] - a[0]) + (d[1] - a[1]) * (b[1] - a[1])) / len2));
+      const dist = Math.hypot(d[0] - a[0] - t * (b[0] - a[0]), d[1] - a[1] - t * (b[1] - a[1]));
+      if (dist < bd - 1e-9) { bd = dist; best = i; }
+    }
+    return best;
+  };
 
   /* ---- dragging on the sheet ---- */
   const svgEl = $('sh-svg');
@@ -1831,19 +1869,19 @@ async function renderSheetPage(id) {
     } else if (cEl) {
       const cab = wiring.cables.find(c => c.id === cEl.dataset.id);
       if (!cab) return;
-      if (cab.curve) { say('Curved jumps between side-by-side modules stay as drawn.'); return; }
+      if (ev.button === 2) return;           /* right-click: handled by contextmenu */
+      if (cab.curve) {
+        /* a curved jump: dragging up or down changes how deep it curves, and which way */
+        const a = cab.pts[0], b = cab.pts[cab.pts.length - 1];
+        drag = { kind: 'curve', start: s0, el: cEl, cab: cab, a: a, b: b };
+        try { svgEl.setPointerCapture(ev.pointerId); } catch (err) {}
+        ev.preventDefault();
+        return;
+      }
       const pts = (st.edits.cables[cab.id] || cab.pts).map(p => p.slice());
       /* nearest middle section (not the first or last stub into a terminal) */
-      const d = [(s0[0] - P.X(0)) / P.k, (s0[1] - P.Y(0)) / P.k];
-      let best = -1, bd = Infinity;
-      for (let i = 1; i < pts.length - 2; i++) {
-        const a = pts[i], b = pts[i + 1];
-        const len2 = (b[0] - a[0]) ** 2 + (b[1] - a[1]) ** 2 || 1;
-        const t = Math.max(0, Math.min(1, ((d[0] - a[0]) * (b[0] - a[0]) + (d[1] - a[1]) * (b[1] - a[1])) / len2));
-        const dist = Math.hypot(d[0] - a[0] - t * (b[0] - a[0]), d[1] - a[1] - t * (b[1] - a[1]));
-        if (dist < bd) { bd = dist; best = i; }
-      }
-      if (best < 0) { say('This cable runs straight between two terminals; there is no middle section to move.'); return; }
+      const best = nearestSeg(pts, drawingPt(s0), 1, pts.length - 2);
+      if (best < 0) { say('This cable runs straight between two terminals; double-click it to add a bend, then drag the bend.'); return; }
       const a = pts[best], b = pts[best + 1];
       drag = { kind: 'cable', start: s0, el: cEl, cab: cab, pts: pts, seg: best, horiz: Math.abs(b[1] - a[1]) < Math.abs(b[0] - a[0]), orig: pts.map(p => p.slice()) };
     } else return;
@@ -1854,7 +1892,16 @@ async function renderSheetPage(id) {
     if (!drag) return;
     const s1 = toSheet(ev);
     const dx = s1[0] - drag.start[0], dy = s1[1] - drag.start[1];
-    if (drag.kind === 'cable') {
+    if (drag.kind === 'curve') {
+      /* the curve passes through the pointer: depth and side follow it */
+      const d = drawingPt(s1), a = drag.a, b = drag.b;
+      const off = d[1] - (a[1] + b[1]) / 2;
+      const pts = cadwCurve({ x: a[0], y: a[1] }, { x: b[0], y: b[1] }, Math.max(Math.abs(off), 1e-6), off < 0 ? -1 : 1).map(q => [q[0], q[1]]);
+      drag.pts = pts;
+      const attr = pts.map(q => P.X(q[0]).toFixed(3) + ',' + P.Y(q[1]).toFixed(3)).join(' ');
+      svgEl.querySelectorAll(`[data-id="${CSS.escape(drag.cab.id)}"]`).forEach(el => el.setAttribute('points', attr));
+      drag.moved = true;
+    } else if (drag.kind === 'cable') {
       const i = drag.seg, o = drag.orig, p = drag.pts;
       if (drag.horiz) { p[i][1] = o[i][1] + dy / P.k; p[i + 1][1] = o[i + 1][1] + dy / P.k; }
       else { p[i][0] = o[i][0] + dx / P.k; p[i + 1][0] = o[i + 1][0] + dx / P.k; }
@@ -1872,14 +1919,55 @@ async function renderSheetPage(id) {
     if (!drag) return;
     const d = drag; drag = null;
     if (!d.moved) return;
-    if (d.kind === 'cable') st.edits.cables[d.cab.id] = d.pts.map(p => [Math.round(p[0] * 100) / 100, Math.round(p[1] * 100) / 100]);
-    else if (d.kind === 'label') st.edits.labels[d.id] = [d.orig[0] + d.dx / P.k, d.orig[1] + d.dy / P.k];
+    const keep = v => Math.round(v * 1e4) / 1e4;
+    if (d.kind === 'cable' || d.kind === 'curve') {
+      /* tidy: drop zero-length pieces and points in the middle of a straight run */
+      const pts = d.kind === 'curve' ? d.pts : cadwClean(d.pts);
+      st.edits.cables[d.cab.id] = pts.map(p => [keep(p[0]), keep(p[1])]);
+      afterEdit(`${d.cab.id} moved.`, d.cab.id);
+      return;
+    }
+    if (d.kind === 'label') st.edits.labels[d.id] = [d.orig[0] + d.dx / P.k, d.orig[1] + d.dy / P.k];
     else if (d.kind === 'plug') st.edits.plugLabel = [d.orig[0] + d.dx, d.orig[1] + d.dy];
     else if (d.kind === 'ground') st.edits.ground = [d.orig[0] + d.dx, d.orig[1] + d.dy];
     render(); save();
   };
   svgEl.addEventListener('pointerup', end);
   svgEl.addEventListener('pointercancel', end);
+  /* double-click a straight cable: add a bend there (a short step you then drag) */
+  svgEl.addEventListener('dblclick', ev => {
+    const cEl = ev.target.closest('.sh-cable, .sh-hit');
+    const cab = cEl && wiring.cables.find(c => c.id === cEl.dataset.id);
+    if (!cab) return;
+    if (cab.curve) { say('Drag a curved jump up or down to change its curve.'); return; }
+    const pts = (st.edits.cables[cab.id] || cab.pts).map(p => p.slice());
+    const d = drawingPt(toSheet(ev));
+    const i = nearestSeg(pts, d, 0, pts.length - 1);
+    if (i < 0) return;
+    const a = pts[i], b = pts[i + 1];
+    const L = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    const ux = (b[0] - a[0]) / L, uy = (b[1] - a[1]) / L;
+    const t = Math.max(0, Math.min(L, (d[0] - a[0]) * ux + (d[1] - a[1]) * uy));
+    const w = Math.min(L / 4, 4 / P.k);                    /* 4 mm on the sheet, either side */
+    const t1 = Math.max(w, Math.min(L - w, t)) - w, t2 = t1 + 2 * w;
+    const c1 = [a[0] + ux * t1, a[1] + uy * t1], c2 = [a[0] + ux * t2, a[1] + uy * t2];
+    /* doubled points: the piece between them can now be dragged sideways into a step */
+    pts.splice(i + 1, 0, c1, c1.slice(), c2, c2.slice());
+    st.edits.cables[cab.id] = pts;
+    render(); save();
+    say(`Bend added to ${cab.id}: drag it sideways where you double-clicked.`, 'cad-ok');
+    ev.preventDefault();
+  });
+  /* right-click a cable: back to its planned route */
+  svgEl.addEventListener('contextmenu', ev => {
+    const cEl = ev.target.closest('.sh-cable, .sh-hit');
+    const cab = cEl && wiring.cables.find(c => c.id === cEl.dataset.id);
+    if (!cab) return;
+    ev.preventDefault();
+    if (!st.edits.cables[cab.id]) { say(`${cab.id} is already on its planned route.`); return; }
+    delete st.edits.cables[cab.id];
+    afterEdit(`${cab.id} is back on its planned route.`, cab.id);
+  });
 
   /* ---- PDF ---- */
   $('sh-pdf').onclick = async () => {

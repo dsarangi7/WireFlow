@@ -95,6 +95,8 @@ function checkPdf(bytes) {
   const pdf = await L.sheetPdf({ bounds: bounds, jbs: jbs, wiring: wiring, settings: st, flat: { polylines: [], circles: [], texts: [] } });
   const c2 = checkPdf(pdf);
   ok('sheet PDF: valid structure', !c2.issues.length, c2.issues.join(','));
+  const raw2 = Buffer.from(pdf).toString('latin1');
+  ok('sheet PDF: all text in Arial / Arial Bold (no Helvetica)', /\/BaseFont \/Arial /.test(raw2) && /\/BaseFont \/Arial,Bold /.test(raw2) && !/Helvetica/.test(raw2) && (raw2.match(/\/Type \/FontDescriptor/g) || []).length === 2);
   ok('sheet PDF: wiring colours present (red, green, blue, yellow)', ['0.882 0.114 0.114 RG', '0.086 0.639 0.29 RG', '0.055 0.647 0.914 RG', '0.949 0.714 0 RG'].every(x => c2.content.includes(x)));
   ok('sheet PDF: title block text present', /\(DWG2396\) Tj/.test(c2.content) && /\(AYK POWER LTD\.\) Tj/.test(c2.content));
   /* the logo goes into the PDF as the JPEG bytes, in proportion */

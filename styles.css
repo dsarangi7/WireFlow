@@ -604,3 +604,6 @@ select.cad-need { border-color: #f59e0b; box-shadow: 0 0 0 2px rgba(245, 158, 11
 #cad-status { color: #ffffff; font-size: 15.5px; font-weight: 600; line-height: 1.45; }
 #cad-status.warn { color: #ffffff; background: rgba(245, 158, 11, .18); border-left: 4px solid #f59e0b; padding: 6px 10px; border-radius: 6px; }
 #cad-status.cad-ok { color: #ffffff; background: rgba(34, 197, 94, .14); border-left: 4px solid #22c55e; padding: 6px 10px; border-radius: 6px; }
+
+/* sheet editor: power cables that cross another power cable */
+.sh-paper .sh-cable.sh-x { filter: drop-shadow(0 0 0.5px #f59e0b) drop-shadow(0 0 0.5px #f59e0b); }

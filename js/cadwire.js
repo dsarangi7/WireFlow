@@ -258,7 +258,11 @@ function cadwJump(m1, m2, t1, t2, cols, kind) {
   const sameCol = m1._col === m2._col;
   const straight = [[t1.x, t1.y], [t2.x, t2.y]];
   if (sameCol && (!cols || !cols.bodies || cadwClear(straight, cols, [m1, m2]))) return [straight];
-  return cadwKeepInside(cadwJumpRoutes(m1, m2, t1, t2, cols, kind), cols && cols.bounds);
+  const routes = cadwJumpRoutes(m1, m2, t1, t2, cols, kind);
+  const keep = cadwKeepInside(routes, cols && cols.bounds);
+  /* shallower curves: not the drawing style, kept for when a long cable must pass */
+  keep.alts = routes.alts || [];
+  return keep;
 }
 function cadwJumpRoutes(m1, m2, t1, t2, cols, kind) {
   const sideBySide = m1._col !== m2._col && Math.abs(m1._col - m2._col) === 1 && Math.abs(m1.y0 - m2.y0) < (m1.y1 - m1.y0) * 0.5;
@@ -269,7 +273,9 @@ function cadwJumpRoutes(m1, m2, t1, t2, cols, kind) {
     for (const sag of sags) out.push(cadwCurve(t1, t2, sag, -1), cadwCurve(t1, t2, sag, 1));
     /* the deepest curve that stays inside the rack, in either direction */
     const inside = out.filter(r => cadwInside(r, cols && cols.bounds));
-    return inside.length ? inside.filter(r => r === inside[0] || r === inside.find(q => q !== inside[0] && Math.sign(q[10][1] - t1.y) !== Math.sign(inside[0][10][1] - t1.y))) : out;
+    const pick = inside.length ? inside.filter(r => r === inside[0] || r === inside.find(q => q !== inside[0] && Math.sign(q[10][1] - t1.y) !== Math.sign(inside[0][10][1] - t1.y))) : out;
+    pick.alts = inside.filter(r => pick.indexOf(r) < 0);
+    return pick;
   }
   /* other column changes: round the modules (only where no other part is in the way),
      or along the trays and rails like a long cable */
@@ -720,6 +726,33 @@ function cadwPlanString(st, cols, jb, pair, placed, gapUse, jbName, tray) {
         }
         if (!changed) break;
       }
+      /* shortcut: a long power cable that took a long way round (e.g. over the top of the
+         rack) takes a much shorter route when the only thing in its way is one of this
+         string's jumps that can curve less deeply or bow the other way */
+      for (const j of J) if (j.kind === 'power' && j.opts) j._all = j.opts.concat(j.opts.alts || []);
+      for (const cab of cables) {
+        const cur = cadwLen(cab.pts);
+        if (!cab._cands.length || cur <= cab._cands[0].len * 1.25) continue;
+        const busy = new Map(Array.from(base, ([x, set]) => [x, new Set(set)]));
+        for (const o of cables) if (o !== cab) for (const [key, slot] of o._lanes) { if (!busy.has(key)) busy.set(key, new Set()); busy.get(key).add(slot); }
+        for (const { c, len } of cab._cands) {
+          if (len >= cur * 0.85) break;
+          if (c.lanes.some(([key, slot]) => busy.has(key) && busy.get(key).has(slot))) continue;
+          const others = pre.concat(mine().filter(o => o !== cab));
+          const hit = others.filter(z => cadwCrossings(c, z));
+          if (hit.some(z => !z._all)) continue;
+          const saved = hit.map(z => [z, z.pts, z.curve]);
+          let ok = true;
+          for (const z of hit) {
+            const rest = pre.concat(mine().filter(o => o !== cab && o !== z));
+            const found = z._all.find(pts => { const t = { pts: pts }; return !cadwCrossings(t, c) && !rest.some(o => cadwCrossings(t, o)); });
+            if (!found) { ok = false; break; }
+            z.pts = found; z.box = null; z.curve = !!found.curve;
+          }
+          if (ok) { cab.pts = c.pts; cab._lanes = c.lanes; cab.box = null; break; }
+          for (const [z, pts, cv] of saved) { z.pts = pts; z.box = null; z.curve = cv; }
+        }
+      }
       /* every power crossing of this string: with earlier strings and inside the string */
       crossings = 0;
       const pw = mine();
@@ -727,7 +760,7 @@ function cadwPlanString(st, cols, jb, pair, placed, gapUse, jbName, tray) {
         crossings += pre.reduce((n, z) => n + cadwCrossings(pw[i], z), 0);
         for (let j = i + 1; j < pw.length; j++) crossings += cadwCrossings(pw[i], pw[j]);
       }
-      for (const j of J) { delete j._cands; delete j._lanes; }
+      for (const j of J) { delete j._cands; delete j._lanes; delete j._all; }
       lanesUsed.clear();
       for (const [x, set] of base) lanesUsed.set(x, new Set(set));
       for (const o of cables) for (const [key, slot] of o._lanes) { if (!lanesUsed.has(key)) lanesUsed.set(key, new Set()); lanesUsed.get(key).add(slot); }

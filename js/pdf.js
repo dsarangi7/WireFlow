@@ -3,7 +3,7 @@
  * ------------------------------------------------------------
  * One page, coordinates in MILLIMETRES with the origin at the
  * bottom-left (Y up, like the DXF). Lines, polylines, rectangles,
- * circles, Helvetica / Helvetica-Bold text (WinAnsi), one JPEG image.
+ * circles, Arial / Arial Bold text (WinAnsi), one JPEG image.
  * Content is Flate-compressed when CompressionStream is available.
  * ============================================================ */
 
@@ -133,14 +133,29 @@ function pdfDoc(page) {
       objs[2] = enc('<< /Type /Pages /Kids [3 0 R] /Count 1 >>');
       objs[3] = enc(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${W} ${H}] /Contents 4 0 R /Resources << /Font << /F1 5 0 R /F2 6 0 R >>${image ? ' /XObject << /Im1 7 0 R >>' : ''} >> >>`);
       objs[4] = [enc(`<< ${filter}/Length ${content.length} >>\nstream\n`), content, enc('\nendstream')];
-      objs[5] = enc('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>');
-      objs[6] = enc('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>');
       let n = 7;
       if (image) {
         objs[7] = [enc(`<< /Type /XObject /Subtype /Image /Width ${image.w} /Height ${image.h} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${image.bytes.length} >>\nstream\n`), image.bytes, enc('\nendstream')];
         n = 8;
       }
-      const info = n;
+      /* AYK sheets use Arial: TrueType Arial / Arial Bold (not embedded; every PC has them),
+         with widths for WinAnsi 32..255 so viewers lay the text out exactly (Arial has
+         Helvetica's widths) */
+      const widths = bold => {
+        const w = [];
+        for (let c = 32; c <= 255; c++) {
+          if (c <= 126) { w.push((bold ? PDF_HELV_B : PDF_HELV)[c - 32]); continue; }
+          const ex = Object.values(PDF_EXTRA).find(e => e[0] === c);
+          w.push(ex ? ex[1] : 556);
+        }
+        return w.join(' ');
+      };
+      const fd1 = n, fd2 = n + 1;
+      objs[5] = enc(`<< /Type /Font /Subtype /TrueType /BaseFont /Arial /FirstChar 32 /LastChar 255 /Widths [${widths(false)}] /FontDescriptor ${fd1} 0 R /Encoding /WinAnsiEncoding >>`);
+      objs[6] = enc(`<< /Type /Font /Subtype /TrueType /BaseFont /Arial,Bold /FirstChar 32 /LastChar 255 /Widths [${widths(true)}] /FontDescriptor ${fd2} 0 R /Encoding /WinAnsiEncoding >>`);
+      objs[fd1] = enc('<< /Type /FontDescriptor /FontName /Arial /FontFamily (Arial) /Flags 32 /FontBBox [-665 -325 2000 1006] /ItalicAngle 0 /Ascent 905 /Descent -212 /CapHeight 716 /StemV 80 >>');
+      objs[fd2] = enc('<< /Type /FontDescriptor /FontName /Arial,Bold /FontFamily (Arial) /FontWeight 700 /Flags 32 /FontBBox [-628 -376 2000 1010] /ItalicAngle 0 /Ascent 905 /Descent -212 /CapHeight 716 /StemV 120 >>');
+      const info = n + 2;
       objs[info] = enc(`<< /Title (${pdfEsc(page.title || 'Wiring Diagram')}) /Producer (WireFlow) /Creator (WireFlow) >>`);
       const parts = [new Uint8Array([...enc('%PDF-1.4\n%'), 0xE2, 0xE3, 0xCF, 0xD3, 10])];
       let pos = parts[0].length;

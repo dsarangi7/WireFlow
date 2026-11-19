@@ -274,6 +274,31 @@ ok('refused: junction box terminals not taught', !nj.ok && /has no P1 terminals/
   ok('suggestion: every jump stays in the column or goes to the module beside', !!pl.suggested && Object.values(pl.suggested).every(o => o.every((id, n) => !n || adj(o[n - 1], id))));
 }
 
+/* ---------- shortest way round: S- under the rack, not over the top (19 Nov 2026) ----------
+ * 3 columns, SSC1 (18 modules) in the right column above M17 / M18, M1 bottom-left,
+ * terminals low on the modules so the M16 -> M17 curve dips under the rack. */
+{
+  let n = 0;
+  const rc = [];
+  const mod = (c, r) => { const x0 = 1000 + 500 * c, y0 = 200 + 210 * r; rc.push({ id: 'module-' + (++n), kind: 'module', x0: x0, y0: y0, x1: x0 + 400.45, y1: y0 + 200.22, c: c, r: r,
+    terminals: [['comm-S', 39.53], ['comm-N', 99.53], ['power-', 314.53], ['power+', 364.53]].map(([role, dx]) => ({ role: role, x: x0 + dx, y: y0 + 40 })) }); };
+  for (let r = 0; r < 8; r++) { mod(0, r); mod(1, r); }
+  mod(2, 0); mod(2, 1);
+  const sx = 2020, sy = 625;
+  rc.push({ id: 'ssc-1', kind: 'ssc', x0: sx, y0: sy, x1: sx + 360, y1: sy + 400, terminals: [['S', 54], ['N', 99], ['S+', 138], ['B+', 185], ['B-', 231], ['S-', 278]].map(([role, dx]) => ({ role: role, x: sx + dx, y: sy + 55 })) });
+  rc.push({ id: 'msm-1', kind: 'msm', x0: 2020, y0: 1060, x1: 2400, y1: 1420, terminals: [] });
+  rc.push({ id: 'jb-1', kind: 'jb', x0: 2010, y0: 1900, x1: 2420, y1: 2000, terminals: [['P1+', 102], ['P1-', 172], ['P2+', 242], ['P2-', 312]].map(([role, dx]) => ({ role: role, x: 2010 + dx, y: 1945 })) });
+  const m = (c, r) => rc.find(x => x.kind === 'module' && x.c === c && x.r === r).id;
+  const order = [];
+  for (let r = 0; r < 8; r++) order.push(m(0, r));
+  for (let r = 7; r >= 0; r--) order.push(m(1, r));
+  order.push(m(2, 0), m(2, 1));
+  const pl = W.cadWirePlan(rc, [{ comp: rc.find(c => c.kind === 'ssc'), key: 'ssc-1', name: 'SSC1', count: 18 }], { pair: 'P1', tray: 'CR', orders: { 'ssc-1': order } });
+  const sm = pl.cables.find(c => /S− →/.test(c.id));
+  ok('short way: planned with no power crossings', pl.ok && pl.crossings.length === 0, pl.crossings.length);
+  ok('short way: S− to M1 runs under the rack, not over the top', sm && Math.max(...sm.pts.map(p => p[1])) < 1000 && W.cadwLen(sm.pts) < 2500, sm && Math.round(W.cadwLen(sm.pts)));
+}
+
 /* ---------- cable tray for B+ / B- (CL / CR) ---------- */
 {
   const rc = rack111();
