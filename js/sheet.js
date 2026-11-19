@@ -12,6 +12,20 @@ const A3_W = 420, A3_H = 297;
 const SHEET_SCALES = [5, 10, 15, 20, 25, 30, 40, 50, 75, 100];
 const SHEET_COLORS = { power: '#e11d1d', comm: '#16a34a', plugA: '#0ea5e9', plugB: '#f2b600', label: '#7c3aed', rack: '#1f2937' };
 const SHEET_AREA = { x0: 14, y0: 80, x1: 406, y1: 283 };   // drawing area above the bottom strip
+const SHEET_PT = 25.4 / 72;                                   // one typographic point in mm
+
+/** Splits a paragraph into lines no wider than `width` mm at font size `size` mm. */
+function sheetWrap(text, size, width, bold) {
+  const out = [];
+  let line = '';
+  for (const word of String(text).split(/\s+/)) {
+    const next = line ? line + ' ' + word : word;
+    if (line && pdfTextWidth(next, size, bold) > width) { out.push(line); line = word; }
+    else line = next;
+  }
+  if (line) out.push(line);
+  return out;
+}
 
 function sheetDefaults(name) {
   const d = new Date();
@@ -27,7 +41,7 @@ function sheetSettings(saved, name) {
   const s = saved || {};
   const f = Object.assign(sheetDefaults(name), s.fields || {});
   if (!Array.isArray(f.revs) || !f.revs.length) f.revs = sheetDefaults(name).revs;
-  return { fields: f, plugs: s.plugs !== false, edits: Object.assign({ cables: {}, labels: {}, ground: null, plugLabel: null }, s.edits || {}) };
+  return { fields: f, plugs: s.plugs !== false, edits: Object.assign({ cables: {}, labels: {}, kinds: {}, ground: null, plugLabel: null }, s.edits || {}) };
 }
 
 /* ---------------- geometry: drawing mm -> sheet mm ---------------- */
@@ -147,17 +161,14 @@ function sheetFrame(doc, st, nStrings, logo) {
   doc.line(10, y1, 410, y1, med);
   doc.line(112, y0, 112, y1, med).line(198, y0, 198, y1, med).line(250, y0, 250, y1, med);
   /* notes (fixed) */
-  const notes = [
-    'Note:',
-    '1. Customer can chose a single point to connect a wiring by using a',
-    "M6_L16_Button Screw, and let this wiring connect to the customer's",
-    'grounding point.',
-    '2. This cable is made by customer. Power Cable: 1*95mm², 0.6kV/1kV,',
-    'Flame retardant properties according to IEC 60332. Please refer to',
-    'TN0088 Junction Box Installation and Wiring Instructions for',
-    'connection requirements.',
-  ];
-  notes.forEach((t, i) => doc.text(t, 12, 50 - i * 4.6, { size: 2.25, bold: i === 0 }));
+  /* 9 pt bold, wrapped to the 100 mm notes box (1 pt = 0.3528 mm) */
+  const NOTE = 9 * SHEET_PT, step = NOTE * 1.3;
+  const notes = ['Note:'];
+  for (const para of [
+    "1. Customer can chose a single point to connect a wiring by using a M6_L16_Button Screw, and let this wiring connect to the customer's grounding point.",
+    '2. This cable is made by customer. Power Cable: 1*95mm², 0.6kV/1kV, Flame retardant properties according to IEC 60332. Please refer to TN0088 Junction Box Installation and Wiring Instructions for connection requirements.',
+  ]) notes.push(...sheetWrap(para, NOTE, 98, true));
+  notes.forEach((t, i) => doc.text(t, 12, 51 - NOTE * 0.75 - i * step, { size: NOTE, bold: true }));
   /* confidentiality (fixed) */
   ['UNLESS OTHERWISE NOTED, THIS DOCUMENT', 'CONTAINS AYK POWER LTD. CONFIDENTIAL', 'INFORMATION. REPRODUCTION, USE, DISCLOSURE OR',
     'TRANSMITTAL OF ALL OR ANY PORTION OF THIS', 'DOCUMENT IS PROHIBITED, EXCEPT TO THE EXTENT', 'APPROVED BY AYK POWER LTD.. AYK POWER LTD.',
@@ -192,9 +203,9 @@ function sheetFrame(doc, st, nStrings, logo) {
   doc.line(254.5, 18.75, 264.5, 18.75, { w: 0.12 }).line(259.5, 13.75, 259.5, 23.75, { w: 0.12 });
   doc.poly([[266, 16.6], [266, 20.9], [274, 22.8], [274, 14.7]], { w: 0.18, close: true });
   doc.text('A3', 283.5, 17.6, { size: 3, align: 'center' });
-  doc.text('Bank Size:', 292.5, 24.2, { size: 2 });
+  doc.text('Rack Size:', 292.5, 24.2, { size: 6 * SHEET_PT });
   doc.text(F.bankSize || '', 307, 20.2, { size: 2.3, align: 'center', cls: 'tb-val' });
-  doc.text('Bank Weight:', 324.5, 24.2, { size: 2 });
+  doc.text('Rack Weight:', 324.5, 24.2, { size: 6 * SHEET_PT });
   doc.text(F.bankWeight || '', 339, 20.2, { size: 2.3, align: 'center' });
   doc.text('SCALE: ' + (F.scaleText || ''), 292.5, 13, { size: 2.3 });
   doc.text('SHEET ' + (F.sheet || ''), 324.5, 13, { size: 2.3 });

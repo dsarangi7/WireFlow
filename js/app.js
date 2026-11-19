@@ -1718,7 +1718,7 @@ async function renderSheetPage(id) {
             <h3>On the sheet</h3>
             <label class="cad-wire-show"><input type="checkbox" id="sh-plugs" ${st.plugs ? 'checked' : ''}> Customer power plugs A / B (Note 2) on every junction box</label>
             <label class="sh-field" title="The title block always says SCALE: NTS; this only sets how large the rack is drawn on the A3 sheet"><span>Rack size on sheet</span><select id="sh-scale"><option value="auto">Fit the sheet</option>${SHEET_SCALES.map(v => `<option value="${v}" ${String(F.scale) === String(v) ? 'selected' : ''}>1:${v}</option>`).join('')}</select></label>
-            <p class="muted small"><b>Edit the wiring:</b> drag a cable's middle section to move it (also into the other tray) · drag a curved jump up or down to change its curve · <b>double-click</b> a cable to add a bend there, then drag it · <b>right-click</b> a cable to put it back on its planned route. Labels, the Note 2 label and the grounding-point label can be dragged too.</p>
+            <p class="muted small"><b>Edit the wiring:</b> <b>double-click</b> a cable to draw it <b>straight</b>, <b>bent</b> or <b>curved</b> · drag a bent cable's middle section to move it (also into the other tray) · drag a curved cable sideways to change its curve · <b>Shift + double-click</b> a bent cable to add a bend there · <b>right-click</b> a cable to put it back as planned. Labels, the Note 2 label and the grounding-point label can be dragged too.</p>
             <p class="small" id="sh-cross" role="status"></p>
             <button class="btn btn-ghost btn-sm" id="sh-reset">Undo all moves</button>
           </section>
@@ -1726,7 +1726,7 @@ async function renderSheetPage(id) {
             <h3>Title block</h3>
             ${fieldRow('docNumber', 'Document Number')}${fieldRow('docType', 'Document Type')}
             ${fieldRow('designNumber', 'Design Number')}${fieldRow('designName', 'Design Name')}
-            ${fieldRow('bankSize', 'Bank Size')}${fieldRow('bankWeight', 'Bank Weight')}
+            ${fieldRow('bankSize', 'Rack Size')}${fieldRow('bankWeight', 'Rack Weight')}
             ${fieldRow('sheet', 'Sheet')}
             <h4>Revisions</h4>
             <div class="sh-revs"><table><thead><tr><th>REV.</th><th>DATE</th><th>DESN BY</th><th>DRAN BY</th><th>CHKD BY</th><th>STATES</th><th>NOTES</th><th></th></tr></thead><tbody id="sh-revs">${revRows()}</tbody></table></div>
@@ -1823,7 +1823,7 @@ async function renderSheetPage(id) {
     F.revs.push({ rev: String((+last.rev || 0) + 1), date: sheetDefaults().revs[0].date, desn: last.desn || '', dran: last.dran || '', chkd: last.chkd || '', states: '', notes: '' });
     bindRevs(); render(); save();
   };
-  $('sh-reset').onclick = () => { st.edits = { cables: {}, labels: {}, ground: null, plugLabel: null }; render(); save(); say('All moves undone.'); };
+  $('sh-reset').onclick = () => { st.edits = { cables: {}, labels: {}, kinds: {}, ground: null, plugLabel: null }; render(); save(); say('All moves undone.'); };
   /* after an edit: tell the engineer straight away when it adds a power crossing */
   const afterEdit = (what, id) => {
     render(); save();
@@ -1846,6 +1846,35 @@ async function renderSheetPage(id) {
       if (dist < bd - 1e-9) { bd = dist; best = i; }
     }
     return best;
+  };
+  /* how a cable is drawn: the engineer's choice, else as planned */
+  if (!st.edits.kinds) st.edits.kinds = {};
+  const typeOf = cab => st.edits.kinds[cab.id] || (cab.curve ? 'curved' : cab.pts.length <= 2 ? 'straight' : 'bent');
+  /* a smooth curve between two ends, bowed sideways by `off` (drawing units, signed) */
+  const bulge = (a, b, off) => {
+    const L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+    const ux = (b[0] - a[0]) / L, uy = (b[1] - a[1]) / L, nx = -uy, ny = ux;
+    const k = off * 1.33;
+    const c1 = [a[0] + ux * L * 0.2 + nx * k, a[1] + uy * L * 0.2 + ny * k], c2 = [b[0] - ux * L * 0.2 + nx * k, b[1] - uy * L * 0.2 + ny * k];
+    const out = [];
+    for (let i = 0; i <= 20; i++) {
+      const t = i / 20, u = 1 - t;
+      out.push([u * u * u * a[0] + 3 * u * u * t * c1[0] + 3 * u * t * t * c2[0] + t * t * t * b[0],
+        u * u * u * a[1] + 3 * u * u * t * c1[1] + 3 * u * t * t * c2[1] + t * t * t * b[1]]);
+    }
+    return out;
+  };
+  /* the cable redrawn as straight, bent or curved, between the same two terminals */
+  const shapeOf = (cab, k) => {
+    const a = cab.pts[0].slice(), b = cab.pts[cab.pts.length - 1].slice();
+    const dx = b[0] - a[0], dy = b[1] - a[1], span = Math.hypot(dx, dy) || 1;
+    if (k === 'straight') return [a, b];
+    if (k === 'curved') return cab.curve ? cab.pts.map(p => p.slice()) : bulge(a, b, (Math.abs(dx) >= Math.abs(dy) ? -1 : 1) * Math.sign(dx || 1) * span * 0.18);
+    /* bent: the planned right-angle route, else one step out and back beside the line */
+    if (!cab.curve && cab.pts.length > 2) return cab.pts.map(p => p.slice());
+    if (Math.abs(dx) >= Math.abs(dy)) { const y = Math.min(a[1], b[1]) - span * 0.12; return [a, [a[0], y], [b[0], y], b]; }
+    const x = Math.max(a[0], b[0]) + span * 0.12;
+    return [a, [x, a[1]], [x, b[1]], b];
   };
 
   /* ---- dragging on the sheet ---- */
@@ -1870,18 +1899,20 @@ async function renderSheetPage(id) {
       const cab = wiring.cables.find(c => c.id === cEl.dataset.id);
       if (!cab) return;
       if (ev.button === 2) return;           /* right-click: handled by contextmenu */
-      if (cab.curve) {
-        /* a curved jump: dragging up or down changes how deep it curves, and which way */
+      const type = typeOf(cab);
+      if (type === 'curved') {
+        /* a curved cable: dragging it sideways changes how deep it curves, and which way */
         const a = cab.pts[0], b = cab.pts[cab.pts.length - 1];
         drag = { kind: 'curve', start: s0, el: cEl, cab: cab, a: a, b: b };
         try { svgEl.setPointerCapture(ev.pointerId); } catch (err) {}
         ev.preventDefault();
         return;
       }
+      if (type === 'straight') { say('A straight cable has nothing to drag. Double-click it to make it bent or curved.'); return; }
       const pts = (st.edits.cables[cab.id] || cab.pts).map(p => p.slice());
       /* nearest middle section (not the first or last stub into a terminal) */
       const best = nearestSeg(pts, drawingPt(s0), 1, pts.length - 2);
-      if (best < 0) { say('This cable runs straight between two terminals; double-click it to add a bend, then drag the bend.'); return; }
+      if (best < 0) { say('This cable has no middle section to move. Shift + double-click it to add a bend, then drag the bend.'); return; }
       const a = pts[best], b = pts[best + 1];
       drag = { kind: 'cable', start: s0, el: cEl, cab: cab, pts: pts, seg: best, horiz: Math.abs(b[1] - a[1]) < Math.abs(b[0] - a[0]), orig: pts.map(p => p.slice()) };
     } else return;
@@ -1895,8 +1926,10 @@ async function renderSheetPage(id) {
     if (drag.kind === 'curve') {
       /* the curve passes through the pointer: depth and side follow it */
       const d = drawingPt(s1), a = drag.a, b = drag.b;
-      const off = d[1] - (a[1] + b[1]) / 2;
-      const pts = cadwCurve({ x: a[0], y: a[1] }, { x: b[0], y: b[1] }, Math.max(Math.abs(off), 1e-6), off < 0 ? -1 : 1).map(q => [q[0], q[1]]);
+      const L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+      /* signed distance of the pointer from the line between the two ends */
+      const off = ((d[0] - a[0]) * -(b[1] - a[1]) + (d[1] - a[1]) * (b[0] - a[0])) / L;
+      const pts = bulge(a, b, off);
       drag.pts = pts;
       const attr = pts.map(q => P.X(q[0]).toFixed(3) + ',' + P.Y(q[1]).toFixed(3)).join(' ');
       svgEl.querySelectorAll(`[data-id="${CSS.escape(drag.cab.id)}"]`).forEach(el => el.setAttribute('points', attr));
@@ -1934,12 +1967,18 @@ async function renderSheetPage(id) {
   };
   svgEl.addEventListener('pointerup', end);
   svgEl.addEventListener('pointercancel', end);
-  /* double-click a straight cable: add a bend there (a short step you then drag) */
+  /* double-click a cable: choose how it is drawn — straight, bent (right-angle bends) or
+     curved. Shift + double-click a bent cable adds a bend where you click. */
+  const closeShape = () => { const p = document.getElementById('sh-shape'); if (p) p.remove(); };
+  document.addEventListener('pointerdown', ev => { if (!ev.target.closest('#sh-shape')) closeShape(); }, true);
+  document.addEventListener('keydown', ev => { if (ev.key === 'Escape') closeShape(); });
   svgEl.addEventListener('dblclick', ev => {
     const cEl = ev.target.closest('.sh-cable, .sh-hit');
     const cab = cEl && wiring.cables.find(c => c.id === cEl.dataset.id);
     if (!cab) return;
-    if (cab.curve) { say('Drag a curved jump up or down to change its curve.'); return; }
+    ev.preventDefault();
+    if (!ev.shiftKey) { openShape(cab, ev.clientX, ev.clientY); return; }
+    if (typeOf(cab) !== 'bent') { say('Bends can be added to a bent cable. Double-click it and choose Bent first.'); return; }
     const pts = (st.edits.cables[cab.id] || cab.pts).map(p => p.slice());
     const d = drawingPt(toSheet(ev));
     const i = nearestSeg(pts, d, 0, pts.length - 1);
@@ -1956,8 +1995,28 @@ async function renderSheetPage(id) {
     st.edits.cables[cab.id] = pts;
     render(); save();
     say(`Bend added to ${cab.id}: drag it sideways where you double-clicked.`, 'cad-ok');
-    ev.preventDefault();
   });
+  function openShape(cab, cx, cy) {
+    closeShape();
+    const now = typeOf(cab);
+    const pop = document.createElement('div');
+    pop.className = 'cad-pop sh-pop'; pop.id = 'sh-shape';
+    pop.innerHTML = `<b>${esc(cab.id)}</b><p class="muted small">Draw this cable as:</p>
+      <div class="sh-shape-row">${[['straight', 'Straight'], ['bent', 'Bent'], ['curved', 'Curved']].map(([k, t]) =>
+        `<button type="button" class="btn btn-sm ${k === now ? 'btn-primary' : 'btn-ghost'}" data-shape="${k}" aria-pressed="${k === now}">${t}</button>`).join('')}</div>`;
+    document.body.appendChild(pop);
+    pop.style.left = Math.max(8, Math.min(cx + 12, window.innerWidth - pop.offsetWidth - 8)) + 'px';
+    pop.style.top = Math.max(8, Math.min(cy + 12, window.innerHeight - pop.offsetHeight - 8)) + 'px';
+    pop.querySelectorAll('[data-shape]').forEach(b => b.onclick = () => {
+      const k = b.dataset.shape;
+      closeShape();
+      if (k === now) return;
+      const planned = cab.curve ? 'curved' : cab.pts.length <= 2 ? 'straight' : 'bent';
+      if (k === planned) { delete st.edits.cables[cab.id]; delete st.edits.kinds[cab.id]; }
+      else { st.edits.cables[cab.id] = shapeOf(cab, k); st.edits.kinds[cab.id] = k; }
+      afterEdit(`${cab.id} is now ${k}.`, cab.id);
+    });
+  }
   /* right-click a cable: back to its planned route */
   svgEl.addEventListener('contextmenu', ev => {
     const cEl = ev.target.closest('.sh-cable, .sh-hit');
@@ -1965,7 +2024,7 @@ async function renderSheetPage(id) {
     if (!cab) return;
     ev.preventDefault();
     if (!st.edits.cables[cab.id]) { say(`${cab.id} is already on its planned route.`); return; }
-    delete st.edits.cables[cab.id];
+    delete st.edits.cables[cab.id]; delete st.edits.kinds[cab.id];
     afterEdit(`${cab.id} is back on its planned route.`, cab.id);
   });
 

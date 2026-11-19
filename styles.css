@@ -607,3 +607,7 @@ select.cad-need { border-color: #f59e0b; box-shadow: 0 0 0 2px rgba(245, 158, 11
 
 /* sheet editor: power cables that cross another power cable */
 .sh-paper .sh-cable.sh-x { filter: drop-shadow(0 0 0.5px #f59e0b) drop-shadow(0 0 0.5px #f59e0b); }
+/* sheet editor: choose straight / bent / curved for a cable */
+.sh-pop { position: fixed; z-index: 50; width: auto; min-width: 230px; }
+.sh-pop .sh-shape-row { display: flex; gap: 6px; }
+.sh-pop b { color: #fff; font-size: 13.5px; }
