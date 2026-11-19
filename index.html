@@ -190,16 +190,29 @@
       </div>
     </section>
 
-    <section class="section section-alt" id="how" aria-labelledby="how-title">
+    <section class="section section-alt tut" id="how" aria-labelledby="how-title">
       <div class="site-wrap">
         <p class="eyebrow">How it works</p>
-        <h2 id="how-title">From DWG to a wired rack in four steps</h2>
-        <ol class="steps">
-          <li><span>1</span><h3>Import the drawing</h3><p>Convert the DWG with the included script (it uses your installed AutoCAD) and drop the DXF into WireFlow.</p></li>
-          <li><span>2</span><h3>Teach each part once</h3><p>Box one battery module and click its terminals; box one SSC with its connector strip, one junction box, ACDP and MSM.</p></li>
-          <li><span>3</span><h3>Confirm the rack</h3><p>Check the proposed SSC, ACDP and MSM names and enter how many modules each SSC controls.</p></li>
-          <li><span>4</span><h3>Number and wire</h3><p>Click each SSC&rsquo;s modules in order (S1-M1 &hellip;); cables are routed along the risers and checked for power crossings, then an A3 wiring sheet you finish on screen and download as PDF.</p></li>
-        </ol>
+        <h2 id="how-title">Scroll through a rack, from drawing to wiring</h2>
+        <p class="section-lead">Every step below is a real step in WireFlow. Scroll slowly and watch the rack; click a step to play it again.</p>
+        <div class="tut-grid" id="tutorial">
+          <ol class="tut-steps">
+            <li class="tut-step"><span>1</span><h3>Drop in the DXF</h3><p>Save the DWG from AutoCAD as <b>AutoCAD 2018 DXF</b> and drop it on <b>Drawings</b>. WireFlow opens it in true millimetres &mdash; every line, arc and block, nothing redrawn.</p></li>
+            <li class="tut-step"><span>2</span><h3>Teach one battery module</h3><p>Choose <b>Module</b>, press <b>Box one example</b> and drag a box around one module. Click its terminals once, left to right: <b>S, N, &minus;, +</b>. Press <b>Save all</b> and every identical module lights up.</p></li>
+            <li class="tut-step"><span>3</span><h3>Teach the SSC, junction box and MSM</h3><p>Box one SSC with its connector strip (<b>S, N, S+, B+, B&minus;, S&minus;</b>), one junction box (click its connectors <b>+, &minus;, +, &minus;</b>) and the MSM &mdash; the one with the screen. Each part is taught once.</p></li>
+            <li class="tut-step"><span>4</span><h3>Confirm names and module counts</h3><p>Check the proposed names &mdash; SSC1, SSC2, JB1, MSM1 &mdash; and enter how many modules each SSC controls. Nothing is used for wiring until you press <b>Confirm</b>.</p></li>
+            <li class="tut-step"><span>5</span><h3>Pick the junction box pair once</h3><p>Choose <b>Pair 1 (left + &minus;)</b> or <b>Pair 2 (right + &minus;)</b>. It applies to every junction box. An SSC with no box overhead can be mapped to a neighbour&rsquo;s free pair.</p></li>
+            <li class="tut-step"><span>6</span><h3>Number the modules, SSC by SSC</h3><p>Press <b>Number modules by clicking</b> and click each SSC&rsquo;s modules in wiring order. S1-M1 is the module on S&minus; and N, then S1-M2, and so on. The tool never numbers on its own.</p></li>
+            <li class="tut-step"><span>7</span><h3>Click the last module &mdash; the wiring is drawn</h3><p>Power S&minus; &rarr; M1 &rarr; &hellip; &rarr; S+ in red, communication N &rarr; M1 &rarr; &hellip; &rarr; S in green, bus B+ / B&minus; up to the junction box. Power cables are checked for crossings. Then open the wiring sheet and download the PDF.</p>
+              <a class="btn-site btn-site-primary" href="#/example">Try it on the example rack</a></li>
+          </ol>
+          <div class="tut-stage-wrap">
+            <figure class="tut-stage">
+              <div class="tut-progress" aria-hidden="true"><i></i></div>
+              <figcaption class="tut-legend"><span><i style="--c:#38bdf8"></i>Module</span><span><i style="--c:#f97316"></i>SSC</span><span><i style="--c:#a78bfa"></i>Junction box</span><span><i style="--c:#f472b6"></i>MSM</span><span><i style="--c:#ef4444"></i>Power</span><span><i style="--c:#22c55e"></i>Communication</span><span><i style="--c:#fb923c"></i>Bus</span><button type="button" class="tut-replay" aria-label="Play this step again">&#8635; Replay step</button></figcaption>
+            </figure>
+          </div>
+        </div>
       </div>
     </section>
 
@@ -314,5 +327,6 @@
 <script src="js/port-templates.js"></script>
 <script src="js/port-detection.js"></script>
 <script src="js/app.js"></script>
+<script src="js/tutorial.js"></script>
 </body>
 </html>
