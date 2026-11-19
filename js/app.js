@@ -810,7 +810,7 @@ async function renderCadPage(id) {
     rememberWiring();
     const inp = wiringInputs();
     let plan;
-    try { plan = cadWirePlan(components, inp.sscs, { pair: inp.pair, orders: orders || undefined }); } catch (e) { plan = { ok: false, errors: [e.message] }; }
+    try { plan = cadWirePlan(components, inp.sscs, { pair: inp.pair, tray: inp.tray, orders: orders || undefined }); } catch (e) { plan = { ok: false, errors: [e.message] }; }
     if (!plan.ok) { wiringHistory.pop(); say(plan.errors.join(' '), 'warn'); return false; }
     wiring = cadWireSave(plan, inp.key);
     cad.wiring = Object.assign({}, cad.wiring, { pair: inp.pair, plan: wiring, orders: plan.custom ? orders : undefined });
@@ -1044,12 +1044,14 @@ async function renderCadPage(id) {
       const jm = (cad.wiring && cad.wiring.jbMap && cad.wiring.jbMap[cadCompKey(c)]) || {};
       const jb = jm.jb ? components.find(j => j.kind === 'jb' && cadCompKey(j) === jm.jb) : null;
       return { comp: c, key: cadCompKey(c), name: cadCompLabel(c, cad.labels), count: saved.modules || 0, confirmed: !!saved.confirmed,
-        jbId: jb ? jb.id : null, pair: jm.pair || null };
+        jbId: jb ? jb.id : null, pair: jm.pair || null, tray: jm.tray === 'CL' || jm.tray === 'CR' ? jm.tray : null };
     });
     const pair = (cad.wiring && cad.wiring.pair) === 'P2' ? 'P2' : 'P1';
-    const key = JSON.stringify([pair, sscs.map(s => [cadCompKey(s.comp), s.name, s.count, s.jbId, s.pair]),
+    /* cable tray for B+ / B- to the junction box: the engineer must choose it (CL / CR) */
+    const tray = cad.wiring && (cad.wiring.tray === 'CL' || cad.wiring.tray === 'CR') ? cad.wiring.tray : null;
+    const key = JSON.stringify([pair, tray, sscs.map(s => [cadCompKey(s.comp), s.name, s.count, s.jbId, s.pair, s.tray]),
       components.map(c => cadCompKey(c) + (c.terminals || []).map(t => t.role).join(''))]);
-    return { sscs: sscs, pair: pair, key: key };
+    return { sscs: sscs, pair: pair, tray: tray, key: key };
   }
 
   /* one row per SSC: which junction box and which pair its B+ / B- go to */
@@ -1071,12 +1073,17 @@ async function renderCadPage(id) {
           <option value="">Rack pair (${inp.pair === 'P2' ? 'right' : 'left'})</option>
           <option value="P1" ${s.pair === 'P1' ? 'selected' : ''}>Left pair (P1)</option>
           <option value="P2" ${s.pair === 'P2' ? 'selected' : ''}>Right pair (P2)</option>
+        </select></td>
+        <td><select data-jb-ssc="${esc(s.key)}" data-what="tray" aria-label="Cable tray for ${esc(s.name)}">
+          <option value="">${inp.tray ? 'Rack tray (' + inp.tray + ')' : '— choose —'}</option>
+          <option value="CL" ${s.tray === 'CL' ? 'selected' : ''}>CL · column left</option>
+          <option value="CR" ${s.tray === 'CR' ? 'selected' : ''}>CR · column right</option>
         </select></td></tr>`;
     }).join('');
-    const missing = inp.sscs.filter(s => !s.jbId && !cadAutoJb(components, s.comp)).length;
+    const missing = inp.sscs.filter(s => (!s.jbId && !cadAutoJb(components, s.comp)) || (!s.tray && !inp.tray)).length;
     return `<details class="cad-jb" ${missing ? 'open' : ''}><summary>Junction boxes per SSC${missing ? ` · <b>${missing} need a choice</b>` : ''}</summary>
-      <p class="muted small">Normally each SSC uses the junction box in its own column. If a column has none, pick another junction box; two SSCs can share one by using its left pair and its right pair. JB numbers are shown on the drawing.</p>
-      <table class="cad-wire-table cad-jb-table"><thead><tr><th>SSC</th><th>Junction box</th><th>Pair</th></tr></thead><tbody>${rows}</tbody></table></details>`;
+      <p class="muted small">Tray: the cable tray the B+ / B− cables run in up to the junction box, CL (column left) or CR (column right) of the SSC's column. Normally each SSC uses the junction box in its own column. If a column has none, pick another junction box; two SSCs can share one by using its left pair and its right pair. JB numbers are shown on the drawing.</p>
+      <table class="cad-wire-table cad-jb-table"><thead><tr><th>SSC</th><th>Junction box</th><th>Pair</th><th>Tray</th></tr></thead><tbody>${rows}</tbody></table></details>`;
   }
 
   function renderWiring() {
@@ -1092,6 +1099,7 @@ async function renderCadPage(id) {
     if (!ready) todo.push('Confirm the SSC numbers and module counts above.');
     if (!jbs.length) todo.push('Teach the junction box (the box at the top of each SSC column).');
     else if (!jbTaught) todo.push('Teach the junction box again and click its four connectors left to right (+, −, +, −).');
+    if (!inp.tray && inp.sscs.some(s => !s.tray)) todo.push('Choose the cable tray for the junction box cables: CL (column left) or CR (column right).');
     const m = v => (v / 1000).toLocaleString('en-GB', { maximumFractionDigits: 1, minimumFractionDigits: 1 }) + ' m';
     const len = pts => pts.reduce((a, p, i) => i ? a + Math.hypot(p[0] - pts[i - 1][0], p[1] - pts[i - 1][1]) : 0, 0);
     let result = '';
@@ -1123,7 +1131,15 @@ async function renderCadPage(id) {
           <option value="P2" ${inp.pair === 'P2' ? 'selected' : ''}>Pair 2 (right + −)</option>
         </select>
       </div>
-      <p class="muted small">Used on every junction box unless an SSC below says otherwise.</p>
+      <div class="cad-wire-row">
+        <label for="cad-wire-tray">Cable tray to the junction box</label>
+        <select id="cad-wire-tray" class="${inp.tray ? '' : 'cad-need'}">
+          ${inp.tray ? '' : '<option value="" selected>— choose —</option>'}
+          <option value="CR" ${inp.tray === 'CR' ? 'selected' : ''}>CR · column right</option>
+          <option value="CL" ${inp.tray === 'CL' ? 'selected' : ''}>CL · column left</option>
+        </select>
+      </div>
+      <p class="muted small">The pair and the tray (B+ / B− from the SSC up to the junction box) are used for every SSC unless an SSC below says otherwise.</p>
       ${jbTable(inp)}
       ${!wiring && cad.wiring && cad.wiring.orders && !todo.length ? `<button class="btn btn-primary btn-sm cad-wire-go" id="cad-wire-redraw" title="A setting changed; draw the wiring again with your numbering">Draw the wiring again (your numbering)</button>` : ''}
       <button class="btn ${wiring || (cad.wiring && cad.wiring.orders) ? 'btn-ghost' : 'btn-primary'} btn-sm cad-wire-go" id="cad-wire-number" ${todo.length ? 'disabled' : ''} title="Click each SSC's modules in order: M1 (wired to S− and N), M2, …">${wiring || (cad.wiring && cad.wiring.orders) ? 'Number again' : 'Number modules by clicking'}</button>
@@ -1137,13 +1153,19 @@ async function renderCadPage(id) {
       const k = sel.dataset.jbSsc;
       const map = Object.assign({}, cad.wiring && cad.wiring.jbMap);
       const row = Object.assign({}, map[k] || {});
-      if (sel.dataset.what === 'jb') row.jb = sel.value || undefined; else row.pair = sel.value || undefined;
-      if (!row.jb && !row.pair) delete map[k]; else map[k] = row;
+      row[sel.dataset.what] = sel.value || undefined;
+      if (!row.jb && !row.pair && !row.tray) delete map[k]; else map[k] = row;
       rememberWiring();
       cad.wiring = Object.assign({}, cad.wiring, { jbMap: map });
       delete cad.wiring.plan; wiring = null;
       await persist(); renderWiring(); viewer.redraw();
     });
+    $('cad-wire-tray').onchange = async e => {
+      rememberWiring();
+      cad.wiring = Object.assign({}, cad.wiring, { tray: e.target.value || undefined });
+      delete cad.wiring.plan; wiring = null;
+      await persist(); renderWiring(); viewer.redraw();
+    };
     $('cad-wire-pair').onchange = async e => {
       rememberWiring();
       cad.wiring = Object.assign({}, cad.wiring, { pair: e.target.value });

@@ -597,3 +597,5 @@ body:has(.sh-page) .topbar { display: none; }
 
 .cad-wire-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 4px 0 8px; }
 .cad-wire-actions:empty { display: none; }
+
+select.cad-need { border-color: #f59e0b; box-shadow: 0 0 0 2px rgba(245, 158, 11, .25); }

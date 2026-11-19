@@ -21,6 +21,7 @@
 const CADW_LANE = 10;      // spacing between cables in a riser, mm
 const CADW_STUB = 22;      // first stub out of a terminal, mm
 const CADW_STUB_STEP = 9;  // extra stub per lane, so horizontals never overlap
+const CADW_RACK_MARGIN = 50; // mm beyond the outermost parts still counted as inside the rack
 
 function cadwTerm(c, role) { return (c.terminals || []).find(t => t.role === role) || null; }
 function cadwLen(pts) { let s = 0; for (let i = 1; i < pts.length; i++) s += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]); return s; }
@@ -109,6 +110,13 @@ function cadwColumns(comps) {
     k.jbs = k.items.filter(c => c.kind === 'jb');
     for (const c of k.items) c._col = i;
   });
+  /* the rack outline: every recognised part, plus a margin for the outer uprights.
+     No cable may leave it (the junction box plug leads are drawn on the sheet, not here). */
+  const all = comps.filter(c => isFinite(c.x0) && isFinite(c.y0));
+  cols.bounds = {
+    x0: Math.min(...all.map(c => c.x0)) - CADW_RACK_MARGIN, x1: Math.max(...all.map(c => c.x1)) + CADW_RACK_MARGIN,
+    y0: Math.min(...all.map(c => c.y0)) - CADW_RACK_MARGIN, y1: Math.max(...all.map(c => c.y1)) + CADW_RACK_MARGIN
+  };
   /* riser channel = middle of the gap to the neighbouring column */
   cols.forEach((k, i) => {
     const l = cols[i - 1], r = cols[i + 1];
@@ -121,6 +129,19 @@ function cadwColumns(comps) {
 }
 
 /* ---------- routes ---------- */
+/** True when every point of the route is inside the rack outline. */
+function cadwInside(pts, b) {
+  if (!b) return true;
+  return pts.every(p => p[0] >= b.x0 && p[0] <= b.x1 && p[1] >= b.y0 && p[1] <= b.y1);
+}
+/** Routes that stay inside the rack. A detour outside never wins over a crossing:
+    when nothing fits, the shortest route is kept and its crossing is reported. */
+function cadwKeepInside(routes, b, len) {
+  const inside = routes.filter(r => cadwInside(len ? r.pts : r, b));
+  if (inside.length) return inside;
+  const L = r => cadwLen(len ? r.pts : r);
+  return routes.length ? [routes.reduce((m, r) => (L(r) < L(m) ? r : m))] : routes;
+}
 /** Riser route: out of a, along the riser at lane x, into b. stubA/stubB are signed y offsets. */
 function cadwRiserRoute(a, b, laneX, stubA, stubB) {
   return cadwClean([[a.x, a.y], [a.x, a.y + stubA], [laneX, a.y + stubA], [laneX, b.y + stubB], [b.x, b.y + stubB], [b.x, b.y]]);
@@ -149,11 +170,18 @@ function cadwCurve(t1, t2, sag, dir) {
 function cadwJump(m1, m2, t1, t2, cols, kind) {
   const sameCol = m1._col === m2._col;
   if (sameCol) return [[[t1.x, t1.y], [t2.x, t2.y]]];
+  return cadwKeepInside(cadwJumpRoutes(m1, m2, t1, t2, cols, kind), cols && cols.bounds);
+}
+function cadwJumpRoutes(m1, m2, t1, t2, cols, kind) {
   const sideBySide = Math.abs(m1._col - m2._col) === 1 && Math.abs(m1.y0 - m2.y0) < (m1.y1 - m1.y0) * 0.5;
   if (sideBySide) {
     /* AYK drawing style: a slight C curve under (or over) the modules, power sagging deeper than comm */
-    const sag = kind === 'power' ? 130 : 55;
-    return [cadwCurve(t1, t2, sag, -1), cadwCurve(t1, t2, sag, 1)];
+    const sags = kind === 'power' ? [130, 80, 45] : [55, 35];
+    const out = [];
+    for (const sag of sags) out.push(cadwCurve(t1, t2, sag, -1), cadwCurve(t1, t2, sag, 1));
+    /* the deepest curve that stays inside the rack, in either direction */
+    const inside = out.filter(r => cadwInside(r, cols && cols.bounds));
+    return inside.length ? inside.filter(r => r === inside[0] || r === inside.find(q => q !== inside[0] && Math.sign(q[10][1] - t1.y) !== Math.sign(inside[0][10][1] - t1.y))) : out;
   }
   /* other column changes: round the modules or through the riser channel between the columns */
   const below = Math.min(m1.y0, m2.y0) - 14, above = Math.max(m1.y1, m2.y1) + 14;
@@ -223,7 +251,10 @@ function cadWirePlan(comps, sscs, opts) {
     const k = jb.id + '|' + pr;
     if (usedPair.has(k)) { errors.push(`${jbNames.get(jb.id)} ${pr === 'P1' ? 'left' : 'right'} pair is given to both ${usedPair.get(k)} and ${s.name}. Give one of them the other pair or another junction box.`); continue; }
     usedPair.set(k, s.name);
-    jbFor.set(s, { jb: jb, pair: pr, name: jbNames.get(jb.id) });
+    /* cable tray for B+ / B- up to the junction box: CL = column left, CR = column right
+       (the engineer's choice; without one either tray may be used) */
+    const tray = s.tray === 'CL' || s.tray === 'CR' ? s.tray : (opts.tray === 'CL' || opts.tray === 'CR' ? opts.tray : null);
+    jbFor.set(s, { jb: jb, pair: pr, name: jbNames.get(jb.id), tray: tray });
   }
   if (errors.length) return { ok: false, errors: errors, needJb: needJb, warnings: warnings, strings: [], cables: [], crossings: [], outline: [] };
 
@@ -292,7 +323,7 @@ function cadwRunStrings(strings, cols, jbFor, pair) {
   let score = 0;
   for (const st of strings.slice().sort((a, b) => a.s.comp._col - b.s.comp._col)) {
     const j = jbFor.get(st.s);
-    const r = cadwPlanString(st, cols, j.jb, j.pair, placed, gapUse, j.name);
+    const r = cadwPlanString(st, cols, j.jb, j.pair, placed, gapUse, j.name, j.tray);
     if (!r) return null;
     for (const c of r.cables) placed.push(c);
     out.push(r.string);
@@ -323,7 +354,7 @@ function cadwTryVariant(cols, sscs, jbFor, pair, lr, td) {
   let score = 0;
   for (const st of strings) {
     const j = jbFor.get(st.s);
-    const r = cadwPlanString(st, cols, j.jb, j.pair, placed, gapUse, j.name);
+    const r = cadwPlanString(st, cols, j.jb, j.pair, placed, gapUse, j.name, j.tray);
     if (!r) return null;
     for (const c of r.cables) placed.push(c);
     out.push(r.string);
@@ -363,7 +394,7 @@ function cadwPermutations(arr) {
 }
 
 /** Wires one SSC string; returns the cheapest layout found. */
-function cadwPlanString(st, cols, jb, pair, placed, gapUse, jbName) {
+function cadwPlanString(st, cols, jb, pair, placed, gapUse, jbName, tray) {
   jbName = jbName || 'JB';
   const ssc = st.s.comp;
   const col = cols[ssc._col];
@@ -415,7 +446,7 @@ function cadwPlanString(st, cols, jb, pair, placed, gapUse, jbName) {
       { key: 'N', from: [ssc, 'N'], to: [first, 'comm-S'], name: `${tag} N → ${label.get(first)} S` },
       { key: 'S', from: [ssc, 'S'], to: [last, 'comm-N'], name: `${tag} ${label.get(last)} N → S` },
     ];
-    const risers = [{ x: col.riserL, gap: col.gapL }, { x: col.riserR, gap: col.gapR }];
+    const risers = [{ x: col.riserL, gap: col.gapL, side: 'CL' }, { x: col.riserR, gap: col.gapR, side: 'CR' }];
     const SLOTS = [0, -1, 1, -2, 2, -3, 3, -4, 4];
     const laneX = (r, slot) => r.x + slot * Math.min(CADW_LANE, Math.max(4, (r.gap - 12) / 9));
     for (const perm of cadwPermutations(longPower)) {
@@ -436,7 +467,9 @@ function cadwPlanString(st, cols, jb, pair, placed, gapUse, jbName) {
           far.push(-s); if (!toJb) far.push(s);
         }
         const cands = [];
-        for (const r of risers) {
+        /* B+ / B- run in the tray the engineer chose for this SSC */
+        const trays = toJb && tray ? risers.filter(r => r.side === tray) : risers;
+        for (const r of trays) {
           const used = lanesUsed.get(r.x) || new Set();
           const free = SLOTS.filter(x => !used.has(x)).slice(0, 3);
           for (const slot of free) for (const stubA of [-s0, s0]) for (const stubB of far)
@@ -448,7 +481,7 @@ function cadwPlanString(st, cols, jb, pair, placed, gapUse, jbName) {
         }
         const pool = prePlaced.concat(cables).filter(z => z.kind === kind);
         let pick = null;
-        for (const c of cands) {
+        for (const c of cadwKeepInside(cands, cols.bounds, true)) {
           const cab = { kind: kind, pts: c.pts };
           const x = pool.reduce((n, z) => n + cadwCrossings(cab, z), 0);
           const v = x * 1e6 + cadwLen(c.pts);

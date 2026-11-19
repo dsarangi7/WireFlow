@@ -165,5 +165,46 @@ const noJb = rack111().map(c => c.kind === 'jb' ? Object.assign({}, c, { termina
 const nj = W.cadWirePlan(noJb, sscList(noJb), {});
 ok('refused: junction box terminals not taught', !nj.ok && /has no P1 terminals/.test(nj.errors.join()), nj.errors[0]);
 
+/* ---------- no cable ever leaves the rack ---------- */
+{
+  const rc = rack111();
+  const b = { x0: Math.min(...rc.map(c => c.x0)) - 50, x1: Math.max(...rc.map(c => c.x1)) + 50, y0: Math.min(...rc.map(c => c.y0)) - 50, y1: Math.max(...rc.map(c => c.y1)) + 50 };
+  const outside = pl => pl.cables.filter(c => c.pts.some(p => p[0] < b.x0 || p[0] > b.x1 || p[1] < b.y0 || p[1] > b.y1));
+  const auto = W.cadWirePlan(rc, sscList(rc), { pair: 'P1' });
+  ok('rack outline: every cable of the suggested wiring stays inside', outside(auto).length === 0, outside(auto).map(c => c.id).slice(0, 3).join(', '));
+  /* an awkward engineer numbering: each SSC's modules picked zig-zag across its two columns */
+  const ss = sscList(rc), orders = {};
+  for (const st of auto.strings) {
+    const s = ss.find(x => x.name === st.name);
+    const m = st.modules.slice();
+    const zig = [];
+    while (m.length) { zig.push(m.shift()); if (m.length) zig.push(m.pop()); }
+    orders[s.key] = zig.map(x => x.id);
+  }
+  const messy = W.cadWirePlan(rc, ss, { pair: 'P1', orders: orders });
+  ok('awkward numbering: plan still made', messy.ok && messy.custom, messy.errors.join(' | '));
+  ok('awkward numbering: no detours outside the rack (crossings are reported instead)', outside(messy).length === 0, outside(messy).map(c => c.id).slice(0, 3).join(', '));
+}
+
+/* ---------- cable tray for B+ / B- (CL / CR) ---------- */
+{
+  const rc = rack111();
+  const cl = W.cadWirePlan(rc, sscList(rc), { pair: 'P1', tray: 'CL' });
+  const cr = W.cadWirePlan(rc, sscList(rc), { pair: 'P1', tray: 'CR' });
+  const cols = W.cadwColumns(rc);
+  /* the vertical run of a bus cable is the longest vertical segment */
+  const riserX = c => { let best = null; for (let i = 1; i < c.pts.length; i++) { const a = c.pts[i - 1], b = c.pts[i]; if (Math.abs(a[0] - b[0]) < 0.01 && (!best || Math.abs(a[1] - b[1]) > best.l)) best = { x: a[0], l: Math.abs(a[1] - b[1]) }; } return best && best.x; };
+  const side = (pl, want) => pl.cables.filter(c => /B[+−-] →/.test(c.id)).every(c => {
+    const st = pl.strings.find(s => s.name === c.ssc), col = cols[st.ssc._col], x = riserX(c);
+    return want === 'CL' ? x < col.x0 : x > col.x1;
+  });
+  ok('tray CL: every B+ / B− cable runs in the tray left of the SSC column', cl.ok && side(cl, 'CL'));
+  ok('tray CR: every B+ / B− cable runs in the tray right of the SSC column', cr.ok && side(cr, 'CR'));
+  const ss = sscList(rc); ss[0].tray = 'CL';
+  const mix = W.cadWirePlan(rc, ss, { pair: 'P1', tray: 'CR' });
+  const c0 = mix.cables.filter(c => c.ssc === ss[0].name && /B[+−-] →/.test(c.id));
+  ok('tray per SSC overrides the rack tray', mix.ok && c0.length === 2 && c0.every(c => riserX(c) < cols[ss[0].comp._col].x0));
+}
+
 console.log('\n' + (failed.length ? 'FAILED ' + failed.length + ':\n  ' + failed.join('\n  ') : 'Wiring tests passed: ' + passed));
 process.exitCode = failed.length ? 1 : 0;
