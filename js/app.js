@@ -271,6 +271,7 @@ async function route() {
   if (h.startsWith('#/project/')) { renderProjectPage(+h.split('/')[2]); return; }
   if (h.startsWith('#/cad/')) { renderCadPage(+h.split('/')[2]); return; }
   if (h.startsWith('#/sheet/')) { renderSheetPage(+h.split('/')[2]); return; }
+  if (h.startsWith('#/folder/')) { renderDashboard(decodeURIComponent(h.split('/')[2] || '') || undefined); return; }
   switch (h) {
     case '#/app': renderDashboard(); return;
     case '#/example': openExampleRack().catch(e => { shell(`<div class="empty"><h3>Could not open the example</h3><p>${esc(e.message)}</p><a class="btn btn-primary" href="#/app">Back</a></div>`, 'dash'); }); return;
@@ -291,7 +292,7 @@ function shell(content, active) {
           <span>WireFlow</span>
         </a>
         <nav class="tb-nav" aria-label="App">
-          <a href="#/app" class="${active === 'dash' ? 'on' : ''}">Drawings</a>
+          <a href="#/app" class="${active === 'dash' ? 'on' : ''}">Projects</a>
           <a href="#/">Product</a>
         </nav>
         <span class="tb-note"><span class="tb-dot" aria-hidden="true"></span>Drawings stay on this device</span>
@@ -302,48 +303,233 @@ function shell(content, active) {
 }
 
 /* ================= DASHBOARD ================= */
-async function renderDashboard() {
+/* Projects are folders of racks, kept on this device: one per project number. Every rack
+   of a project goes in its folder, so what is taught on one rack (parts, tray and pair,
+   numbering) is offered first on the next rack of the same project. */
+const FOLDERS_KEY = 'wireflow.folders';
+function foldersLoad() {
+  try { const v = JSON.parse(localStorage.getItem(FOLDERS_KEY) || '[]'); return Array.isArray(v) ? v.filter(f => f && f.id) : []; } catch (e) { return []; }
+}
+function foldersSave(list) {
+  try { localStorage.setItem(FOLDERS_KEY, JSON.stringify(list)); return true; } catch (e) { return false; }
+}
+function folderLabel(f) { return f ? f.number + (f.name ? ' · ' + f.name : '') : 'Not in a project'; }
+/** "Rack N" after the highest rack number already in the folder. */
+function nextRackName(racks) {
+  const nums = racks.map(r => +((String(r.name).match(/^rack\s*(\d+)$/i) || [])[1] || 0));
+  return 'Rack ' + (Math.max(racks.length, ...nums, 0) + 1);
+}
+/** The project a rack belongs to (null when none, or its folder was removed). */
+function rackFolder(p, folders) { return p && p.folder ? (folders || foldersLoad()).find(f => f.id === p.folder) || null : null; }
+
+/**
+ * Asks which project a rack belongs to and what it is called (on import, and to rename or
+ * move a rack). Resolves {folder (id or null), name} or null when cancelled.
+ */
+function rackDialog(o) {
+  return new Promise(resolve => {
+    const folders = foldersLoad();
+    const racksIn = o.racksIn || (() => []);
+    const back = document.createElement('div');
+    back.className = 'modal-back';
+    const opt = f => `<option value="${esc(f.id)}" ${f.id === o.folder ? 'selected' : ''}>${esc(folderLabel(f))}</option>`;
+    back.innerHTML = `<form class="modal wf-dialog" novalidate>
+      <h3>${esc(o.title)}</h3>
+      ${o.fileName ? `<p class="muted small">${esc(o.fileName)}</p>` : ''}
+      <div class="field"><label for="rd-folder">Project</label>
+        <select id="rd-folder">${folders.map(opt).join('')}
+          <option value="__new" ${!folders.length || o.folder === '__new' ? 'selected' : ''}>New project…</option>
+          ${o.allowNone ? `<option value="" ${o.folder == null && folders.length ? 'selected' : ''}>Not in a project</option>` : ''}
+        </select></div>
+      <div class="rd-new" hidden>
+        <div class="field"><label for="rd-number">Project number *</label><input id="rd-number" maxlength="40" placeholder="e.g. S10195" autocomplete="off"></div>
+        <div class="field"><label for="rd-pname">Project name (optional)</label><input id="rd-pname" maxlength="60" placeholder="e.g. MV Example battery room" autocomplete="off"></div>
+      </div>
+      <div class="field"><label for="rd-name">Rack name *</label><input id="rd-name" maxlength="60" autocomplete="off">
+        <div class="rd-chips" aria-label="Quick names"></div>
+        <p class="muted small">Rack 1, Rack 2 … or your own name.</p></div>
+      <p class="warn small rd-err" role="alert"></p>
+      <div class="modal-actions"><button type="button" class="btn btn-ghost" data-x>Cancel</button><button type="submit" class="btn btn-primary">${esc(o.ok)}</button></div>
+    </form>`;
+    document.body.appendChild(back);
+    const f = back.querySelector('form'), sel = f.querySelector('#rd-folder'), nm = f.querySelector('#rd-name');
+    const err = m => { f.querySelector('.rd-err').textContent = m || ''; };
+    let typed = !!o.name;
+    nm.value = o.name || '';
+    const sync = () => {
+      const isNew = sel.value === '__new';
+      f.querySelector('.rd-new').hidden = !isNew;
+      const racks = isNew || !sel.value ? [] : racksIn(sel.value);
+      const next = nextRackName(racks);
+      if (!typed) nm.value = next;
+      const used = new Set(racks.map(r => String(r.name).toLowerCase()));
+      const chips = [next].concat([1, 2, 3, 4, 5, 6].map(n => 'Rack ' + n).filter(c => c !== next && !used.has(c.toLowerCase()))).slice(0, 4);
+      f.querySelector('.rd-chips').innerHTML = chips.map(c => `<button type="button" class="chip-btn" data-chip="${esc(c)}">${esc(c)}</button>`).join('');
+      f.querySelectorAll('[data-chip]').forEach(b => b.onclick = () => { nm.value = b.dataset.chip; typed = true; nm.focus(); });
+    };
+    sel.onchange = sync;
+    nm.oninput = () => { typed = true; };
+    sync();
+    (sel.value === '__new' ? f.querySelector('#rd-number') : nm).focus();
+    if (sel.value !== '__new') nm.select();
+    const close = v => { back.remove(); document.removeEventListener('keydown', key); resolve(v); };
+    const key = e => { if (e.key === 'Escape') close(null); };
+    document.addEventListener('keydown', key);
+    f.querySelector('[data-x]').onclick = () => close(null);
+    f.onsubmit = e => {
+      e.preventDefault();
+      const name = nm.value.trim();
+      if (!name) { err('Give the rack a name, for example Rack 1.'); nm.focus(); return; }
+      let folder = sel.value || null;
+      if (folder === '__new') {
+        const number = f.querySelector('#rd-number').value.trim();
+        if (!number) { err('Enter the project number.'); f.querySelector('#rd-number').focus(); return; }
+        const list = foldersLoad();
+        const same = list.find(x => x.number.toLowerCase() === number.toLowerCase());
+        if (same) folder = same.id;
+        else {
+          const nf = { id: 'p' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), number: number, name: f.querySelector('#rd-pname').value.trim(), created: new Date().toISOString() };
+          list.push(nf);
+          if (!foldersSave(list)) { err('Could not save the project on this device (storage is blocked).'); return; }
+          folder = nf.id;
+        }
+      }
+      if (folder && racksIn(folder).some(r => r.id !== o.rackId && String(r.name).toLowerCase() === name.toLowerCase())) {
+        err(`This project already has a rack called "${name}". Choose another name.`); nm.focus(); return;
+      }
+      close({ folder: folder, name: name });
+    };
+  });
+}
+
+/** Rename or delete a project (deleting only an empty one). Resolves true when changed. */
+function folderDialog(folder, rackCount) {
+  return new Promise(resolve => {
+    const back = document.createElement('div');
+    back.className = 'modal-back';
+    back.innerHTML = `<form class="modal wf-dialog" novalidate>
+      <h3>Project</h3>
+      <div class="field"><label for="fd-number">Project number *</label><input id="fd-number" maxlength="40" value="${esc(folder.number)}" autocomplete="off"></div>
+      <div class="field"><label for="fd-name">Project name (optional)</label><input id="fd-name" maxlength="60" value="${esc(folder.name || '')}" autocomplete="off"></div>
+      <p class="warn small fd-err" role="alert"></p>
+      <div class="modal-actions">
+        ${rackCount ? '' : '<button type="button" class="btn btn-ghost" data-del style="margin-right:auto">Delete empty project</button>'}
+        <button type="button" class="btn btn-ghost" data-x>Cancel</button><button type="submit" class="btn btn-primary">Save</button></div>
+    </form>`;
+    document.body.appendChild(back);
+    const f = back.querySelector('form');
+    const close = v => { back.remove(); resolve(v); };
+    f.querySelector('[data-x]').onclick = () => close(false);
+    const del = f.querySelector('[data-del]');
+    if (del) del.onclick = () => { if (!confirm(`Delete the empty project ${folder.number}?`)) return; foldersSave(foldersLoad().filter(x => x.id !== folder.id)); close(true); };
+    f.querySelector('#fd-number').focus();
+    f.onsubmit = e => {
+      e.preventDefault();
+      const number = f.querySelector('#fd-number').value.trim();
+      if (!number) { f.querySelector('.fd-err').textContent = 'Enter the project number.'; return; }
+      const list = foldersLoad();
+      if (list.some(x => x.id !== folder.id && x.number.toLowerCase() === number.toLowerCase())) { f.querySelector('.fd-err').textContent = 'Another project already has this number.'; return; }
+      const me = list.find(x => x.id === folder.id);
+      if (me) { me.number = number; me.name = f.querySelector('#fd-name').value.trim(); foldersSave(list); }
+      close(true);
+    };
+  });
+}
+
+/** Dashboard: all projects (folderId undefined), one project's racks, or racks in no project ('none'). */
+async function renderDashboard(folderId) {
   shell(`<div class="loading">Loading projects…</div>`, 'dash');
   let projects;
   try { projects = await localProjects(); }
   catch (error) { shell(`<div class="empty">Could not open local projects: ${esc(error.message)}</div>`, 'dash'); return; }
 
+  const folders = foldersLoad();
   const cadProjects = projects.filter(p => p.underlay_kind === 'cad');
   const legacy = projects.filter(p => p.underlay_kind !== 'cad');
+  const known = new Set(folders.map(f => f.id));
+  const racksIn = id => cadProjects.filter(p => id ? p.folder === id : !(p.folder && known.has(p.folder)))
+    .sort((a, b) => String(a.name).localeCompare(String(b.name), undefined, { numeric: true }));
+  const unfiled = racksIn(null);
+  const folder = folderId && folderId !== 'none' ? folders.find(f => f.id === folderId) : null;
+  if (folderId && folderId !== 'none' && !folder) { location.replace('#/app'); return; }
+  const inside = !!folderId;
   const when = p => new Date(p.updated_at || p.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+  const confirmed = p => {
+    const comps = (p.config && p.config.cad && p.config.cad.components) || [];
+    const named = comps.filter(c => c.kind === 'ssc' || c.kind === 'acdp' || c.kind === 'msm');
+    return comps.length && named.length && named.every(c => c.labelConfirmed);
+  };
+  const wired = p => !!(p.config && p.config.cad && p.config.cad.wiring && p.config.cad.wiring.plan);
   const cadCard = p => {
     const comps = (p.config && p.config.cad && p.config.cad.components) || [];
     const n = k => comps.filter(c => c.kind === k).length;
-    const named = comps.filter(c => c.kind === 'ssc' || c.kind === 'acdp' || c.kind === 'msm');
-    const status = !comps.length ? ['Parts not taught yet', 'idle']
-      : named.length && named.every(c => c.labelConfirmed) ? ['Rack confirmed', 'ok'] : ['Needs confirmation', 'warn'];
+    const status = !comps.length ? ['Parts not taught yet', 'idle'] : wired(p) ? ['Wired', 'ok'] : confirmed(p) ? ['Rack confirmed', 'ok'] : ['Needs confirmation', 'warn'];
     const stats = [['modules', n('module')], ['SSCs', n('ssc')], ['JBs', n('jb')], ['ACDPs', n('acdp')], ['MSMs', n('msm')]].filter(x => x[1]);
-    return `<a class="d-card" href="#/cad/${p.id}">
+    return `<div class="d-card-wrap"><a class="d-card" href="#/cad/${p.id}">
       <div class="d-card-top"><span class="d-file" aria-hidden="true">DXF</span>
-        <div class="d-card-title"><b>${esc(p.name)}</b><small>Updated ${esc(when(p))}</small></div></div>
+        <div class="d-card-title"><b>${esc(p.name)}</b><small>${p.cad_file && p.cad_file.replace(/\.dxf$/i, '') !== p.name ? esc(p.cad_file) + ' · ' : ''}Updated ${esc(when(p))}</small></div></div>
       <div class="d-stats">${stats.length ? stats.map(x => `<span><b>${x[1]}</b> ${x[0]}</span>`).join('') : '<span class="muted">Open the drawing and teach one module to start.</span>'}</div>
       <div class="d-status d-status-${status[1]}"><span class="d-dot"></span>${status[0]}</div>
+    </a><button type="button" class="d-card-edit" data-edit="${p.id}" title="Rename this rack or move it to another project" aria-label="Rename or move ${esc(p.name)}">Rename / move</button></div>`;
+  };
+  const folderCard = f => {
+    const racks = racksIn(f.id);
+    const mods = racks.reduce((n, p) => n + ((p.config && p.config.cad && p.config.cad.components) || []).filter(c => c.kind === 'module').length, 0);
+    const last = racks.map(p => p.updated_at || p.created_at).sort().pop() || f.created;
+    const nw = racks.filter(wired).length;
+    return `<a class="d-card d-folder" href="#/folder/${esc(f.id)}">
+      <div class="d-card-top"><span class="d-file d-file-folder" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg></span>
+        <div class="d-card-title"><b>${esc(f.number)}</b><small>${f.name ? esc(f.name) + ' · ' : ''}Updated ${esc(when({ updated_at: last }))}</small></div></div>
+      <div class="d-stats"><span><b>${racks.length}</b> rack${racks.length === 1 ? '' : 's'}</span>${mods ? `<span><b>${mods}</b> modules</span>` : ''}</div>
+      <div class="d-status d-status-${racks.length && nw === racks.length ? 'ok' : racks.length ? 'warn' : 'idle'}"><span class="d-dot"></span>${racks.length ? `${nw} of ${racks.length} wired` : 'No racks yet'}</div>
     </a>`;
   };
-  shell(`
-    <div class="dash">
-      <div class="dash-head">
+  const shown = inside ? racksIn(folder ? folder.id : null) : [];
+  const head = !inside ? `
         <div>
-          <h1>Rack drawings</h1>
-          <p>Import an AutoCAD rack drawing, teach each part once and confirm the rack.</p>
+          <h1>Projects</h1>
+          <p>One folder per project number. Every rack of a project goes in it, and what you teach on one rack is used on the next.</p>
         </div>
         <div class="dash-actions">
           <a class="btn-site btn-site-ghost" href="#/example">Open the example rack</a>
           <button class="btn-site btn-site-ghost" id="studio-open-session">Open saved session</button>
+          <button class="btn-site btn-site-ghost" id="dash-new-folder">New project</button>
           <button class="btn-site btn-site-primary" id="studio-import-button">Import DXF</button>
+        </div>` : `
+        <div>
+          <a class="dash-crumb" href="#/app">← All projects</a>
+          <h1>${folder ? esc(folder.number) : 'Racks not in a project'}</h1>
+          <p>${folder ? (folder.name ? esc(folder.name) + ' · ' : '') + `${shown.length} rack${shown.length === 1 ? '' : 's'}. New racks imported here use the parts already taught on this project's racks.` : 'Racks imported before projects existed. Use Rename / move on a rack to put it in a project.'}</p>
         </div>
-      </div>
+        <div class="dash-actions">
+          ${folder ? '<button class="btn-site btn-site-ghost" id="dash-edit-folder">Rename project</button>' : ''}
+          <button class="btn-site btn-site-primary" id="studio-import-button">Import DXF${folder ? ' into this project' : ''}</button>
+        </div>`;
+  const list = !inside ? `
+      <section class="dash-list" aria-labelledby="list-title">
+        <div class="dash-list-head"><h2 id="list-title">Your projects</h2><span>${folders.length} project${folders.length === 1 ? '' : 's'} · ${cadProjects.length} rack${cadProjects.length === 1 ? '' : 's'}</span></div>
+        ${folders.length || unfiled.length ? `<div class="d-grid">${folders.slice().sort((a, b) => a.number.localeCompare(b.number, undefined, { numeric: true })).map(folderCard).join('')}
+          ${unfiled.length ? `<a class="d-card d-folder d-folder-none" href="#/folder/none">
+            <div class="d-card-top"><span class="d-file d-file-old" aria-hidden="true">…</span>
+              <div class="d-card-title"><b>Racks not in a project</b><small>Imported before projects · move them into one</small></div></div>
+            <div class="d-stats"><span><b>${unfiled.length}</b> rack${unfiled.length === 1 ? '' : 's'}</span></div></a>` : ''}</div>`
+          : `<div class="d-empty"><b>No projects yet</b><span>Import a DXF above: you will be asked for the project number and the rack name. Or <a href="#/example">open the example rack</a> to try every step.</span></div>`}
+      </section>` : `
+      <section class="dash-list" aria-labelledby="list-title">
+        <div class="dash-list-head"><h2 id="list-title">Racks</h2><span>${shown.length} rack${shown.length === 1 ? '' : 's'}</span></div>
+        ${shown.length ? `<div class="d-grid">${shown.map(cadCard).join('')}</div>`
+          : `<div class="d-empty"><b>No racks in this project yet</b><span>Import the first rack's DXF above.</span></div>`}
+      </section>`;
+
+  shell(`
+    <div class="dash">
+      <div class="dash-head">${head}</div>
 
       <section class="drop" id="dash-drop" aria-labelledby="drop-title">
         <div class="drop-icon" aria-hidden="true">
           <svg width="40" height="40" viewBox="0 0 24 24" fill="none"><path d="M12 15V4m0 0L8 8m4-4 4 4" stroke="#00a8ff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 14v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4" stroke="#9aabc6" stroke-width="1.8" stroke-linecap="round"/></svg>
         </div>
-        <h2 id="drop-title">Drop an AutoCAD rack drawing here</h2>
+        <h2 id="drop-title">Drop an AutoCAD rack drawing here${folder ? ' to add it to ' + esc(folder.number) : ''}</h2>
         <p>ASCII DXF in millimetres &middot; <button class="link-btn" id="drop-browse">browse files</button></p>
         <p class="drop-hint">Have a DWG? Convert it with <code>tools/dwg-to-dxf.ps1</code> (uses your AutoCAD) or AutoCAD <i>Save As &rarr; DXF</i>.</p>
         <p id="studio-import-status" class="drop-status" role="status"></p>
@@ -351,20 +537,16 @@ async function renderDashboard() {
         <input id="studio-session-file" type="file" accept=".json,application/json" hidden>
       </section>
 
-      <ol class="dash-steps" aria-label="Workflow">
-        <li><b>1</b><span>Import DXF</span></li>
-        <li><b>2</b><span>Teach each part once</span></li>
+      ${inside ? '' : `<ol class="dash-steps" aria-label="Workflow">
+        <li><b>1</b><span>Import DXF into a project, name the rack</span></li>
+        <li><b>2</b><span>Teach each part once (later racks of the project reuse it)</span></li>
         <li><b>3</b><span>Confirm SSCs, ACDPs, MSM and modules per SSC</span></li>
         <li><b>4</b><span>Number the modules, then download the PDF sheet</span></li>
-      </ol>
+      </ol>`}
 
-      <section class="dash-list" aria-labelledby="list-title">
-        <div class="dash-list-head"><h2 id="list-title">Your drawings</h2><span>${cadProjects.length} drawing${cadProjects.length === 1 ? '' : 's'}</span></div>
-        ${cadProjects.length ? `<div class="d-grid">${cadProjects.map(cadCard).join('')}</div>`
-          : `<div class="d-empty"><b>No drawings yet</b><span>Import a DXF above to start, or <a href="#/example">open the example rack</a> (60 modules, parts already taught) to try every step.</span></div>`}
-      </section>
+      ${list}
 
-      <details class="dash-legacy">
+      ${inside ? '' : `<details class="dash-legacy">
         <summary>Legacy picture projects (${legacy.length})</summary>
         <p class="muted small">The earlier picture-based workspace. New racks should use DXF drawings above.</p>
         <div class="dash-legacy-actions"><button class="btn-site btn-site-ghost" id="btn-new">New legacy project</button></div>
@@ -374,15 +556,42 @@ async function renderDashboard() {
               <div class="d-card-title"><b>${esc(p.name)}</b><small>Updated ${esc(when(p))}</small></div></div>
             <div class="d-stats"><span>${esc(p.status || 'draft')}</span>${p.drawing_no ? `<span>${esc(p.drawing_no)} rev ${esc(p.revision || '')}</span>` : ''}</div>
           </a>`).join('')}</div>` : ''}
-      </details>
+      </details>`}
     </div>
   `, 'dash');
   const studioFile = document.getElementById('studio-import-file');
   const studioStatus = document.getElementById('studio-import-status');
   document.getElementById('studio-import-button').onclick = () => studioFile.click();
   document.getElementById('drop-browse').onclick = () => studioFile.click();
+  const newFolderBtn = document.getElementById('dash-new-folder');
+  if (newFolderBtn) newFolderBtn.onclick = async () => {
+    const list = foldersLoad();
+    const nf = { id: 'p' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), number: '', name: '', created: new Date().toISOString() };
+    list.push(nf); foldersSave(list);
+    const ok = await folderDialog(nf, 0);
+    const now = foldersLoad().find(x => x.id === nf.id);
+    if (!ok || !now || !now.number) { foldersSave(foldersLoad().filter(x => x.id !== nf.id)); renderDashboard(); return; }
+    location.hash = '#/folder/' + nf.id;
+  };
+  const editFolderBtn = document.getElementById('dash-edit-folder');
+  if (editFolderBtn) editFolderBtn.onclick = async () => {
+    if (!(await folderDialog(folder, shown.length))) return;
+    if (!foldersLoad().some(x => x.id === folder.id)) location.hash = '#/app';
+    else renderDashboard(folderId);
+  };
+  /* rename a rack or move it to another project */
+  document.querySelectorAll('[data-edit]').forEach(b => b.onclick = async () => {
+    const p = cadProjects.find(x => x.id === +b.dataset.edit);
+    if (!p) return;
+    const got = await rackDialog({ title: 'Rename / move rack', ok: 'Save', folder: p.folder && known.has(p.folder) ? p.folder : null, name: p.name, rackId: p.id, allowNone: true, racksIn: racksIn, fileName: p.cad_file });
+    if (!got) return;
+    p.name = got.name; p.folder = got.folder || undefined; p.updated_at = new Date().toISOString();
+    await localPutProject(p);
+    renderDashboard(folderId);
+  });
   const sessionFile = document.getElementById('studio-session-file');
-  document.getElementById('studio-open-session').onclick = () => sessionFile.click();
+  const sessionBtn = document.getElementById('studio-open-session');
+  if (sessionBtn) sessionBtn.onclick = () => sessionFile.click();
   sessionFile.onchange = async () => {
     const file = sessionFile.files[0];
     if (!file) return;
@@ -426,14 +635,31 @@ async function renderDashboard() {
       studioStatus.textContent = error.message || 'Could not import this drawing.';
     } finally { studioFile.value = ''; }
   }
+  /* a DXF: which project, and the rack's name; then open it */
   async function openStudioCad(file) {
     studioStatus.textContent = 'Reading DXF…';
     const text = await file.text();
     const model = cadParseDxf(text);             /* throws a readable error for DWG / binary / empty */
     if (!model.entities.length) throw new Error('The DXF has no model-space geometry.');
+    studioStatus.textContent = '';
+    const place = await rackDialog({ title: 'Import rack drawing', ok: 'Import', fileName: file.name,
+      folder: folder ? folder.id : (foldersLoad()[0] ? (foldersLoad().slice().sort((a, b) => String(b.created).localeCompare(String(a.created)))[0].id) : '__new'),
+      racksIn: id => racksIn(id) });
+    if (!place) { studioStatus.textContent = 'Import cancelled.'; return; }
+    studioStatus.textContent = 'Saving the drawing…';
     const now = new Date().toISOString();
-    const project = { name: file.name.replace(/\.dxf$/i, '') || 'Rack', vessel: '', drawing_no: '',
-      product_family: '', modules_per_string: 0, config: { rules: { ...DEFAULT_RULES }, exceptions: [], spans: [] },
+    const cad = { signatures: [], components: [] };
+    /* learn from the project: the parts taught, and the pair and tray chosen, on its latest rack */
+    const sibling = place.folder ? (await localProjects()).filter(p => p.underlay_kind === 'cad' && p.folder === place.folder && p.config && p.config.cad && (p.config.cad.signatures || []).length)
+      .sort((a, b) => String(b.updated_at || b.created_at).localeCompare(String(a.updated_at || a.created_at)))[0] : null;
+    if (sibling) {
+      const sc = sibling.config.cad;
+      cad.signatures = JSON.parse(JSON.stringify(sc.signatures));
+      cad.learnedFrom = sibling.name;
+      if (sc.wiring && (sc.wiring.pair || sc.wiring.tray)) cad.wiring = { pair: sc.wiring.pair, tray: sc.wiring.tray };
+    }
+    const project = { name: place.name, folder: place.folder || undefined, vessel: '', drawing_no: '',
+      product_family: '', modules_per_string: 0, config: { rules: { ...DEFAULT_RULES }, exceptions: [], spans: [], cad: cad },
       status: 'draft', revision: 'A', created_at: now, updated_at: now, underlay_kind: 'cad', cad_file: file.name };
     project.id = await localAddProject(project);
     await localPutUnderlay(project.id, new Blob([text], { type: 'application/dxf' }), 'cad');
@@ -656,7 +882,7 @@ async function renderCadPage(id) {
   shell(`
     <div class="cad-page">
       <header class="cad-head">
-        <a class="back" href="#/app">← Drawings</a>
+        <a class="back" href="${rackFolder(project) ? '#/folder/' + esc(rackFolder(project).id) : '#/app'}">← ${rackFolder(project) ? esc(rackFolder(project).number) : 'Projects'}</a>
         <h1>${esc(project.name)}</h1>
         <span class="chip">DXF · ${esc(u)}</span>
         <div class="cad-tools">
@@ -847,7 +1073,9 @@ async function renderCadPage(id) {
      offered again when a rack of the same layout is opened (any project, any drawing scale) */
   function keepNumbering(orders, inp, crossings) {
     try {
+      const pf = rackFolder(project);
       const e = numlibEntry(components, inp.sscs, orders, { project: project.name, projectId: project.id, pair: inp.pair, tray: inp.tray, crossings: crossings });
+      if (e) { e.folder = pf ? pf.id : null; e.folderLabel = pf ? pf.number : ''; }
       if (e && !numlibStore(numlibAdd(numlibLoad(), e))) console.warn('Numbering library: could not save on this device');
     } catch (err) { console.error('Numbering library', err); }
   }
@@ -855,6 +1083,9 @@ async function renderCadPage(id) {
   function libraryMatches(inp) {
     let list = [];
     try { list = numlibMatches(numlibLoad(), components); } catch (e) { return []; }
+    /* racks of this same project first */
+    const myFolder = project.folder || null;
+    list = list.filter(e => e.projectId !== project.id || !(cad.wiring && cad.wiring.orders)).sort((a, b) => (b.folder === myFolder && myFolder ? 1 : 0) - (a.folder === myFolder && myFolder ? 1 : 0));
     if (!list.length || !(cad.wiring && cad.wiring.orders)) return list;
     const ids = orderIds(cad.wiring.orders);
     const mine = numlibEntry(components, inp.sscs, ids, { pair: inp.pair, tray: inp.tray });
@@ -1255,7 +1486,7 @@ async function renderCadPage(id) {
         <h5>Numbering from racks of this layout</h5>
         <p class="muted small">Saved when a numbering was finished on a rack with the same modules, SSCs and junction boxes. Using one numbers this rack the same way (also its junction boxes, pairs and trays); you can still change any module.${ready ? '' : ' <b>Confirm the SSC numbers and module counts above first.</b>'}</p>
         <ul>${lib.slice(0, 4).map((e, i) => `<li>
-          <div><b>${esc(e.project || 'Unnamed project')}</b><span class="muted small">${esc(day(e.saved))} · ${e.modules} modules · ${e.sscs} SSCs</span>
+          <div><b>${esc(e.project || 'Unnamed rack')}${e.folderLabel ? ' · ' + esc(e.folderLabel) : ''}</b>${e.folder && e.folder === project.folder ? '<span class="chip chip-ok numlib-same">This project</span>' : ''}<span class="muted small">${esc(day(e.saved))} · ${e.modules} modules · ${e.sscs} SSCs</span>
             <span class="small ${e.crossings ? 'warn' : 'cad-ok'}">${e.crossings == null ? '' : e.crossings ? e.crossings + ' power crossing' + (e.crossings === 1 ? '' : 's') : 'no power crossings'}</span></div>
           <button class="btn ${i === 0 && !wiring ? 'btn-primary' : 'btn-ghost'} btn-xs" data-numlib="${i}" ${ready && jbTaught ? "" : "disabled"}>Use this numbering</button></li>`).join('')}</ul>
       </div>`;
@@ -1702,8 +1933,16 @@ async function renderCadPage(id) {
     say(`${lib.length} saved part${lib.length === 1 ? '' : 's'} applied.`);
   };
 
-  /* Open: saved parts for this drawing, else the device library. */
-  if (cad.signatures.length) { recognise(); if (renamedTerminals) persist(); }
+  /* Open: saved parts for this drawing (on a new rack: those of the project's other racks),
+     else the device library. */
+  if (cad.signatures.length) {
+    recognise();
+    if (cad.learnedFrom) {
+      say(`Parts taught on ${cad.learnedFrom} of this project were used: ${components.length} found. Check them, then confirm the SSCs.`, 'cad-ok');
+      delete cad.learnedFrom;
+      persist();
+    } else if (renamedTerminals) persist();
+  }
   else {
     const lib = cadLibraryLoad();
     if (lib.length) {

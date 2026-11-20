@@ -641,3 +641,20 @@ select.cad-need { border-color: #f59e0b; box-shadow: 0 0 0 2px rgba(245, 158, 11
 .cad-numlib li b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sh-paper .sh-ring.sh-ring-port { fill: rgba(245, 158, 11, .15); stroke: #f59e0b; stroke-width: 0.4; }
 .sh-xbtn.sh-xport { border-color: rgba(245, 158, 11, .55); background: rgba(245, 158, 11, .1); }
+/* start page: projects (folders of racks) */
+.dash-crumb { display: inline-block; color: #8fb8ff; font-size: 14px; margin-bottom: 6px; }
+.dash-crumb:hover { color: #fff; }
+.d-file-folder { background: rgba(250, 204, 21, .14); color: #facc15; }
+.d-folder-none { border-style: dashed; }
+.d-card-wrap { position: relative; display: grid; }
+.d-card-edit { position: absolute; top: 14px; right: 14px; padding: 4px 9px; border-radius: 8px; border: 1px solid rgba(120,145,185,.3);
+  background: #0b1226; color: #c9d6ea; font: inherit; font-size: 12px; cursor: pointer; opacity: .85; }
+.d-card-edit:hover, .d-card-edit:focus-visible { opacity: 1; border-color: rgba(0,168,255,.6); color: #fff; }
+.d-card-wrap .d-card-title { padding-right: 104px; }
+.wf-dialog .rd-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.wf-dialog .chip-btn { padding: 4px 10px; border-radius: 999px; border: 1px solid #cbd5e1; background: #f8fafc; color: #0f172a; font: inherit; font-size: 13px; cursor: pointer; }
+.wf-dialog .chip-btn:hover, .wf-dialog .chip-btn:focus-visible { border-color: #0ea5e9; background: #e0f2fe; }
+.wf-dialog .muted { color: #64748b; }
+.wf-dialog .warn { color: #b45309; }
+.wf-dialog .rd-err:empty, .wf-dialog .fd-err:empty { display: none; }
+.cad-numlib .numlib-same { margin-left: 0; align-self: flex-start; font-size: 11px; }
