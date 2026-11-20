@@ -1,6 +1,7 @@
 /* ============================================================
  * WireFlow — application shell
- * Hash router: #/ product page · #/app home (two diagram cards) ·
+ * Hash router: #/ product page (the home page; the WireFlow logo goes there) ·
+ * #/app the two diagram cards ("Open WireFlow") ·
  * Wiring diagram: #/wiring projects · #/folder/<id> racks of a project ·
  *   #/cad/<id> rack view (teach, confirm, number) · #/sheet/<id> wiring sheet (PDF) ·
  *   #/example the example rack
@@ -115,13 +116,12 @@ function shell(content, active) {
   <div class="shell">
     <header class="topbar">
       <div class="topbar-in">
-        <a class="tb-brand" href="#/app" aria-label="WireFlow drawings">
+        <a class="tb-brand" href="#/" aria-label="WireFlow home page">
           <span class="brand-logo"><img src="assets/ayk-energy-logo.png" width="28" height="28" alt=""></span>
           <span>WireFlow</span>
         </a>
         <nav class="tb-nav" aria-label="App">
-          <a href="#/app" class="${active === 'dash' ? 'on' : ''}">Home</a>
-          <a href="#/">Product</a>
+          <a href="#/app" class="${active === 'dash' ? 'on' : ''}">Diagrams</a>
         </nav>
         <span class="tb-note"><span class="tb-dot" aria-hidden="true"></span>Drawings stay on this device</span>
       </div>
@@ -318,7 +318,7 @@ async function renderDashboard(folderId) {
   const shown = inside ? racksIn(folder ? folder.id : null) : [];
   const head = !inside ? `
         <div>
-          <a class="dash-crumb" href="#/app">← Home</a>
+          <a class="dash-crumb" href="#/app">← Diagrams</a>
           <h1>Wiring diagram</h1>
           <p>One folder per project number. Every rack of a project goes in it, and what you teach on one rack is used on the next.</p>
         </div>
@@ -558,7 +558,7 @@ async function renderElecDashboard(folderId) {
     <div class="dash">
       <div class="dash-head">
         <div>
-          <a class="dash-crumb" href="${folder ? '#/electrical' : '#/app'}">← ${folder ? 'All projects' : 'Home'}</a>
+          <a class="dash-crumb" href="${folder ? '#/electrical' : '#/app'}">← ${folder ? 'All projects' : 'Diagrams'}</a>
           <h1>${folder ? esc(folder.number) : 'Electrical diagram'}</h1>
           <p>${folder ? (folder.name ? esc(folder.name) + ' · ' : '') + `${shown.length} electrical diagram${shown.length === 1 ? '' : 's'}. A new diagram is filled in from the SSC, ACDP and MSM names confirmed on this project's racks.`
             : 'The same project folders as the wiring diagram. Open a project, or create one with its number.'}</p>
