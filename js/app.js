@@ -1247,6 +1247,7 @@ async function renderCadPage(id) {
       <p class="muted small">The pair and the tray (B+ / B− from the SSC up to the junction box) are used for every SSC unless an SSC below says otherwise.</p>
       ${jbTable(inp)}
       ${!wiring && cad.wiring && cad.wiring.orders && !todo.length ? `<button class="btn btn-primary btn-sm cad-wire-go" id="cad-wire-redraw" title="A setting changed; draw the wiring again with your numbering">Draw the wiring again (your numbering)</button>` : ''}
+      ${wiring && cad.wiring && cad.wiring.orders && !todo.length && !(wiring.cables || []).some(c => c.ways) ? `<button class="btn btn-primary btn-sm cad-wire-go" id="cad-wire-redraw" title="This wiring was drawn by an older version: draw it again with your numbering so each power cable gets its other ways to choose from on the wiring sheet">Draw the wiring again (adds route choices for the sheet)</button>` : ''}
       ${draftN ? `<button class="btn btn-primary btn-sm cad-wire-go" id="cad-wire-number" ${todo.length ? 'disabled' : ''} title="Carry on numbering from the last module you clicked">Continue numbering (${draftN} of ${totalN} done)</button>`
         : `<button class="btn ${wiring || (cad.wiring && cad.wiring.orders) ? 'btn-ghost' : 'btn-primary'} btn-sm cad-wire-go" id="cad-wire-number" ${todo.length ? 'disabled' : ''} title="Click each SSC's modules in order: M1 (wired to S− and N), M2, …${cad.wiring && cad.wiring.orders ? ' Your current numbering stays until the new one is finished.' : ''}">${wiring || (cad.wiring && cad.wiring.orders) ? 'Number again' : 'Number modules by clicking'}</button>`}
       ${draftN ? `<p class="muted small">Your clicks are saved as you go${cad.wiring.orders ? '; the finished numbering stays until this one is complete' : ''}.</p>` : ''}
@@ -1786,8 +1787,9 @@ async function renderSheetPage(id) {
             <h3>On the sheet</h3>
             <label class="cad-wire-show"><input type="checkbox" id="sh-plugs" ${st.plugs ? 'checked' : ''}> Customer power plugs A / B (Note 2) on every junction box</label>
             <label class="sh-field" title="The title block always says SCALE: NTS; this only sets how large the rack is drawn on the A3 sheet"><span>Rack size on sheet</span><select id="sh-scale"><option value="auto">Fit the sheet</option>${SHEET_SCALES.map(v => `<option value="${v}" ${String(F.scale) === String(v) ? 'selected' : ''}>1:${v}</option>`).join('')}</select></label>
-            <p class="muted small"><b>Edit the wiring:</b> <b>double-click</b> a cable to draw it <b>straight</b>, <b>bent</b> or <b>curved</b> · drag a bent cable's middle section to move it (also into the other tray) · drag a curved cable sideways to change its curve · <b>Shift + double-click</b> a bent cable to add a bend there · <b>right-click</b> a cable to put it back as planned. Labels, the Note 2 label and the grounding-point label can be dragged too.</p>
+            <p class="muted small"><b>Edit the wiring:</b> <b>double-click</b> a power cable to send it <b>another way</b> (each way shows its length and crossings) or to draw it <b>straight</b>, <b>bent</b> or <b>curved</b> ·drag a bent cable's middle section to move it (also into the other tray) · drag a curved cable sideways to change its curve · <b>Shift + double-click</b> a bent cable to add a bend there · <b>right-click</b> a cable to put it back as planned. Labels, the Note 2 label and the grounding-point label can be dragged too.</p>
             <p class="small" id="sh-cross" role="status"></p>
+            <ul class="sh-xlist" id="sh-xlist"></ul>
             <button class="btn btn-ghost btn-sm" id="sh-reset">Undo all moves</button>
           </section>
           <section>
@@ -1807,7 +1809,11 @@ async function renderSheetPage(id) {
 
   const $ = q => document.getElementById(q);
   const say = (m, k) => { $('sh-status').textContent = m || ''; $('sh-status').className = 'small ' + (k || ''); };
-  const model = () => ({ flat: flat, bounds: flat.bounds, jbs: jbs, parts: parts, wiring: wiring, settings: st, logo: logo });
+  /* drawing units per real mm (a rack drawn at 1:44 has modules ~9 units wide): the sheet,
+     the crossing check and cable lengths all work in real millimetres */
+  const unit = sheetUnit(cad.components);
+  CADW_K = unit;
+  const model = () => ({ flat: flat, bounds: flat.bounds, jbs: jbs, parts: parts, wiring: wiring, settings: st, logo: logo, unit: unit });
   let zoom = 1, P = null, rackKey = '';
   const save = async () => {
     cad.sheet = { fields: Object.assign({}, F, { scaleText: undefined }), plugs: st.plugs, edits: st.edits };
@@ -1849,11 +1855,49 @@ async function renderSheetPage(id) {
     const x = cadwPowerCrossings(cables);
     const bad = new Set(x.flatMap(p => [p.a, p.b]));
     $('sh-g').querySelectorAll('.sh-cable').forEach(el => el.classList.toggle('sh-x', bad.has(el.dataset.id)));
+    /* a red ring on the sheet where each pair crosses */
+    const byId = new Map(cables.map(c => [c.id, c]));
+    const rings = [];
+    x.forEach((p, i) => { for (const q of crossPoints(byId.get(p.a).pts, byId.get(p.b).pts)) rings.push(`<circle class="sh-ring" data-x="${i}" cx="${P.X(q[0]).toFixed(2)}" cy="${P.Y(q[1]).toFixed(2)}" r="2.6"/>`); });
+    $('sh-g').querySelectorAll('.sh-rings').forEach(g => g.remove());
+    $('sh-g').insertAdjacentHTML('beforeend', `<g class="sh-rings">${rings.join('')}</g>`);
     const el = $('sh-cross');
     if (!el) return x;
     el.className = 'small ' + (x.length > planned ? 'warn' : x.length ? '' : 'cad-ok');
-    el.textContent = x.length ? `${x.length} power cable crossing${x.length === 1 ? '' : 's'} on the sheet (outlined)${x.length > planned ? ` — ${x.length - planned} more than the planned wiring` : ''}.` : 'No power cables cross.';
+    el.textContent = x.length ? `${x.length} power cable crossing${x.length === 1 ? '' : 's'} (red rings)${x.length > planned ? ` — ${x.length - planned} more than the planned wiring` : ''}. Click one to fix it:` : 'No power cables cross.';
+    const list = $('sh-xlist');
+    list.innerHTML = x.map((p, i) => `<li><button type="button" class="sh-xbtn" data-x="${i}"><b>${esc(p.a)}</b><span>crosses</span><b>${esc(p.b)}</b></button></li>`).join('');
+    list.querySelectorAll('[data-x]').forEach(b => b.onclick = ev => fixCrossing(x[+b.dataset.x], ev));
     return x;
+  }
+  /* where two polylines cross (drawing units) */
+  function crossPoints(a, b) {
+    const out = [];
+    for (let i = 1; i < a.length; i++) for (let j = 1; j < b.length; j++) {
+      const p = a[i - 1], q = a[i], r = b[j - 1], s = b[j];
+      if (!cadwSegCross(p, q, r, s)) continue;
+      const d = (q[0] - p[0]) * (s[1] - r[1]) - (q[1] - p[1]) * (s[0] - r[0]);
+      if (Math.abs(d) < 1e-12) {
+        /* overlapping along the same line: the middle of the shared part */
+        const xs = [p, q, r, s].sort((u, v) => u[0] - v[0] || u[1] - v[1]);
+        out.push([(xs[1][0] + xs[2][0]) / 2, (xs[1][1] + xs[2][1]) / 2]);
+      } else {
+        const t = ((r[0] - p[0]) * (s[1] - r[1]) - (r[1] - p[1]) * (s[0] - r[0])) / d;
+        out.push([p[0] + t * (q[0] - p[0]), p[1] + t * (q[1] - p[1])]);
+      }
+    }
+    return out;
+  }
+  /* a crossing picked from the list: show both cables, then offer the other ways for the
+     cable that has more of them */
+  function fixCrossing(p, ev) {
+    const ca = wiring.cables.find(c => c.id === p.a), cb = wiring.cables.find(c => c.id === p.b);
+    $('sh-g').querySelectorAll('.sh-cable').forEach(e => e.classList.toggle('sh-sel', e.dataset.id === p.a || e.dataset.id === p.b));
+    const cab = ((cb.ways || []).length > (ca.ways || []).length) ? cb : ca;
+    const r = ev.currentTarget.getBoundingClientRect();
+    /* over the side panel, so the sheet (and the dashed preview) stays in view */
+    const panel = document.querySelector('.sh-side').getBoundingClientRect();
+    openShape(cab, panel.left - 4, r.bottom - 12, true);
   }
   function applyZoom() {
     const stage = $('sh-stage');
@@ -2037,7 +2081,7 @@ async function renderSheetPage(id) {
   svgEl.addEventListener('pointercancel', end);
   /* double-click a cable: choose how it is drawn — straight, bent (right-angle bends) or
      curved. Shift + double-click a bent cable adds a bend where you click. */
-  const closeShape = () => { const p = document.getElementById('sh-shape'); if (p) p.remove(); };
+  const closeShape = () => { const p = document.getElementById('sh-shape'); if (p) p.remove(); const v = document.getElementById('sh-preview'); if (v) v.remove(); };
   document.addEventListener('pointerdown', ev => { if (!ev.target.closest('#sh-shape')) closeShape(); }, true);
   document.addEventListener('keydown', ev => { if (ev.key === 'Escape') closeShape(); });
   svgEl.addEventListener('dblclick', ev => {
@@ -2064,15 +2108,54 @@ async function renderSheetPage(id) {
     render(); save();
     say(`Bend added to ${cab.id}: drag it sideways where you double-clicked.`, 'cad-ok');
   });
-  function openShape(cab, cx, cy) {
+  /* power crossings of one cable if it took `pts`, with every other cable as on the sheet now */
+  const crossingsWith = (cab, pts) => {
+    const me = { id: cab.id, kind: 'power', pts: pts };
+    return wiring.cables.filter(c => c.kind === 'power' && c.id !== cab.id)
+      .reduce((n, c) => n + cadwCrossings(me, { pts: st.edits.cables[c.id] || c.pts }), 0);
+  };
+  const metres = pts => (cadwLen(pts) / unit / 1000).toFixed(2) + ' m';
+  /* a dashed preview of a route on the sheet while the pointer is over its button */
+  const preview = pts => {
+    const old = document.getElementById('sh-preview'); if (old) old.remove();
+    if (!pts) return;
+    const d = pts.map(q => P.X(q[0]).toFixed(3) + ',' + P.Y(q[1]).toFixed(3)).join(' ');
+    $('sh-g').insertAdjacentHTML('beforeend', `<polyline id="sh-preview" points="${d}"/>`);
+  };
+  function openShape(cab, cx, cy, waysFirst) {
     closeShape();
     const now = typeOf(cab);
+    const cur = st.edits.cables[cab.id] || cab.pts;
+    const same = (a, b) => a.length === b.length && a.every((p, i) => Math.abs(p[0] - b[i][0]) < 1e-3 && Math.abs(p[1] - b[i][1]) < 1e-3);
+    /* the planned route first, then the other ways the planner found */
+    const ways = cab.kind === 'power' ? [{ pts: cab.pts, curve: !!cab.curve, planned: true }].concat(cab.ways || []) : [];
+    const wayRows = ways.map((w, i) => {
+      const n = crossingsWith(cab, w.pts);
+      return `<button type="button" class="sh-way ${same(w.pts, cur) ? 'on' : ''}" data-way="${i}">
+        <span>${w.planned ? 'As planned' : 'Way ' + i}</span><span>${metres(w.pts)}</span>
+        <span class="${n ? 'warn' : 'cad-ok'}">${n ? n + ' crossing' + (n === 1 ? '' : 's') : 'no crossing'}</span></button>`;
+    }).join('');
     const pop = document.createElement('div');
     pop.className = 'cad-pop sh-pop'; pop.id = 'sh-shape';
-    pop.innerHTML = `<b>${esc(cab.id)}</b><p class="muted small">Draw this cable as:</p>
+    const waysHtml = cab.kind !== 'power' ? ''
+      : cab.ways ? `<p class="muted small">Send it another way (point at one to see it):</p><div class="sh-ways">${wayRows}</div>`
+      : `<p class="muted small">No other ways stored for this cable. On the drawing page press <b>Draw the wiring again</b> (your numbering is kept), then come back.</p>`;
+    const shapeHtml = `<p class="muted small">Draw this cable as:</p>
       <div class="sh-shape-row">${[['straight', 'Straight'], ['bent', 'Bent'], ['curved', 'Curved']].map(([k, t]) =>
         `<button type="button" class="btn btn-sm ${k === now ? 'btn-primary' : 'btn-ghost'}" data-shape="${k}" aria-pressed="${k === now}">${t}</button>`).join('')}</div>`;
+    pop.innerHTML = `<b>${esc(cab.id)}</b>${waysFirst ? waysHtml + shapeHtml : shapeHtml + waysHtml}`;
     document.body.appendChild(pop);
+    pop.querySelectorAll('[data-way]').forEach(b => {
+      const w = ways[+b.dataset.way];
+      b.onpointerenter = () => preview(w.pts);
+      b.onpointerleave = () => preview(null);
+      b.onclick = () => {
+        closeShape(); preview(null);
+        if (w.planned) { delete st.edits.cables[cab.id]; delete st.edits.kinds[cab.id]; }
+        else { st.edits.cables[cab.id] = w.pts.map(p => p.slice()); st.edits.kinds[cab.id] = w.curve ? 'curved' : w.pts.length <= 2 ? 'straight' : 'bent'; }
+        afterEdit(`${cab.id} now goes ${w.planned ? 'as planned' : 'way ' + b.dataset.way} (${metres(w.pts)}).`, cab.id);
+      };
+    });
     pop.style.left = Math.max(8, Math.min(cx + 12, window.innerWidth - pop.offsetWidth - 8)) + 'px';
     pop.style.top = Math.max(8, Math.min(cy + 12, window.innerHeight - pop.offsetHeight - 8)) + 'px';
     pop.querySelectorAll('[data-shape]').forEach(b => b.onclick = () => {

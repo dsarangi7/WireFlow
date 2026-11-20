@@ -51,39 +51,43 @@ function sheetSettings(saved, name) {
  * @param {Array} jbs junction boxes {x0,y0,x1,y1}.
  * @param {Object} st settings from sheetSettings.
  */
-function sheetPlace(bounds, jbs, st) {
-  const plugTop = st.plugs && jbs.length ? Math.max(...jbs.map(j => j.y1)) + 330 : bounds.maxY;
+function sheetPlace(bounds, jbs, st, u) {
+  u = u > 0 ? u : 1;                                      // drawing units per real millimetre
+  const plugTop = st.plugs && jbs.length ? Math.max(...jbs.map(j => j.y1)) + 330 * u : bounds.maxY;
   const top = Math.max(bounds.maxY, plugTop);
-  const bottom = bounds.minY - 420;                       // room for the grounding-point arrow and label
-  const w = bounds.maxX - bounds.minX + 160, h = top - bottom;
+  const bottom = bounds.minY - 420 * u;                   // room for the grounding-point arrow and label
+  const w = (bounds.maxX - bounds.minX) / u + 160, h = (top - bottom) / u;
   const aw = SHEET_AREA.x1 - SHEET_AREA.x0, ah = SHEET_AREA.y1 - SHEET_AREA.y0;
+  /* scale in real millimetres (1:20 = 20 mm of rack per sheet mm), whatever the drawing's own scale */
   let scale = +st.fields.scale;
   if (!(scale > 0)) scale = SHEET_SCALES.find(sc => w / sc <= aw && h / sc <= ah) || Math.ceil(Math.max(w / aw, h / ah));
-  const k = 1 / scale;
+  const k = 1 / (scale * u);
   const ox = (SHEET_AREA.x0 + SHEET_AREA.x1) / 2 - ((bounds.minX + bounds.maxX) / 2) * k;
   const oy = (SHEET_AREA.y0 + SHEET_AREA.y1) / 2 - ((bottom + top) / 2) * k;
-  return { scale: scale, k: k, plugTop: plugTop, X: x => ox + x * k, Y: y => oy + y * k, pt: p => [ox + p[0] * k, oy + p[1] * k] };
+  return { scale: scale, u: u, k: k, plugTop: plugTop, X: x => ox + x * k, Y: y => oy + y * k, pt: p => [ox + p[0] * k, oy + p[1] * k] };
 }
 
 /** Power plug leads (customer side, Note 2) from the RIGHT end of every junction box. */
-function sheetPlugLeads(jbs, plugTop) {
+function sheetPlugLeads(jbs, plugTop, u) {
+  u = u > 0 ? u : 1;
   return jbs.map(j => ({
     jb: j,
-    a: [[j.x1 - 46, j.y0 + 18], [j.x1 - 14, j.y1 + 42], [j.x1 - 14, plugTop]],
-    b: [[j.x1 - 26, j.y0 + 18], [j.x1 + 6, j.y1 + 42], [j.x1 + 6, plugTop]],
+    a: [[j.x1 - 46 * u, j.y0 + 18 * u], [j.x1 - 14 * u, j.y1 + 42 * u], [j.x1 - 14 * u, plugTop]],
+    b: [[j.x1 - 26 * u, j.y0 + 18 * u], [j.x1 + 6 * u, j.y1 + 42 * u], [j.x1 + 6 * u, plugTop]],
   }));
 }
 
 /** Grounding point: the upper hole of the lowest bolt pair on the rack's right-most
     upright (as on AYK drawings); falls back to the bottom-right corner. */
-function sheetGroundPoint(flat, B) {
-  const holes = ((flat && flat.circles) || []).filter(c => c.cx > B.maxX - 400 && c.cy < B.minY + 260 && c.r > 2 && c.r < 12);
-  if (!holes.length) return { x: B.maxX - 25, y: B.minY + 12, r: 0 };
+function sheetGroundPoint(flat, B, u) {
+  u = u > 0 ? u : 1;
+  const holes = ((flat && flat.circles) || []).filter(c => c.cx > B.maxX - 400 * u && c.cy < B.minY + 260 * u && c.r > 2 * u && c.r < 12 * u);
+  if (!holes.length) return { x: B.maxX - 25 * u, y: B.minY + 12 * u, r: 0 };
   const maxX = Math.max(...holes.map(c => c.cx));
-  const col = holes.filter(c => c.cx > maxX - 1);
-  const ys = Array.from(new Set(col.map(c => Math.round(c.cy * 10) / 10))).sort((a, b) => a - b);
-  const y = ys.length > 1 && ys[1] - ys[0] < 30 ? ys[1] : ys[0];
-  const r = Math.max(...col.filter(c => Math.abs(c.cy - y) < 0.2).map(c => c.r));
+  const col = holes.filter(c => c.cx > maxX - u);
+  const ys = Array.from(new Set(col.map(c => Math.round(c.cy / u * 10) / 10 * u))).sort((a, b) => a - b);
+  const y = ys.length > 1 && ys[1] - ys[0] < 30 * u ? ys[1] : ys[0];
+  const r = Math.max(...col.filter(c => Math.abs(c.cy - y) < 0.2 * u).map(c => c.r));
   return { x: maxX, y: y, r: r };
 }
 
@@ -242,12 +246,14 @@ function sheetFrame(doc, st, nStrings, logo) {
 /* ---------------- the rack, wiring and annotations ---------------- */
 /**
  * Draws the whole sheet onto `doc` (pdfDoc or sheetSvgTarget).
- * model: {flat, bounds, jbs, wiring, settings, logo, rack:boolean, interactive:boolean}
+ * model: {flat, bounds, jbs, wiring, settings, logo, rack:boolean, interactive:boolean,
+ *         unit: drawing units per real mm (1 for mm drawings, ~0.0225 for a 1:44 rack)}
  * Returns the placement (scale, transform) used.
  */
 function sheetDraw(doc, model) {
   const st = model.settings;
-  const P = sheetPlace(model.bounds, model.jbs, st);
+  const u = model.unit > 0 ? model.unit : 1;
+  const P = sheetPlace(model.bounds, model.jbs, st, u);
   /* AYK sheets are never to scale */
   st.fields.scaleText = 'NTS';
   const W = model.wiring;
@@ -276,7 +282,7 @@ function sheetDraw(doc, model) {
 
   /* customer power plugs (Note 2) */
   if (st.plugs) {
-    const leads = sheetPlugLeads(model.jbs, P.plugTop);
+    const leads = sheetPlugLeads(model.jbs, P.plugTop, u);
     if (ia) doc.group(true, { cls: 'sh-plugs' });
     for (const l of leads) {
       doc.poly(l.a.map(P.pt), { w: 0.35, color: SHEET_COLORS.plugA });
@@ -326,7 +332,7 @@ function sheetDraw(doc, model) {
   }
 
   /* grounding point (Note 1): arrow up to the bolt hole on the rack's bottom-right upright */
-  const gp = sheetGroundPoint(model.flat, model.bounds);
+  const gp = sheetGroundPoint(model.flat, model.bounds, u);
   const tip = P.pt([gp.x, gp.y - gp.r]);
   const goff = E.ground || [0, 0];
   const base = [tip[0] + goff[0], tip[1] - 19 + goff[1]];
@@ -347,4 +353,11 @@ async function sheetPdf(model) {
   const doc = pdfDoc({ w: A3_W, h: A3_H, title: (model.settings.fields.docNumber || 'Wiring Diagram') + ' ' + (model.settings.fields.designName || '') });
   sheetDraw(doc, Object.assign({}, model, { rack: true, interactive: false }));
   return doc.bytes();
+}
+
+/** Drawing units per real millimetre, from the battery module width (400.45 mm). */
+function sheetUnit(components) {
+  const ws = (components || []).filter(c => c.kind === 'module').map(c => c.x1 - c.x0).sort((a, b) => a - b);
+  const k = ws.length ? ws[ws.length >> 1] / 400.45 : 1;
+  return k > 0 ? k : 1;
 }

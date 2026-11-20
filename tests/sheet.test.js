@@ -8,7 +8,7 @@ const zlib = require('zlib');
 const ROOT = path.resolve(__dirname, '..');
 const src = f => fs.readFileSync(path.join(ROOT, 'js', f), 'utf8');
 const L = new Function(src('pdf.js') + src('sheet.js') + src('cadwire.js') + src('cad.js') +
-  '\nreturn { pdfDoc, pdfTextWidth, sheetSettings, sheetDraw, sheetPdf, sheetSvgTarget, sheetPlace, sheetGroundPoint, cadWirePlan, cadWireSave, cadParseDxf, cadFlatten };')();
+  '\nreturn { sheetUnit, pdfDoc, pdfTextWidth, sheetSettings, sheetDraw, sheetPdf, sheetSvgTarget, sheetPlace, sheetGroundPoint, cadWirePlan, cadWireSave, cadParseDxf, cadFlatten };')();
 
 let passed = 0; const failed = [];
 function ok(name, cond, info) { if (cond) passed++; else failed.push(name + (info ? '  [' + info + ']' : '')); console.log((cond ? 'PASS  ' : 'FAIL  ') + name + (info ? '  [' + info + ']' : '')); }
@@ -109,6 +109,36 @@ function checkPdf(bytes) {
   ok('sheet PDF: logo keeps its proportions and fits the 10 mm company cell', draw && Math.abs(draw[1] / draw[2] - 313 / 400) < 0.01 && +draw[2] <= 9.5, draw && draw.slice(1).join(' x '));
   fs.mkdirSync(path.join(ROOT, 'prototype-output'), { recursive: true });
   fs.writeFileSync(path.join(ROOT, 'prototype-output', 'sheet-test.pdf'), pdf);
+
+  /* ---------- a rack drawn at about 1:44 (rack "1111"): the sheet works in real mm ---------- */
+  {
+    const { rack1111, sscs1111 } = require('./fixtures/rack-1111.js');
+    const rc = rack1111();
+    const p11 = L.cadWirePlan(rc, sscs1111(rc), { pair: 'P1' });
+    const w11 = L.cadWireSave(p11, 'k');
+    const u = L.sheetUnit(rc);
+    ok('1:44 rack: drawing units per mm from the module width', Math.abs(u - 9 / 400.45) < 1e-3, u.toFixed(4));
+    const b = { minX: Math.min(...rc.map(c => c.x0)), minY: Math.min(...rc.map(c => c.y0)), maxX: Math.max(...rc.map(c => c.x1)), maxY: Math.max(...rc.map(c => c.y1)) };
+    const st11 = L.sheetSettings({}, 'rack-1111');
+    const svg11 = L.sheetSvgTarget();
+    const P11 = L.sheetDraw(svg11, { bounds: b, jbs: rc.filter(c => c.kind === 'jb'), wiring: w11, settings: st11, unit: u, interactive: true });
+    const rackW = (b.maxX - b.minX) * P11.k;
+    ok('1:44 rack: the rack fills the A3 frame (not a small blob)', rackW > 200 && rackW < 392, rackW.toFixed(0) + ' mm wide at 1:' + P11.scale);
+    ok('1:44 rack: plug leads stay inside the drawing area', P11.Y(P11.plugTop) <= 283.01, P11.Y(P11.plugTop).toFixed(1));
+    const labs = w11.strings.flatMap(s => s.labels).map(l => [P11.X(l.x), P11.Y(l.y)]);
+    let close = 0;
+    for (let i = 0; i < labs.length; i++) for (let j = i + 1; j < labs.length; j++)
+      if (Math.abs(labs[i][0] - labs[j][0]) < 12 && Math.abs(labs[i][1] - labs[j][1]) < 2.6) close++;
+    ok('1:44 rack: no two module labels on top of each other', labs.length > 100 && close === 0, labs.length + ' labels, ' + close + ' overlapping');
+    const pw = w11.cables.filter(c => c.kind === 'power');
+    /* the long cables from each SSC (S+, S−, B+, B−) can always go another way */
+    const long = pw.filter(c => /^(S−|B\+|B−)$/.test(c.from) || /S\+$/.test(c.to));
+    ok('1:44 rack: every long SSC power cable carries other ways for the engineer', long.length === 36 && long.every(c => c.ways && c.ways.length >= 2), long.filter(c => c.ways && c.ways.length >= 2).length + ' of ' + long.length);
+    ok('1:44 rack: the other ways join the same two terminals', pw.every(c => !c.ways || c.ways.every(w => {
+      const a = w.pts[0], z = w.pts[w.pts.length - 1], a0 = c.pts[0], z0 = c.pts[c.pts.length - 1];
+      return Math.hypot(a[0] - a0[0], a[1] - a0[1]) < 0.05 && Math.hypot(z[0] - z0[0], z[1] - z0[1]) < 0.05;
+    })));
+  }
 
   /* the real drawing, when available */
   const dxf = process.env.WIREFLOW_DXF;

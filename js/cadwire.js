@@ -760,7 +760,9 @@ function cadwPlanString(st, cols, jb, pair, placed, gapUse, jbName, tray) {
         crossings += pre.reduce((n, z) => n + cadwCrossings(pw[i], z), 0);
         for (let j = i + 1; j < pw.length; j++) crossings += cadwCrossings(pw[i], pw[j]);
       }
-      for (const j of J) { delete j._cands; delete j._lanes; delete j._all; }
+      /* the other ways each power cable could go, for the engineer to choose on the sheet */
+      for (const j of J) { if (j.kind === 'power' && j.opts) j.ways = cadwWays(j._all || j.opts, j.pts); delete j._cands; delete j._lanes; delete j._all; }
+      for (const o of cables) o.ways = cadwWays(o._cands.map(x => x.c.pts), o.pts);
       lanesUsed.clear();
       for (const [x, set] of base) lanesUsed.set(x, new Set(set));
       for (const o of cables) for (const [key, slot] of o._lanes) { if (!lanesUsed.has(key)) lanesUsed.set(key, new Set()); lanesUsed.get(key).add(slot); }
@@ -1063,13 +1065,31 @@ function cadwOutline(boxes) {
   return merged;
 }
 
+/** Up to `max` clearly different routes (shortest first), not counting the current one. */
+function cadwWays(list, cur, max) {
+  max = max || 8;
+  const g = cadwU(40);
+  const sig = pts => pts.map(p => Math.round(p[0] / g) + ',' + Math.round(p[1] / g)).join(' ') + (pts.curve ? 'c' : '');
+  const seen = new Set([sig(cur)]);
+  const out = [];
+  for (const pts of list.slice().sort((a, b) => cadwLen(a) - cadwLen(b))) {
+    const k = sig(pts);
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push({ pts: pts, curve: !!pts.curve });
+    if (out.length >= max) break;
+  }
+  return out;
+}
+
 /** Plain, storable copy of a plan (no component objects), as kept with the drawing. */
 function cadWireSave(plan, key) {
   const r = v => Math.round(v * 100) / 100;
   return {
     key: key, pair: plan.pair, custom: !!plan.custom, generated: new Date().toISOString(),
     crossings: plan.crossings.slice(), warnings: plan.warnings.slice(),
-    cables: plan.cables.map(c => ({ id: c.id, ssc: c.ssc, kind: c.kind, from: c.from, to: c.to, curve: !!c.curve, pts: c.pts.map(p => [r(p[0]), r(p[1])]) })),
+    cables: plan.cables.map(c => ({ id: c.id, ssc: c.ssc, kind: c.kind, from: c.from, to: c.to, curve: !!c.curve, pts: c.pts.map(p => [r(p[0]), r(p[1])]),
+      ways: c.kind === 'power' && c.ways && c.ways.length ? c.ways.map(w => ({ curve: !!w.curve, pts: w.pts.map(p => [r(p[0]), r(p[1])]) })) : undefined })),
     strings: plan.strings.map(st => ({ name: st.name, tag: st.tag, modules: st.modules.map(m => m.id),
       labels: st.labels.map(l => ({ id: l.id, text: l.text, x: r(l.x), y: r(l.y) })) })),
     outline: plan.outline.map(o => ({ ssc: o.ssc, segs: o.segs.map(sg => sg.map(p => [r(p[0]), r(p[1])])) })),
