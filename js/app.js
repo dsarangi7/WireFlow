@@ -1,8 +1,11 @@
 /* ============================================================
  * WireFlow — application shell
- * Hash router: #/ product page · #/app projects · #/folder/<id> racks of a project ·
- * #/cad/<id> rack view (teach, confirm, number) · #/sheet/<id> wiring sheet (PDF) ·
- * #/example the example rack
+ * Hash router: #/ product page · #/app home (two diagram cards) ·
+ * Wiring diagram: #/wiring projects · #/folder/<id> racks of a project ·
+ *   #/cad/<id> rack view (teach, confirm, number) · #/sheet/<id> wiring sheet (PDF) ·
+ *   #/example the example rack
+ * Electrical diagram: #/electrical projects · #/efolder/<id> diagrams of a project ·
+ *   #/elec/<id> system setup
  * ============================================================ */
 
 const app = document.getElementById('app');
@@ -94,11 +97,15 @@ async function route() {
   if (h.startsWith('#/cad/')) { renderCadPage(+h.split('/')[2]); return; }
   if (h.startsWith('#/sheet/')) { renderSheetPage(+h.split('/')[2]); return; }
   if (h.startsWith('#/folder/')) { renderDashboard(decodeURIComponent(h.split('/')[2] || '') || undefined); return; }
+  if (h.startsWith('#/efolder/')) { renderElecDashboard(decodeURIComponent(h.split('/')[2] || '') || undefined); return; }
+  if (h.startsWith('#/elec/')) { renderElecPage(+h.split('/')[2]); return; }
   switch (h) {
-    case '#/app': renderDashboard(); return;
+    case '#/app': renderHome(); return;
+    case '#/wiring': renderDashboard(); return;
+    case '#/electrical': renderElecDashboard(); return;
     case '#/example': openExampleRack().catch(e => { shell(`<div class="empty"><h3>Could not open the example</h3><p>${esc(e.message)}</p><a class="btn btn-primary" href="#/app">Back</a></div>`, 'dash'); }); return;
     case '#/login': location.replace('#/app'); return;
-    default: renderDashboard();
+    default: renderHome();
   }
 }
 
@@ -113,7 +120,7 @@ function shell(content, active) {
           <span>WireFlow</span>
         </a>
         <nav class="tb-nav" aria-label="App">
-          <a href="#/app" class="${active === 'dash' ? 'on' : ''}">Projects</a>
+          <a href="#/app" class="${active === 'dash' ? 'on' : ''}">Home</a>
           <a href="#/">Product</a>
         </nav>
         <span class="tb-note"><span class="tb-dot" aria-hidden="true"></span>Drawings stay on this device</span>
@@ -148,6 +155,9 @@ function rackFolder(p, folders) { return p && p.folder ? (folders || foldersLoad
  * move a rack). Resolves {folder (id or null), name} or null when cancelled.
  */
 function rackDialog(o) {
+  const noun = o.noun || 'Rack';
+  const nextName = o.nextName || nextRackName;
+  const quick = o.quick || (next => [1, 2, 3, 4, 5, 6].map(n => 'Rack ' + n));
   return new Promise(resolve => {
     const folders = foldersLoad();
     const racksIn = o.racksIn || (() => []);
@@ -166,9 +176,9 @@ function rackDialog(o) {
         <div class="field"><label for="rd-number">Project number *</label><input id="rd-number" maxlength="40" placeholder="e.g. S10195" autocomplete="off"></div>
         <div class="field"><label for="rd-pname">Project name (optional)</label><input id="rd-pname" maxlength="60" placeholder="e.g. MV Example battery room" autocomplete="off"></div>
       </div>
-      <div class="field"><label for="rd-name">Rack name *</label><input id="rd-name" maxlength="60" autocomplete="off">
+      <div class="field"><label for="rd-name">${esc(noun)} name *</label><input id="rd-name" maxlength="60" autocomplete="off">
         <div class="rd-chips" aria-label="Quick names"></div>
-        <p class="muted small">Rack 1, Rack 2 … or your own name.</p></div>
+        <p class="muted small">${esc(o.hint || 'Rack 1, Rack 2 … or your own name.')}</p></div>
       <p class="warn small rd-err" role="alert"></p>
       <div class="modal-actions"><button type="button" class="btn btn-ghost" data-x>Cancel</button><button type="submit" class="btn btn-primary">${esc(o.ok)}</button></div>
     </form>`;
@@ -181,10 +191,10 @@ function rackDialog(o) {
       const isNew = sel.value === '__new';
       f.querySelector('.rd-new').hidden = !isNew;
       const racks = isNew || !sel.value ? [] : racksIn(sel.value);
-      const next = nextRackName(racks);
+      const next = nextName(racks);
       if (!typed) nm.value = next;
       const used = new Set(racks.map(r => String(r.name).toLowerCase()));
-      const chips = [next].concat([1, 2, 3, 4, 5, 6].map(n => 'Rack ' + n).filter(c => c !== next && !used.has(c.toLowerCase()))).slice(0, 4);
+      const chips = [next].concat(quick(next).filter(c => c !== next && !used.has(c.toLowerCase()))).slice(0, 4);
       f.querySelector('.rd-chips').innerHTML = chips.map(c => `<button type="button" class="chip-btn" data-chip="${esc(c)}">${esc(c)}</button>`).join('');
       f.querySelectorAll('[data-chip]').forEach(b => b.onclick = () => { nm.value = b.dataset.chip; typed = true; nm.focus(); });
     };
@@ -200,7 +210,7 @@ function rackDialog(o) {
     f.onsubmit = e => {
       e.preventDefault();
       const name = nm.value.trim();
-      if (!name) { err('Give the rack a name, for example Rack 1.'); nm.focus(); return; }
+      if (!name) { err(o.nameNeeded || 'Give the rack a name, for example Rack 1.'); nm.focus(); return; }
       let folder = sel.value || null;
       if (folder === '__new') {
         const number = f.querySelector('#rd-number').value.trim();
@@ -216,7 +226,7 @@ function rackDialog(o) {
         }
       }
       if (folder && racksIn(folder).some(r => r.id !== o.rackId && String(r.name).toLowerCase() === name.toLowerCase())) {
-        err(`This project already has a rack called "${name}". Choose another name.`); nm.focus(); return;
+        err(`This project already has a${/^[aeiou]/i.test(noun) ? 'n' : ''} ${noun.toLowerCase()} called "${name}". Choose another name.`); nm.focus(); return;
       }
       close({ folder: folder, name: name });
     };
@@ -271,7 +281,8 @@ async function renderDashboard(folderId) {
     .sort((a, b) => String(a.name).localeCompare(String(b.name), undefined, { numeric: true }));
   const unfiled = racksIn(null);
   const folder = folderId && folderId !== 'none' ? folders.find(f => f.id === folderId) : null;
-  if (folderId && folderId !== 'none' && !folder) { location.replace('#/app'); return; }
+  if (folderId && folderId !== 'none' && !folder) { location.replace('#/wiring'); return; }
+  const elecIn = id => projects.filter(p => p.underlay_kind === 'elec' && p.folder === id);
   const inside = !!folderId;
   const when = p => new Date(p.updated_at || p.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
   const confirmed = p => {
@@ -300,14 +311,15 @@ async function renderDashboard(folderId) {
     return `<a class="d-card d-folder" href="#/folder/${esc(f.id)}">
       <div class="d-card-top"><span class="d-file d-file-folder" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg></span>
         <div class="d-card-title"><b>${esc(f.number)}</b><small>${f.name ? esc(f.name) + ' · ' : ''}Updated ${esc(when({ updated_at: last }))}</small></div></div>
-      <div class="d-stats"><span><b>${racks.length}</b> rack${racks.length === 1 ? '' : 's'}</span>${mods ? `<span><b>${mods}</b> modules</span>` : ''}</div>
+      <div class="d-stats"><span><b>${racks.length}</b> rack${racks.length === 1 ? '' : 's'}</span>${mods ? `<span><b>${mods}</b> modules</span>` : ''}${elecIn(f.id).length ? `<span><b>${elecIn(f.id).length}</b> electrical</span>` : ''}</div>
       <div class="d-status d-status-${racks.length && nw === racks.length ? 'ok' : racks.length ? 'warn' : 'idle'}"><span class="d-dot"></span>${racks.length ? `${nw} of ${racks.length} wired` : 'No racks yet'}</div>
     </a>`;
   };
   const shown = inside ? racksIn(folder ? folder.id : null) : [];
   const head = !inside ? `
         <div>
-          <h1>Projects</h1>
+          <a class="dash-crumb" href="#/app">← Home</a>
+          <h1>Wiring diagram</h1>
           <p>One folder per project number. Every rack of a project goes in it, and what you teach on one rack is used on the next.</p>
         </div>
         <div class="dash-actions">
@@ -316,12 +328,13 @@ async function renderDashboard(folderId) {
           <button class="btn-site btn-site-primary" id="studio-import-button">Import DXF</button>
         </div>` : `
         <div>
-          <a class="dash-crumb" href="#/app">← All projects</a>
+          <a class="dash-crumb" href="#/wiring">← All projects</a>
           <h1>${folder ? esc(folder.number) : 'Racks not in a project'}</h1>
           <p>${folder ? (folder.name ? esc(folder.name) + ' · ' : '') + `${shown.length} rack${shown.length === 1 ? '' : 's'}. New racks imported here use the parts already taught on this project's racks.` : 'Racks imported before projects existed. Use Rename / move on a rack to put it in a project.'}</p>
         </div>
         <div class="dash-actions">
           ${folder ? '<button class="btn-site btn-site-ghost" id="dash-edit-folder">Rename project</button>' : ''}
+          ${folder ? `<a class="btn-site btn-site-ghost" href="#/efolder/${esc(folder.id)}">Electrical diagrams (${elecIn(folder.id).length})</a>` : ''}
           <button class="btn-site btn-site-primary" id="studio-import-button">Import DXF${folder ? ' into this project' : ''}</button>
         </div>`;
   const list = !inside ? `
@@ -382,8 +395,8 @@ async function renderDashboard(folderId) {
   };
   const editFolderBtn = document.getElementById('dash-edit-folder');
   if (editFolderBtn) editFolderBtn.onclick = async () => {
-    if (!(await folderDialog(folder, shown.length))) return;
-    if (!foldersLoad().some(x => x.id === folder.id)) location.hash = '#/app';
+    if (!(await folderDialog(folder, shown.length + elecIn(folder.id).length))) return;
+    if (!foldersLoad().some(x => x.id === folder.id)) location.hash = '#/wiring';
     else renderDashboard(folderId);
   };
   /* rename a rack or move it to another project */
@@ -448,6 +461,387 @@ async function renderDashboard(folderId) {
     if (event.dataTransfer.files.length !== 1) { studioStatus.textContent = 'Drop one drawing at a time.'; return; }
     openStudioDrawing(event.dataTransfer.files[0]);
   };
+}
+
+/* ================= HOME =================
+ * Two templates: the wiring diagram (rack front, from the DXF) and the electrical
+ * diagram (the battery system's connection diagram). Both keep their work in the same
+ * project folders, so one project number holds its racks and its electrical diagrams. */
+async function renderHome() {
+  let projects = [];
+  try { projects = await localProjects(); } catch (e) { /* counts only */ }
+  const folders = foldersLoad();
+  const racks = projects.filter(p => p.underlay_kind === 'cad').length;
+  const elecs = projects.filter(p => p.underlay_kind === 'elec').length;
+  const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+  shell(`
+    <div class="dash home">
+      <div class="dash-head"><div>
+        <h1>What are you drawing?</h1>
+        <p>${folders.length ? `${plural(folders.length, 'project')} on this device. ` : ''}Both diagrams use the same project folders: one per project number.</p>
+      </div></div>
+      <div class="home-cards">
+        <a class="home-card" href="#/wiring">
+          <span class="home-ico" aria-hidden="true"><svg width="34" height="34" viewBox="0 0 24 24" fill="none"><rect x="3" y="3" width="7" height="5" rx="1" stroke="currentColor" stroke-width="1.6"/><rect x="14" y="3" width="7" height="5" rx="1" stroke="currentColor" stroke-width="1.6"/><rect x="3" y="16" width="7" height="5" rx="1" stroke="currentColor" stroke-width="1.6"/><rect x="14" y="16" width="7" height="5" rx="1" stroke="currentColor" stroke-width="1.6"/><path d="M6.5 8v8M17.5 8v8M10 5.5h4" stroke="#ef4444" stroke-width="1.6"/><path d="M10 18.5h4" stroke="#22c55e" stroke-width="1.6"/></svg></span>
+          <b>Wiring diagram</b>
+          <span>The rack front from your AutoCAD DXF: teach the parts, number the modules, and get AYK's A3 wiring sheet (DWG2396 format) as a PDF.</span>
+          <small>${plural(racks, 'rack')}</small>
+        </a>
+        <a class="home-card" href="#/electrical">
+          <span class="home-ico home-ico-elec" aria-hidden="true"><svg width="34" height="34" viewBox="0 0 24 24" fill="none"><rect x="2.5" y="4" width="8" height="6" rx="1" stroke="currentColor" stroke-width="1.6"/><rect x="13.5" y="4" width="8" height="6" rx="1" stroke="currentColor" stroke-width="1.6"/><rect x="8" y="15" width="8" height="6" rx="1" stroke="currentColor" stroke-width="1.6"/><path d="M6.5 10v2.5h5.5V15M17.5 10v2.5H12" stroke="#a78bfa" stroke-width="1.6"/><path d="M10.5 7h3" stroke="#00a8ff" stroke-width="1.6" stroke-dasharray="1.6 1.4"/></svg></span>
+          <b>Electrical diagram</b>
+          <span>The battery system's electrical connection diagram (DWG2527 format), drawn from AYK's MSM, SSC and module drawings: banks, harnesses and customer cables.</span>
+          <small>${plural(elecs, 'diagram')}</small>
+        </a>
+      </div>
+    </div>`, 'dash');
+}
+
+/* ================= ELECTRICAL DIAGRAM: PROJECTS ================= */
+/** The SSC / ACDP / MSM names confirmed on the racks of a project. */
+function elecPartsOfRacks(racks) {
+  const parts = [];
+  let unconfirmed = 0;
+  for (const r of racks) {
+    const cad = (r.config && r.config.cad) || {};
+    for (const c of cad.components || []) {
+      if (c.kind !== 'ssc' && c.kind !== 'acdp' && c.kind !== 'msm') continue;
+      if (!c.labelConfirmed) { unconfirmed++; continue; }
+      parts.push({ rack: r.name, kind: c.kind, name: cadCompLabel(c, cad.labels) });
+    }
+  }
+  return { parts: parts, unconfirmed: unconfirmed };
+}
+
+async function renderElecDashboard(folderId) {
+  shell(`<div class="loading">Loading projects…</div>`, 'dash');
+  let projects;
+  try { projects = await localProjects(); }
+  catch (error) { shell(`<div class="empty">Could not open local projects: ${esc(error.message)}</div>`, 'dash'); return; }
+  const folders = foldersLoad();
+  const folder = folderId ? folders.find(f => f.id === folderId) : null;
+  if (folderId && !folder) { location.replace('#/electrical'); return; }
+  const byName = (a, b) => String(a.name).localeCompare(String(b.name), undefined, { numeric: true });
+  const elecIn = id => projects.filter(p => p.underlay_kind === 'elec' && p.folder === id).sort(byName);
+  const racksIn = id => projects.filter(p => p.underlay_kind === 'cad' && p.folder === id).sort(byName);
+  const when = p => new Date(p.updated_at || p.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+  const folderIcon = '<span class="d-file d-file-folder" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg></span>';
+  const folderCard = f => {
+    const d = elecIn(f.id), r = racksIn(f.id);
+    const done = d.filter(p => p.config && p.config.elec && p.config.elec.confirmed).length;
+    return `<a class="d-card d-folder" href="#/efolder/${esc(f.id)}">
+      <div class="d-card-top">${folderIcon}
+        <div class="d-card-title"><b>${esc(f.number)}</b><small>${f.name ? esc(f.name) + ' · ' : ''}Created ${esc(when({ created_at: f.created }))}</small></div></div>
+      <div class="d-stats"><span><b>${d.length}</b> electrical diagram${d.length === 1 ? '' : 's'}</span>${r.length ? `<span><b>${r.length}</b> rack${r.length === 1 ? '' : 's'}</span>` : ''}</div>
+      <div class="d-status d-status-${d.length && done === d.length ? 'ok' : d.length ? 'warn' : 'idle'}"><span class="d-dot"></span>${d.length ? `${done} of ${d.length} set up` : 'No electrical diagram yet'}</div>
+    </a>`;
+  };
+  const elecCard = p => {
+    const e = (p.config && p.config.elec) || elecNewSetup();
+    const sum = elecSummary(e);
+    const status = sum.confirmed ? ['Setup confirmed', 'ok'] : sum.banks || sum.sscs ? ['Setup in progress', 'warn'] : ['Not set up yet', 'idle'];
+    return `<div class="d-card-wrap"><a class="d-card" href="#/elec/${p.id}">
+      <div class="d-card-top"><span class="d-file d-file-elec" aria-hidden="true">EL</span>
+        <div class="d-card-title"><b>${esc(p.name)}</b><small>Updated ${esc(when(p))}</small></div></div>
+      <div class="d-stats"><span><b>${sum.banks}</b> bank${sum.banks === 1 ? '' : 's'}</span><span><b>${sum.sscs}</b> SSC${sum.sscs === 1 ? '' : 's'}</span></div>
+      <div class="d-status d-status-${status[1]}"><span class="d-dot"></span>${status[0]}</div>
+    </a><button type="button" class="d-card-edit" data-edit="${p.id}" aria-label="Rename or move ${esc(p.name)}">Rename / move</button></div>`;
+  };
+  const nextElecName = list => list.length ? 'Electrical diagram ' + (list.length + 1) : 'Electrical diagram';
+  const dialog = (title, ok, extra) => rackDialog(Object.assign({ title: title, ok: ok, noun: 'Diagram', nextName: nextElecName,
+    quick: () => ['Electrical diagram', 'Bank 1', 'Bank 1–3'], hint: 'For example "Electrical diagram" or "Bank 1–3".',
+    nameNeeded: 'Give the diagram a name, for example Electrical diagram.', racksIn: id => elecIn(id) }, extra));
+
+  const shown = folder ? elecIn(folder.id) : [];
+  const sorted = folders.slice().sort((a, b) => a.number.localeCompare(b.number, undefined, { numeric: true }));
+  shell(`
+    <div class="dash">
+      <div class="dash-head">
+        <div>
+          <a class="dash-crumb" href="${folder ? '#/electrical' : '#/app'}">← ${folder ? 'All projects' : 'Home'}</a>
+          <h1>${folder ? esc(folder.number) : 'Electrical diagram'}</h1>
+          <p>${folder ? (folder.name ? esc(folder.name) + ' · ' : '') + `${shown.length} electrical diagram${shown.length === 1 ? '' : 's'}. A new diagram is filled in from the SSC, ACDP and MSM names confirmed on this project's racks.`
+            : 'The same project folders as the wiring diagram. Open a project, or create one with its number.'}</p>
+        </div>
+        <div class="dash-actions">
+          ${folder ? '<button class="btn-site btn-site-ghost" id="el-edit-folder">Rename project</button>' : '<button class="btn-site btn-site-ghost" id="el-new-folder">New project</button>'}
+          ${folder ? `<a class="btn-site btn-site-ghost" href="#/folder/${esc(folder.id)}">Racks (${racksIn(folder.id).length})</a>` : ''}
+          <button class="btn-site btn-site-primary" id="el-new">New electrical diagram${folder ? ' in this project' : ''}</button>
+        </div>
+      </div>
+      ${folder ? '' : `<ol class="dash-steps" aria-label="Workflow">
+        <li><b>1</b><span>Create the diagram in its project</span></li>
+        <li><b>2</b><span>Set up the banks: MSM, ACDP and SSCs, and the rack of each</span></li>
+        <li><b>3</b><span>Choose the customer connections in use</span></li>
+        <li><b>4</b><span>Confirm the setup; the sheets are drawn from it</span></li>
+      </ol>`}
+      <section class="dash-list" aria-labelledby="list-title">
+        ${folder ? `<div class="dash-list-head"><h2 id="list-title">Electrical diagrams</h2><span>${shown.length}</span></div>
+          ${shown.length ? `<div class="d-grid">${shown.map(elecCard).join('')}</div>` : '<div class="d-empty"><b>No electrical diagram in this project yet</b><span>Use "New electrical diagram" above.</span></div>'}`
+        : `<div class="dash-list-head"><h2 id="list-title">Your projects</h2><span>${folders.length} project${folders.length === 1 ? '' : 's'}</span></div>
+          ${folders.length ? `<div class="d-grid">${sorted.map(folderCard).join('')}</div>` : '<div class="d-empty"><b>No projects yet</b><span>Create one with "New electrical diagram": you will be asked for the project number.</span></div>'}`}
+      </section>
+    </div>`, 'dash');
+
+  const nf = document.getElementById('el-new-folder');
+  if (nf) nf.onclick = async () => {
+    const list = foldersLoad();
+    const f = { id: 'p' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), number: '', name: '', created: new Date().toISOString() };
+    list.push(f); foldersSave(list);
+    const ok = await folderDialog(f, 0);
+    const now = foldersLoad().find(x => x.id === f.id);
+    if (!ok || !now || !now.number) { foldersSave(foldersLoad().filter(x => x.id !== f.id)); renderElecDashboard(); return; }
+    location.hash = '#/efolder/' + f.id;
+  };
+  const ef = document.getElementById('el-edit-folder');
+  if (ef) ef.onclick = async () => {
+    if (!(await folderDialog(folder, shown.length + racksIn(folder.id).length))) return;
+    if (!foldersLoad().some(x => x.id === folder.id)) location.hash = '#/electrical';
+    else renderElecDashboard(folderId);
+  };
+  document.getElementById('el-new').onclick = async () => {
+    const latest = foldersLoad().slice().sort((a, b) => String(b.created).localeCompare(String(a.created)))[0];
+    const place = await dialog('New electrical diagram', 'Create', { folder: folder ? folder.id : (latest ? latest.id : '__new') });
+    if (!place) return;
+    const racks = place.folder ? (await localProjects()).filter(p => p.underlay_kind === 'cad' && p.folder === place.folder) : [];
+    const found = elecPartsOfRacks(racks);
+    const setup = found.parts.length ? elecFromRacks(found.parts, racks.map(r => r.name)) : elecNewSetup();
+    if (found.unconfirmed) setup.unconfirmedParts = found.unconfirmed;
+    const now = new Date().toISOString();
+    const project = { name: place.name, folder: place.folder || undefined, underlay_kind: 'elec', status: 'draft', created_at: now, updated_at: now, config: { elec: setup } };
+    project.id = await localAddProject(project);
+    location.hash = '#/elec/' + project.id;
+  };
+  document.querySelectorAll('[data-edit]').forEach(b => b.onclick = async () => {
+    const p = shown.find(x => x.id === +b.dataset.edit);
+    if (!p) return;
+    const got = await dialog('Rename / move electrical diagram', 'Save', { folder: p.folder || null, name: p.name, rackId: p.id });
+    if (!got || !got.folder) return;
+    p.name = got.name; p.folder = got.folder; p.updated_at = new Date().toISOString();
+    await localPutProject(p);
+    renderElecDashboard(folderId);
+  });
+}
+
+/* The part library (assets/elec/parts.json, built by tools/make-elec-parts.js). */
+let elecPartsCache = null;
+function elecPartsLoad() {
+  if (!elecPartsCache) elecPartsCache = fetch('assets/elec/parts.json').then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+    .catch(e => { elecPartsCache = null; throw e; });
+  return elecPartsCache;
+}
+/** One part view as an SVG (drawing units, Y up); with labels, every port is marked and named. */
+function elecViewSvg(v, cls, labels, partId) {
+  const big = Math.max(v.w, v.h), pad = big * (labels ? 0.05 : 0.03), sw = big / 600;
+  const fs = big / 52;
+  const marks = labels ? (v.ports || []).map(p => {
+    const r = p.size / 2 * 1.15, cls2 = p.unused || elecPortBlocked(partId, p.name) ? 'unused' : p.sure ? 'sure' : 'guess';
+    return `<g class="el-port el-port-${cls2}"><circle cx="${p.x}" cy="${v.h - p.y}" r="${r.toFixed(3)}"/>
+      <text x="${p.x}" y="${(v.h - p.y - p.size * 0.78).toFixed(3)}" font-size="${fs.toFixed(3)}" stroke-width="${(fs * 0.28).toFixed(3)}" text-anchor="middle">${esc(p.name)}${p.sure ? '' : '?'}</text></g>`;
+  }).join('') : '';
+  return `<svg class="${cls || ''}" viewBox="${-pad} ${-pad} ${v.w + 2 * pad} ${v.h + 2 * pad}" role="img" aria-label="${esc(v.label)}">
+    <g transform="translate(0 ${v.h}) scale(1 -1)" fill="none" stroke="currentColor" stroke-width="${sw.toFixed(3)}" stroke-linejoin="round" stroke-linecap="round">
+      <path d="${v.d}"/>${v.circles.map(c => `<circle cx="${c[0]}" cy="${c[1]}" r="${c[2]}"/>`).join('')}</g>${marks ? `<g stroke-width="${(sw * 2.2).toFixed(3)}">${marks}</g>` : ''}</svg>`;
+}
+/** A part view, large, with its port names. */
+async function elecShowPart(partId, viewId) {
+  const lib = await elecPartsLoad();
+  const part = lib.parts.find(p => p.id === partId), v = part && part.views.find(x => x.id === viewId);
+  if (!v) return;
+  const n = (v.ports || []).filter(p => !p.unused), guess = n.filter(p => !p.sure).length;
+  const blocked = n.filter(p => elecPortBlocked(partId, p.name));
+  const back = document.createElement('div');
+  back.className = 'modal-back';
+  back.innerHTML = `<div class="modal el-part-modal" role="dialog" aria-label="${esc(v.label)}">
+    <div class="el-card-head"><h3>${esc(v.label)}</h3><button class="btn btn-ghost btn-sm" data-x>Close</button></div>
+    <p class="muted small">${n.length ? `${n.length} ports. ${guess ? `<b class="el-guess-key">${guess} amber names (with ?)</b> are proposed by position and need confirming; the rest are certain (pin count or AYK's DWG2527 order).` : 'All names are certain (AYK DWG2527 order).'}` : 'No ports are named on this view: it is only drawn.'}${(v.ports || []).some(p => p.unused) || blocked.length ? ' Grey: not used on the diagram' + (blocked.length ? ` (${blocked.map(p => esc(p.name)).join(', ')}: ${esc(ELEC_NOT_WIRED.find(r => r.part === partId && r.port !== '*').why)})` : '') + '.' : ''}</p>
+    <div class="el-part-big">${elecViewSvg(v, '', true, partId)}</div></div>`;
+  document.body.appendChild(back);
+  const close = () => { back.remove(); document.removeEventListener('keydown', key); };
+  const key = e => { if (e.key === 'Escape') close(); };
+  document.addEventListener('keydown', key);
+  back.onclick = e => { if (e.target === back || e.target.closest('[data-x]')) close(); };
+}
+async function elecPartsInto(el) {
+  if (!el) return;
+  try {
+    if (elecPartsInto.html) { el.innerHTML = elecPartsInto.html; return; }
+    const lib = await elecPartsLoad();
+    el.innerHTML = elecPartsInto.html = lib.parts.filter(p => ELEC_PARTS.includes(p.id)).flatMap(p => p.views.map(v =>
+      `<button type="button" class="el-part" data-part="${esc(p.id)}" data-view="${esc(v.id)}" title="Open with port names">${elecViewSvg(v)}<span>${esc(v.label)}${(v.ports || []).length ? ` · ${(v.ports || []).filter(q => !q.unused).length} ports` : ''}</span></button>`)).join('');
+  } catch (e) { el.innerHTML = `<span class="warn small">Could not load the part drawings (${esc(e.message)}).</span>`; return; }
+  el.querySelectorAll('[data-part]').forEach(b => b.onclick = () => elecShowPart(b.dataset.part, b.dataset.view));
+}
+
+/* ================= ELECTRICAL DIAGRAM: SYSTEM SETUP =================
+ * What the sheets are drawn from: the banks (one MSM each), each bank's ACDP and SSCs,
+ * the rack every part is in, and the customer connections in use. Every answer is the
+ * engineer's; names from the racks are only a starting point. Saved on every change. */
+async function renderElecPage(id) {
+  const project = await localProject(id);
+  if (!project || project.underlay_kind !== 'elec') {
+    shell('<div class="empty"><h3>Diagram not found</h3><p>This electrical diagram is not stored in this browser.</p><a class="btn btn-primary" href="#/electrical">Back</a></div>', 'dash');
+    return;
+  }
+  project.config = project.config || {};
+  const setup = project.config.elec = project.config.elec || elecNewSetup();
+  const folder = rackFolder(project);
+  const racks = folder ? (await localProjects()).filter(p => p.underlay_kind === 'cad' && p.folder === folder.id) : [];
+  const rackNames = () => Array.from(new Set(racks.map(r => r.name).concat(setup.banks.flatMap(b => [b.msm.rack, b.acdp.rack]), setup.sscs.map(c => c.rack)).filter(Boolean)))
+    .sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true }));
+  let saving = Promise.resolve();
+  const save = () => {
+    project.updated_at = new Date().toISOString();
+    const copy = JSON.parse(JSON.stringify(project));
+    saving = saving.then(() => localPutProject(copy)).catch(e => toast('Could not save: ' + e.message, 'error'));
+  };
+  /* any change after confirming needs a new confirmation */
+  const changed = () => { if (setup.confirmed) { setup.confirmed = false; toast('Setup changed: confirm it again before the sheets are drawn.'); } save(); draw(); };
+
+  shell(`
+    <div class="dash el-page">
+      <div class="dash-head">
+        <div>
+          <a class="dash-crumb" href="${folder ? '#/efolder/' + esc(folder.id) : '#/electrical'}">← ${folder ? esc(folder.number) : 'Projects'}</a>
+          <h1>${esc(project.name)}</h1>
+          <p>Electrical connection diagram · system setup</p>
+        </div>
+        <div class="dash-actions">
+          ${racks.length ? '<button class="btn-site btn-site-ghost" id="el-fill">Fill in from the racks</button>' : ''}
+        </div>
+      </div>
+      <div id="el-body"></div>
+    </div>
+    <datalist id="el-racks"></datalist>`, 'dash');
+
+  const body = document.getElementById('el-body');
+  function draw() {
+    document.getElementById('el-racks').innerHTML = rackNames().map(r => `<option value="${esc(r)}">`).join('');
+    const issues = elecIssues(setup);
+    const errors = issues.filter(i => i.level === 'error'), notes = issues.filter(i => i.level === 'note');
+    const bankOpts = sel => `<option value="" ${sel ? '' : 'selected'}>Choose…</option>` + setup.banks.map(b => `<option value="${esc(b.id)}" ${b.id === sel ? 'selected' : ''}>${esc(b.name || 'Bank')}</option>`).join('');
+    const yesNo = (name, v) => `<span class="el-yn" role="radiogroup">
+        <label><input type="radio" name="${name}" value="yes" ${v === true ? 'checked' : ''}> Yes</label>
+        <label><input type="radio" name="${name}" value="no" ${v === false ? 'checked' : ''}> No</label></span>`;
+    const src = setup.source && setup.source.racks && setup.source.racks.length
+      ? `<p class="muted small">Names were read from the confirmed parts on ${esc(setup.source.racks.join(', '))}. Check each one.${setup.unconfirmedParts ? ` ${setup.unconfirmedParts} SSC/ACDP/MSM part${setup.unconfirmedParts === 1 ? ' was' : 's were'} not confirmed on the racks yet and ${setup.unconfirmedParts === 1 ? 'was' : 'were'} left out.` : ''}</p>` : '';
+    body.innerHTML = `
+      <section class="el-card">
+        <div class="el-card-head"><h2>Banks</h2><button class="btn btn-ghost btn-sm" id="el-add-bank">Add bank</button></div>
+        <p class="muted small">One bank per MSM. Same rack = AYK supplies the whole harness; different racks = inline connector and a cable the customer makes (dashed on the sheet).</p>
+        ${src}
+        ${setup.banks.length ? `<div class="el-table-wrap"><table class="el-table">
+          <thead><tr><th>Bank</th><th>MSM</th><th>MSM rack</th><th>ACDP (optional)</th><th>ACDP rack</th><th>SSCs</th><th></th></tr></thead>
+          <tbody>${setup.banks.map(b => `<tr data-bank="${esc(b.id)}">
+            <td><input data-f="name" value="${esc(b.name)}" aria-label="Bank name"></td>
+            <td><input data-f="msm.name" value="${esc(b.msm.name)}" placeholder="MSM-1" aria-label="MSM name"></td>
+            <td><input data-f="msm.rack" value="${esc(b.msm.rack)}" list="el-racks" placeholder="Rack 1" aria-label="MSM rack"></td>
+            <td><input data-f="acdp.name" value="${esc(b.acdp.name)}" placeholder="ACDP1" aria-label="ACDP name"></td>
+            <td><input data-f="acdp.rack" value="${esc(b.acdp.rack)}" list="el-racks" placeholder="Rack 1" aria-label="ACDP rack"></td>
+            <td class="el-num">${elecBankSscs(setup, b.id).length} / ${ELEC_MSM_SSC_PORTS}</td>
+            <td><button class="btn btn-ghost btn-xs" data-del-bank="${esc(b.id)}" title="Remove this bank">×</button></td></tr>`).join('')}</tbody></table></div>`
+          : '<div class="d-empty"><b>No banks yet</b><span>Add one bank for each MSM.</span></div>'}
+      </section>
+
+      <section class="el-card">
+        <div class="el-card-head"><h2>SSCs</h2><button class="btn btn-ghost btn-sm" id="el-add-ssc">Add SSC</button></div>
+        ${setup.sscs.length ? `<div class="el-table-wrap"><table class="el-table">
+          <thead><tr><th>SSC</th><th>Rack</th><th>Bank</th><th>Cooling fans</th><th>Link to MSM</th><th></th></tr></thead>
+          <tbody>${setup.sscs.map(c => {
+            const b = setup.banks.find(x => x.id === c.bank);
+            const k = b ? elecLinkKind(c.rack, b.msm.rack) : 'unknown';
+            return `<tr data-ssc="${esc(c.id)}">
+            <td><input data-f="name" value="${esc(c.name)}" placeholder="SSC1" aria-label="SSC name"></td>
+            <td><input data-f="rack" value="${esc(c.rack)}" list="el-racks" placeholder="Rack 1" aria-label="SSC rack"></td>
+            <td><select data-f="bank" aria-label="Bank">${bankOpts(c.bank)}</select></td>
+            <td><select data-f="fans" aria-label="Cooling fans"><option value="" ${c.fans ? '' : 'selected'}>Choose…</option><option value="2" ${c.fans === 2 ? 'selected' : ''}>2</option><option value="3" ${c.fans === 3 ? 'selected' : ''}>3</option></select></td>
+            <td><span class="el-link el-link-${k}">${k === 'harness' ? 'AYK harness' : k === 'inline' ? 'Inline connector' : '—'}</span></td>
+            <td><button class="btn btn-ghost btn-xs" data-del-ssc="${esc(c.id)}" title="Remove this SSC">×</button></td></tr>`;
+          }).join('')}</tbody></table></div>`
+          : '<div class="d-empty"><b>No SSCs yet</b><span>Add every SSC of the system and choose its bank.</span></div>'}
+      </section>
+
+      <section class="el-card">
+        <div class="el-card-head"><h2>Customer connections</h2></div>
+        <p class="muted small">At the MSM back. Only the ones in use are drawn.</p>
+        <ul class="el-options">${ELEC_OPTIONS.map(o => `<li><div><b>${esc(o.label)}</b><small>${esc(o.note)}</small></div>${yesNo('opt-' + o.id, setup.options[o.id])}</li>`).join('')}
+          <li><div><b>Master valves (fire fighting)</b><small>LP16-7 female to male, 5 × 0.3 mm²</small></div>
+            <select id="el-valves" aria-label="Master valves"><option value="" ${[0, 1, 2].includes(setup.valves) ? '' : 'selected'}>Choose…</option>${[0, 1, 2].map(v => `<option value="${v}" ${setup.valves === v ? 'selected' : ''}>${v}</option>`).join('')}</select></li>
+        </ul>
+      </section>
+
+      <section class="el-card el-status">
+        <div class="el-card-head"><h2>${setup.confirmed ? 'Setup confirmed' : 'Confirm the setup'}</h2>
+          <button class="btn btn-primary btn-sm" id="el-confirm" ${errors.length || setup.confirmed ? 'disabled' : ''}>${setup.confirmed ? 'Confirmed' : 'Confirm setup'}</button></div>
+        ${errors.length ? `<p class="small">${errors.length} thing${errors.length === 1 ? '' : 's'} to answer first:</p><ul class="el-issues">${errors.map(i => `<li>${esc(i.text)}</li>`).join('')}</ul>` : setup.confirmed ? '<p class="small cad-ok">Everything is answered and confirmed.</p>' : '<p class="small">Everything is answered. Confirm to lock it in.</p>'}
+        ${notes.length ? `<ul class="el-issues el-notes">${notes.map(i => `<li>${esc(i.text)}</li>`).join('')}</ul>` : ''}
+        <p class="muted small">Next: the sheets (notes, then per bank the MSM back, the SSC backs and the SSC fronts with their modules) are drawn from this setup in AYK's DWG2527 format. That step is not built yet.</p>
+      </section>
+
+      <section class="el-card">
+        <div class="el-card-head"><h2>Part drawings</h2><span class="muted small">Used on every project</span></div>
+        <p class="muted small">From AYK's CAD files (MSM, SSC, module). No junction box is drawn on new projects, and the SSC Ext-HVIL port stays unconnected: that wire is high voltage and the connector is not rated for it.</p>
+        <div class="el-parts" id="el-parts"><span class="muted small">Loading the part drawings…</span></div>
+      </section>`;
+    elecPartsInto(document.getElementById('el-parts'));
+    wire();
+  }
+
+  function setPath(obj, path, v) { const k = path.split('.'); let o = obj; while (k.length > 1) o = o[k.shift()]; o[k[0]] = v; }
+  function wire() {
+    body.querySelectorAll('[data-bank] [data-f]').forEach(inp => inp.onchange = () => {
+      const b = setup.banks.find(x => x.id === inp.closest('[data-bank]').dataset.bank);
+      setPath(b, inp.dataset.f, inp.value.trim()); changed();
+    });
+    body.querySelectorAll('[data-ssc] [data-f]').forEach(inp => inp.onchange = () => {
+      const c = setup.sscs.find(x => x.id === inp.closest('[data-ssc]').dataset.ssc);
+      c[inp.dataset.f] = inp.dataset.f === 'fans' ? (inp.value ? +inp.value : null) : inp.value.trim();
+      changed();
+    });
+    body.querySelectorAll('[data-del-bank]').forEach(b => b.onclick = () => {
+      const bank = setup.banks.find(x => x.id === b.dataset.delBank);
+      const n = elecBankSscs(setup, bank.id).length;
+      if (!confirm(`Remove ${bank.name || 'this bank'}?${n ? ` Its ${n} SSC${n === 1 ? '' : 's'} stay in the list without a bank.` : ''}`)) return;
+      setup.banks = setup.banks.filter(x => x !== bank);
+      setup.sscs.forEach(c => { if (c.bank === bank.id) c.bank = ''; });
+      changed();
+    });
+    body.querySelectorAll('[data-del-ssc]').forEach(b => b.onclick = () => {
+      const c = setup.sscs.find(x => x.id === b.dataset.delSsc);
+      if (!confirm(`Remove ${c.name || 'this SSC'}?`)) return;
+      setup.sscs = setup.sscs.filter(x => x !== c); changed();
+    });
+    document.getElementById('el-add-bank').onclick = () => {
+      const n = setup.banks.length + 1;
+      setup.banks.push({ id: 'b' + Date.now().toString(36), name: 'Bank ' + n, msm: { name: '', rack: '' }, acdp: { name: '', rack: '' } });
+      changed();
+    };
+    document.getElementById('el-add-ssc').onclick = () => {
+      const nums = setup.sscs.map(c => +((String(c.name).match(/(\d+)\s*$/) || [])[1] || 0));
+      const last = setup.sscs[setup.sscs.length - 1];
+      setup.sscs.push({ id: 's' + Date.now().toString(36), name: 'SSC' + (Math.max(0, ...nums) + 1), rack: last ? last.rack : '', bank: last ? last.bank : (setup.banks.length === 1 ? setup.banks[0].id : ''), fans: null });
+      changed();
+    };
+    body.querySelectorAll('.el-yn input').forEach(r => r.onchange = () => {
+      setup.options[r.name.replace(/^opt-/, '')] = r.value === 'yes'; changed();
+    });
+    document.getElementById('el-valves').onchange = e => { setup.valves = e.target.value === '' ? null : +e.target.value; changed(); };
+    document.getElementById('el-confirm').onclick = () => {
+      if (!elecReady(setup)) return;
+      setup.confirmed = true; setup.confirmedAt = new Date().toISOString(); save(); draw();
+    };
+  }
+  const fill = document.getElementById('el-fill');
+  if (fill) fill.onclick = () => {
+    const found = elecPartsOfRacks(racks);
+    if (!found.parts.length) { toast('No confirmed SSC, ACDP or MSM names on this project\'s racks yet.', 'error'); return; }
+    if ((setup.banks.length || setup.sscs.length) && !confirm('Replace the banks and SSCs with the names confirmed on the racks? Your answers for the customer connections are kept.')) return;
+    const fresh = elecFromRacks(found.parts, racks.map(r => r.name));
+    setup.banks = fresh.banks; setup.sscs = fresh.sscs; setup.source = fresh.source;
+    setup.unplacedAcdps = fresh.unplacedAcdps; setup.unconfirmedParts = found.unconfirmed || undefined;
+    changed();
+  };
+  draw();
 }
 
 /* ================= CAD RACK VIEW =================
@@ -572,7 +966,7 @@ async function renderCadPage(id) {
   shell(`
     <div class="cad-page">
       <header class="cad-head">
-        <a class="back" href="${rackFolder(project) ? '#/folder/' + esc(rackFolder(project).id) : '#/app'}">← ${rackFolder(project) ? esc(rackFolder(project).number) : 'Projects'}</a>
+        <a class="back" href="${rackFolder(project) ? '#/folder/' + esc(rackFolder(project).id) : '#/wiring'}">← ${rackFolder(project) ? esc(rackFolder(project).number) : 'Projects'}</a>
         <h1>${esc(project.name)}</h1>
         <span class="chip">DXF · ${esc(u)}</span>
         <div class="cad-tools">

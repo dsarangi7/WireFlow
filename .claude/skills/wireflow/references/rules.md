@@ -64,3 +64,26 @@ the engineer confirms every SSC/ACDP/MSM name and each SSC's module count.
   along a section moves the next bend, near a terminal keeps a short stub), double-click for
   straight/bent/curved and the planner's other routes (length in m, crossings), right-click undo.
 - Output is PDF only. No DXF, CSV or Visio export.
+
+## Electrical diagram (DWG2527 format, second template)
+
+- Same project folders as the wiring diagram. Projects have 3, 6 or 9 SSCs; the engineer
+  decides how they split into banks (one MSM per bank). The MSM back shows SSC ports 1–6, so
+  more than 6 on one MSM is pointed out, never blocked.
+- Parts drawn: MSM back, SSC front/back, module front/back, from AYK's DXFs
+  (`tools/make-elec-parts.js` → `assets/elec/parts.json`). ACDP is optional.
+- No junction box on the electrical diagram of future projects. The wiring diagram keeps its
+  junction boxes (B+/B− and the customer plug leads) — do not remove them there.
+- Safety (AYK, 20 Nov 2026): the junction box HVIL wire to the SSC (SSC Ext-HVIL) is never wired
+  on new projects — the wire is high voltage and the connector is not rated for it. Released
+  projects are not changed. Kept in `ELEC_NOT_WIRED` (`js/elec.js`).
+- Ports (all confirmed by AYK, 20 Nov 2026), found on the drawings by `tools/make-elec-parts.js`:
+  - MSM back (9-SSC MSM): top row Cloud, EMS, PCS, Spare; then SSC1P, SSC1B … SSC9P, SSC9B row by
+    row, left to right; Estop1–9 then RemoteE (4-pin) in reading order; Dry Contact (2-pin),
+    PowerP/PowerB (3-pin), Ex.FanFB (5-pin), Valve 1/Valve 2 (7-pin); the 19-pin connector is unused.
+  - SSC back: PowerP, PowerB, CommP, CommB, Ext-HVIL (never wired), Cooling Fan, Estop.
+  - SSC front: S, N, S+, B+, B−, S−. The module carries no ports on this diagram.
+- Same rack = AYK harness (solid); different racks = inline connector + customer cable (dashed).
+- Never guess fan counts (2 or 3 per SSC), port maps or bank splits: the engineer answers them
+  on the setup page and confirms it.
+

@@ -658,3 +658,56 @@ select.cad-need { border-color: #f59e0b; box-shadow: 0 0 0 2px rgba(245, 158, 11
 .wf-dialog .warn { color: #b45309; }
 .wf-dialog .rd-err:empty, .wf-dialog .fd-err:empty { display: none; }
 .cad-numlib .numlib-same { margin-left: 0; align-self: flex-start; font-size: 11px; }
+
+/* ---------- home: the two diagram templates ---------- */
+.home-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 18px; }
+.home-card { display: grid; gap: 10px; align-content: start; background: #111b31; border: 1px solid rgba(120,145,185,.22); border-radius: 18px; padding: 26px; color: #f3f6fc; min-height: 230px; transition: border-color .15s, transform .15s; }
+.home-card:hover, .home-card:focus-visible { border-color: #00a8ff; transform: translateY(-2px); }
+.home-card b { font-size: 22px; font-weight: 800; letter-spacing: -.01em; }
+.home-card span:not(.home-ico) { color: #9aabc6; line-height: 1.5; }
+.home-card small { color: #c3cfe2; font-weight: 600; margin-top: auto; }
+.home-ico { display: inline-grid; place-items: center; width: 56px; height: 56px; border-radius: 14px; background: rgba(0,168,255,.14); color: #00a8ff; }
+.home-ico-elec { background: rgba(167,139,250,.16); color: #c4b5fd; }
+.d-file-elec { background: rgba(167,139,250,.16); color: #c4b5fd; }
+
+/* ---------- electrical diagram: system setup ---------- */
+.el-page .el-card { background: #111b31; border: 1px solid rgba(120,145,185,.18); border-radius: 16px; padding: 18px 20px; display: grid; gap: 10px; }
+.el-card-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.el-card-head h2 { font-size: 18px; font-weight: 700; }
+.el-page .muted { color: #9aabc6; }
+.el-table-wrap { overflow-x: auto; }
+.el-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.el-table th { text-align: left; font-size: 12px; font-weight: 600; color: #9aabc6; padding: 6px 8px; border-bottom: 1px solid rgba(120,145,185,.22); white-space: nowrap; }
+.el-table td { padding: 5px 6px; border-bottom: 1px solid rgba(120,145,185,.1); }
+.el-table input, .el-table select, .el-options select { width: 100%; min-width: 90px; padding: 7px 9px; border-radius: 8px; border: 1px solid rgba(120,145,185,.3); background: #0d1528; color: #f3f6fc; font: inherit; }
+.el-table input:focus, .el-table select:focus, .el-options select:focus { outline: 2px solid rgba(0,168,255,.35); border-color: #00a8ff; }
+.el-num { color: #c3cfe2; white-space: nowrap; }
+.el-link { font-size: 12px; font-weight: 600; white-space: nowrap; }
+.el-link-harness { color: #4ade80; }
+.el-link-inline { color: #fbbf24; }
+.el-link-unknown { color: #64748b; }
+.el-options { list-style: none; padding: 0; margin: 0; display: grid; gap: 2px; }
+.el-options li { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 9px 4px; border-bottom: 1px solid rgba(120,145,185,.1); }
+.el-options li div { display: grid; gap: 2px; }
+.el-options small { color: #9aabc6; }
+.el-options select { width: 110px; }
+.el-yn { display: inline-flex; gap: 14px; flex: none; }
+.el-yn label { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; color: #c3cfe2; }
+.el-issues { margin: 0; padding-left: 20px; display: grid; gap: 3px; color: #fbbf24; font-size: 14px; }
+.el-notes { color: #9aabc6; }
+.el-status .btn[disabled] { opacity: .55; cursor: not-allowed; }
+@media (max-width: 720px) { .el-options li { flex-direction: column; align-items: flex-start; } }
+.el-parts { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; }
+.el-part { margin: 0; background: #f8fafc; color: #18212f; border: 2px solid transparent; border-radius: 12px; padding: 10px; display: grid; gap: 6px; cursor: zoom-in; font: inherit; }
+.el-part:hover, .el-part:focus-visible { border-color: #00a8ff; }
+.el-part svg { width: 100%; height: 130px; }
+.el-part span { font-size: 12px; font-weight: 600; color: #334155; text-align: center; }
+.el-part-modal { width: min(1100px, 94vw); max-width: none; max-height: 92vh; overflow: auto; }
+.el-part-big { background: #fff; color: #18212f; border-radius: 10px; }
+.el-part-big svg { display: block; width: 100%; height: auto; }
+.el-port circle { fill: none; }
+.el-port text { font-family: Arial, sans-serif; font-weight: 700; stroke: #fff; paint-order: stroke; stroke-linejoin: round; }
+.el-port-sure circle { stroke: #0284c7; } .el-port-sure text { fill: #0369a1; }
+.el-port-guess circle { stroke: #d97706; } .el-port-guess text { fill: #b45309; }
+.el-port-unused circle { stroke: #94a3b8; stroke-dasharray: 2 2; } .el-port-unused text { fill: #64748b; }
+.el-guess-key { color: #b45309; }
