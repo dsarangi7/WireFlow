@@ -838,10 +838,53 @@ async function renderCadPage(id) {
     wiring = cadWireSave(plan, inp.key);
     cad.wiring = Object.assign({}, cad.wiring, { pair: inp.pair, plan: wiring, orders: orders ? orderKeys(orders) : cad.wiring && cad.wiring.orders });
     await persist();
+    if (orders && plan.custom) keepNumbering(orders, inp, plan.crossings.length);
     renderWiring(); viewer.redraw();
     say(okText + (plan.crossings.length ? ` ⚠ ${plan.crossings.length} power crossing(s) with this numbering, outlined in white.` : ' No power crossings.'), plan.crossings.length ? 'warn' : 'cad-ok');
     return true;
   }
+  /* a finished numbering goes into the library on this device, by rack layout, so it can be
+     offered again when a rack of the same layout is opened (any project, any drawing scale) */
+  function keepNumbering(orders, inp, crossings) {
+    try {
+      const e = numlibEntry(components, inp.sscs, orders, { project: project.name, projectId: project.id, pair: inp.pair, tray: inp.tray, crossings: crossings });
+      if (e && !numlibStore(numlibAdd(numlibLoad(), e))) console.warn('Numbering library: could not save on this device');
+    } catch (err) { console.error('Numbering library', err); }
+  }
+  /* saved numberings for this rack's layout (not the one already on this drawing) */
+  function libraryMatches(inp) {
+    let list = [];
+    try { list = numlibMatches(numlibLoad(), components); } catch (e) { return []; }
+    if (!list.length || !(cad.wiring && cad.wiring.orders)) return list;
+    const ids = orderIds(cad.wiring.orders);
+    const mine = numlibEntry(components, inp.sscs, ids, { pair: inp.pair, tray: inp.tray });
+    return mine ? list.filter(e => !(e.layout === mine.layout && JSON.stringify(e.strings) === JSON.stringify(mine.strings))) : list;
+  }
+  /* use a saved numbering: its order, junction boxes, pairs and trays; then draw the wiring */
+  async function useNumbering(entry) {
+    const inp = wiringInputs();
+    const counts = {};
+    for (const s of inp.sscs) counts[s.comp.id] = s.count;
+    const m = numlibApply(entry, components, counts);
+    if (m.error) { say(m.error, 'warn'); return; }
+    const had = (cad.wiring && cad.wiring.orders) || numberedCount(cad.wiring && cad.wiring.draft);
+    if (had && !confirm(`Use the numbering from "${entry.project || 'another rack'}"? It replaces the numbering on this drawing (Undo brings yours back).`)) return;
+    rememberWiring();
+    const byKey = {}, jbMap = {};
+    for (const s of inp.sscs) {
+      byKey[s.key] = m.orders[s.comp.id];
+      const o = m.sscs[s.comp.id] || {};
+      const jb = o.jbId && components.find(c => c.id === o.jbId);
+      if (jb || o.pair || o.tray) jbMap[s.key] = { jb: jb ? cadCompKey(jb) : undefined, pair: o.pair || undefined, tray: o.tray || undefined };
+    }
+    cad.wiring = Object.assign({}, cad.wiring, { pair: m.pair || inp.pair, tray: m.tray || inp.tray || undefined, jbMap: jbMap, orders: orderKeys(byKey) });
+    delete cad.wiring.draft; delete cad.wiring.plan; wiring = null;
+    await persist();
+    const ok = await replan(byKey, `Numbering from "${entry.project || 'a saved rack'}" used; wiring drawn. Check it, and change any module by clicking it.`);
+    if (!ok) renderWiring();
+    viewer.redraw();
+  }
+
   function openModuleEdit(mod, sx, sy) {
     if (!wiring) { say('Number the modules first (Wiring card: Number modules by clicking); then click a module to change its number.'); return; }
     const st = wiring.strings.find(s => s.modules.includes(mod.id));
@@ -1205,6 +1248,17 @@ async function renderCadPage(id) {
     if (!jbs.length) todo.push('Teach the junction box (the box at the top of each SSC column).');
     else if (!jbTaught) todo.push('Teach the junction box again and click its four connectors left to right (+, −, +, −).');
     if (!inp.tray && inp.sscs.some(s => !s.tray)) todo.push('Choose the cable tray for the junction box cables: CL (column left) or CR (column right).');
+    /* numberings saved from racks of this same layout */
+    const lib = libraryMatches(inp);
+    const day = iso => { const d = new Date(iso); return isNaN(d) ? '' : d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }); };
+    const libHtml = !lib.length ? '' : `<div class="cad-numlib">
+        <h5>Numbering from racks of this layout</h5>
+        <p class="muted small">Saved when a numbering was finished on a rack with the same modules, SSCs and junction boxes. Using one numbers this rack the same way (also its junction boxes, pairs and trays); you can still change any module.${ready ? '' : ' <b>Confirm the SSC numbers and module counts above first.</b>'}</p>
+        <ul>${lib.slice(0, 4).map((e, i) => `<li>
+          <div><b>${esc(e.project || 'Unnamed project')}</b><span class="muted small">${esc(day(e.saved))} · ${e.modules} modules · ${e.sscs} SSCs</span>
+            <span class="small ${e.crossings ? 'warn' : 'cad-ok'}">${e.crossings == null ? '' : e.crossings ? e.crossings + ' power crossing' + (e.crossings === 1 ? '' : 's') : 'no power crossings'}</span></div>
+          <button class="btn ${i === 0 && !wiring ? 'btn-primary' : 'btn-ghost'} btn-xs" data-numlib="${i}" ${ready && jbTaught ? "" : "disabled"}>Use this numbering</button></li>`).join('')}</ul>
+      </div>`;
     const m = v => (v / 1000).toLocaleString('en-GB', { maximumFractionDigits: 1, minimumFractionDigits: 1 }) + ' m';
     const len = pts => pts.reduce((a, p, i) => i ? a + Math.hypot(p[0] - pts[i - 1][0], p[1] - pts[i - 1][1]) : 0, 0);
     let result = '';
@@ -1248,6 +1302,7 @@ async function renderCadPage(id) {
       ${jbTable(inp)}
       ${!wiring && cad.wiring && cad.wiring.orders && !todo.length ? `<button class="btn btn-primary btn-sm cad-wire-go" id="cad-wire-redraw" title="A setting changed; draw the wiring again with your numbering">Draw the wiring again (your numbering)</button>` : ''}
       ${wiring && cad.wiring && cad.wiring.orders && !todo.length && !(wiring.cables || []).some(c => c.ways) ? `<button class="btn btn-primary btn-sm cad-wire-go" id="cad-wire-redraw" title="This wiring was drawn by an older version: draw it again with your numbering so each power cable gets its other ways to choose from on the wiring sheet">Draw the wiring again (adds route choices for the sheet)</button>` : ''}
+      ${libHtml}
       ${draftN ? `<button class="btn btn-primary btn-sm cad-wire-go" id="cad-wire-number" ${todo.length ? 'disabled' : ''} title="Carry on numbering from the last module you clicked">Continue numbering (${draftN} of ${totalN} done)</button>`
         : `<button class="btn ${wiring || (cad.wiring && cad.wiring.orders) ? 'btn-ghost' : 'btn-primary'} btn-sm cad-wire-go" id="cad-wire-number" ${todo.length ? 'disabled' : ''} title="Click each SSC's modules in order: M1 (wired to S− and N), M2, …${cad.wiring && cad.wiring.orders ? ' Your current numbering stays until the new one is finished.' : ''}">${wiring || (cad.wiring && cad.wiring.orders) ? 'Number again' : 'Number modules by clicking'}</button>`}
       ${draftN ? `<p class="muted small">Your clicks are saved as you go${cad.wiring.orders ? '; the finished numbering stays until this one is complete' : ''}.</p>` : ''}
@@ -1282,6 +1337,7 @@ async function renderCadPage(id) {
       await persist(); renderWiring(); viewer.redraw();
     };
     $('cad-wire-number').onclick = () => startNumbering();
+    box.querySelectorAll('[data-numlib]').forEach(b => b.onclick = () => useNumbering(lib[+b.dataset.numlib]));
     if ($('cad-wire-redraw')) $('cad-wire-redraw').onclick = () => replan(orderIds(cad.wiring.orders), 'Wiring drawn again with your numbering.');
     if ($('cad-wire-restart')) $('cad-wire-restart').onclick = async () => {
       if (!confirm(`Start numbering over? The ${draftN} module${draftN === 1 ? '' : 's'} numbered so far will be cleared.`)) return;
@@ -1699,7 +1755,6 @@ function wfResizableSide(body) {
   bar.addEventListener('dblclick', () => { body.style.removeProperty('--side-w'); try { localStorage.removeItem(WF_SIDE_KEY); } catch (e) {} });
 }
 
-const SHEET_PX = 7;   // canvas pixels per sheet millimetre
 let sheetLogoCache = null;
 async function sheetLogo() {
   if (sheetLogoCache) return sheetLogoCache;
@@ -1774,7 +1829,7 @@ async function renderSheetPage(id) {
         <span class="chip">A3 · PDF</span>
         <div class="cad-tools">
           <button class="btn btn-ghost btn-sm" id="sh-zoom-out" title="Zoom out">−</button>
-          <button class="btn btn-ghost btn-sm" id="sh-zoom-fit">Fit</button>
+          <button class="btn btn-ghost btn-sm" id="sh-zoom-fit" title="Fit the whole sheet (key 0). The mouse wheel zooms at the pointer (or + / -); drag the paper to move around.">Fit</button>
           <button class="btn btn-ghost btn-sm" id="sh-zoom-in" title="Zoom in">+</button>
           <button class="btn btn-primary btn-sm" id="sh-pdf">Download PDF</button>
         </div>
@@ -1787,7 +1842,8 @@ async function renderSheetPage(id) {
             <h3>On the sheet</h3>
             <label class="cad-wire-show"><input type="checkbox" id="sh-plugs" ${st.plugs ? 'checked' : ''}> Customer power plugs A / B (Note 2) on every junction box</label>
             <label class="sh-field" title="The title block always says SCALE: NTS; this only sets how large the rack is drawn on the A3 sheet"><span>Rack size on sheet</span><select id="sh-scale"><option value="auto">Fit the sheet</option>${SHEET_SCALES.map(v => `<option value="${v}" ${String(F.scale) === String(v) ? 'selected' : ''}>1:${v}</option>`).join('')}</select></label>
-            <p class="muted small"><b>Edit the wiring:</b> <b>double-click</b> a power cable to send it <b>another way</b> (each way shows its length and crossings) or to draw it <b>straight</b>, <b>bent</b> or <b>curved</b> ·drag a bent cable's middle section to move it (also into the other tray) · drag a curved cable sideways to change its curve · <b>Shift + double-click</b> a bent cable to add a bend there · <b>right-click</b> a cable to put it back as planned. Labels, the Note 2 label and the grounding-point label can be dragged too.</p>
+            <p class="muted small"><b>Look closely:</b> the <b>mouse wheel</b> zooms in where the pointer is (or + / −, 0 fits the sheet) · drag the paper to move around · click a crossing in the list to zoom to it.</p>
+            <p class="muted small"><b>Edit the wiring:</b> <b>double-click</b> a power cable to send it <b>another way</b> (each way shows its length and crossings) or to draw it <b>straight</b>, <b>bent</b> or <b>curved</b> ·<b>pull a cable</b>: across a section to move it, along a section to move the next bend (so it takes a new bend round a port), near a terminal to step it aside (a short stub stays in the terminal) · drag a curved cable sideways to change its curve · <b>Shift + double-click</b> a bent cable to add a bend there · <b>right-click</b> a cable to put it back as planned. Labels, the Note 2 label and the grounding-point label can be dragged too.</p>
             <p class="small" id="sh-cross" role="status"></p>
             <ul class="sh-xlist" id="sh-xlist"></ul>
             <button class="btn btn-ghost btn-sm" id="sh-reset">Undo all moves</button>
@@ -1821,25 +1877,47 @@ async function renderSheetPage(id) {
     try { await localPutProject(project); } catch (e) { say('Could not save: ' + e.message, 'warn'); }
   };
 
+  /* the rack linework, in sheet millimetres (Y down), built once per placement */
+  let rackPath = null, rackFrame = 0;
   function paintRack() {
     const key = P.scale + '|' + P.X(0) + '|' + P.Y(0);
-    if (key === rackKey) return;
-    rackKey = key;
-    const cv = $('sh-rack');
-    cv.width = A3_W * SHEET_PX; cv.height = A3_H * SHEET_PX;
-    const ctx = cv.getContext('2d');
-    ctx.clearRect(0, 0, cv.width, cv.height);
-    ctx.strokeStyle = '#374151'; ctx.lineWidth = 0.6;
-    const X = x => P.X(x) * SHEET_PX, Y = y => (A3_H - P.Y(y)) * SHEET_PX;
-    const path = new Path2D();
-    for (const pl of flat.polylines) {
-      const a = pl.pts;
-      path.moveTo(X(a[0]), Y(a[1]));
-      for (let i = 2; i < a.length; i += 2) path.lineTo(X(a[i]), Y(a[i + 1]));
-      if (pl.closed) path.closePath();
+    if (key !== rackKey) {
+      rackKey = key;
+      const X = x => P.X(x), Y = y => A3_H - P.Y(y);
+      const path = new Path2D();
+      for (const pl of flat.polylines) {
+        const a = pl.pts;
+        path.moveTo(X(a[0]), Y(a[1]));
+        for (let i = 2; i < a.length; i += 2) path.lineTo(X(a[i]), Y(a[i + 1]));
+        if (pl.closed) path.closePath();
+      }
+      for (const c of flat.circles) { path.moveTo(X(c.cx + c.r), Y(c.cy)); path.arc(X(c.cx), Y(c.cy), c.r * P.k, 0, Math.PI * 2); }
+      rackPath = path;
     }
-    for (const c of flat.circles) { path.moveTo(X(c.cx + c.r), Y(c.cy)); path.arc(X(c.cx), Y(c.cy), c.r * P.k * SHEET_PX, 0, Math.PI * 2); }
-    ctx.stroke(path);
+    drawRack();
+  }
+  /* the canvas covers only the part of the sheet in view, at screen resolution, so the
+     rack stays sharp however far the engineer zooms in */
+  function drawRack() {
+    if (rackFrame) return;
+    rackFrame = requestAnimationFrame(() => {
+      rackFrame = 0;
+      if (!rackPath || !$('sh-stage')) return;
+      const stage = $('sh-stage'), paper = $('sh-paper'), cv = $('sh-rack');
+      const sr = stage.getBoundingClientRect(), pr = paper.getBoundingClientRect();
+      const x0 = Math.max(sr.left, pr.left), y0 = Math.max(sr.top, pr.top);
+      const x1 = Math.min(sr.right, pr.right), y1 = Math.min(sr.bottom, pr.bottom);
+      if (x1 <= x0 || y1 <= y0) return;
+      const dpr = window.devicePixelRatio || 1, pxmm = pr.width / A3_W;
+      Object.assign(cv.style, { left: (x0 - pr.left) + 'px', top: (y0 - pr.top) + 'px', width: (x1 - x0) + 'px', height: (y1 - y0) + 'px' });
+      cv.width = Math.round((x1 - x0) * dpr); cv.height = Math.round((y1 - y0) * dpr);
+      const ctx = cv.getContext('2d');
+      const k = pxmm * dpr;
+      ctx.setTransform(k, 0, 0, k, -(x0 - pr.left) * dpr, -(y0 - pr.top) * dpr);
+      ctx.strokeStyle = '#374151';
+      ctx.lineWidth = Math.max(0.05, 0.6 / pxmm);   /* about half a screen pixel, at least 0.05 mm */
+      ctx.stroke(rackPath);
+    });
   }
   function render() {
     const svg = sheetSvgTarget();
@@ -1850,6 +1928,7 @@ async function renderSheetPage(id) {
   }
   /* power cables crossing each other with the edits applied: outlined, and counted */
   const planned = (wiring.crossings || []).length;
+  const ports = cadwPorts(cad.components || []);
   function markCrossings() {
     const cables = wiring.cables.map(c => Object.assign({}, c, { pts: (st.edits.cables && st.edits.cables[c.id]) || c.pts, box: null }));
     const x = cadwPowerCrossings(cables);
@@ -1859,16 +1938,37 @@ async function renderSheetPage(id) {
     const byId = new Map(cables.map(c => [c.id, c]));
     const rings = [];
     x.forEach((p, i) => { for (const q of crossPoints(byId.get(p.a).pts, byId.get(p.b).pts)) rings.push(`<circle class="sh-ring" data-x="${i}" cx="${P.X(q[0]).toFixed(2)}" cy="${P.Y(q[1]).toFixed(2)}" r="2.6"/>`); });
+    /* no cable may run over a connector (port) it is not connected to: orange ring on the port */
+    const over = cables.map(c => ({ id: c.id, at: cadwPortHits(c.pts, ports) })).filter(h => h.at.length);
+    for (const h of over) for (const q of h.at) rings.push(`<circle class="sh-ring sh-ring-port" cx="${P.X(q[0]).toFixed(2)}" cy="${P.Y(q[1]).toFixed(2)}" r="1.8"/>`);
+    $('sh-g').querySelectorAll('.sh-cable').forEach(el => el.classList.toggle('sh-x', bad.has(el.dataset.id) || over.some(h => h.id === el.dataset.id)));
     $('sh-g').querySelectorAll('.sh-rings').forEach(g => g.remove());
     $('sh-g').insertAdjacentHTML('beforeend', `<g class="sh-rings">${rings.join('')}</g>`);
+    x.over = over;
     const el = $('sh-cross');
     if (!el) return x;
-    el.className = 'small ' + (x.length > planned ? 'warn' : x.length ? '' : 'cad-ok');
-    el.textContent = x.length ? `${x.length} power cable crossing${x.length === 1 ? '' : 's'} (red rings)${x.length > planned ? ` — ${x.length - planned} more than the planned wiring` : ''}. Click one to fix it:` : 'No power cables cross.';
+    const bits = [];
+    if (x.length) bits.push(`${x.length} power cable crossing${x.length === 1 ? '' : 's'} (red rings)${x.length > planned ? ` — ${x.length - planned} more than the planned wiring` : ''}`);
+    if (over.length) bits.push(`${over.length} cable${over.length === 1 ? ' runs' : 's run'} over a connector (orange rings)`);
+    el.className = 'small ' + (x.length > planned || over.length ? 'warn' : x.length ? '' : 'cad-ok');
+    el.textContent = bits.length ? bits.join('; ') + '. Click one to fix it:' : 'No power cables cross, and no cable runs over a connector.';
     const list = $('sh-xlist');
-    list.innerHTML = x.map((p, i) => `<li><button type="button" class="sh-xbtn" data-x="${i}"><b>${esc(p.a)}</b><span>crosses</span><b>${esc(p.b)}</b></button></li>`).join('');
+    list.innerHTML = x.map((p, i) => `<li><button type="button" class="sh-xbtn" data-x="${i}"><b>${esc(p.a)}</b><span>crosses</span><b>${esc(p.b)}</b></button></li>`).join('') +
+      over.map((h, i) => `<li><button type="button" class="sh-xbtn sh-xport" data-port="${i}"><b>${esc(h.id)}</b><span>runs over a connector</span></button></li>`).join('');
     list.querySelectorAll('[data-x]').forEach(b => b.onclick = ev => fixCrossing(x[+b.dataset.x], ev));
+    list.querySelectorAll('[data-port]').forEach(b => b.onclick = ev => fixPort(over[+b.dataset.port], ev));
     return x;
+  }
+  /* a cable over a connector, picked from the list: zoom to the connector, select the cable */
+  function fixPort(h, ev) {
+    const q = h.at[0];
+    const stage = $('sh-stage');
+    const fit = Math.min((stage.clientWidth - 24) / A3_W, (stage.clientHeight - 24) / A3_H);
+    zoom = Math.max(zoom, Math.min(ZOOM_MAX, stage.clientWidth / 60 / fit));
+    const sr = stage.getBoundingClientRect();
+    applyZoom([P.X(q[0]), A3_H - P.Y(q[1]), sr.left + sr.width / 2, sr.top + sr.height / 2]);
+    $('sh-g').querySelectorAll('.sh-cable').forEach(e => e.classList.toggle('sh-sel', e.dataset.id === h.id));
+    say(`${h.id} runs over a connector (orange ring). Pull it aside: along a section to move the next bend, or near its terminal to step it round the port.`, 'warn');
   }
   /* where two polylines cross (drawing units) */
   function crossPoints(a, b) {
@@ -1892,6 +1992,15 @@ async function renderSheetPage(id) {
      cable that has more of them */
   function fixCrossing(p, ev) {
     const ca = wiring.cables.find(c => c.id === p.a), cb = wiring.cables.find(c => c.id === p.b);
+    /* zoom in on where they cross (about 60 mm of sheet across the view) */
+    const q = crossPoints(st.edits.cables[ca.id] || ca.pts, st.edits.cables[cb.id] || cb.pts)[0];
+    if (q) {
+      const stage = $('sh-stage');
+      const fit = Math.min((stage.clientWidth - 24) / A3_W, (stage.clientHeight - 24) / A3_H);
+      zoom = Math.max(zoom, Math.min(ZOOM_MAX, stage.clientWidth / 60 / fit));
+      const sr = stage.getBoundingClientRect();
+      applyZoom([P.X(q[0]), A3_H - P.Y(q[1]), sr.left + sr.width / 2, sr.top + sr.height / 2]);
+    }
     $('sh-g').querySelectorAll('.sh-cable').forEach(e => e.classList.toggle('sh-sel', e.dataset.id === p.a || e.dataset.id === p.b));
     const cab = ((cb.ways || []).length > (ca.ways || []).length) ? cb : ca;
     const r = ev.currentTarget.getBoundingClientRect();
@@ -1899,19 +2008,58 @@ async function renderSheetPage(id) {
     const panel = document.querySelector('.sh-side').getBoundingClientRect();
     openShape(cab, panel.left - 4, r.bottom - 12, true);
   }
-  function applyZoom() {
-    const stage = $('sh-stage');
+  /* zoom: 1 = the whole sheet fits; up to 40x to look closely at crossings.
+     `at` = [sheet x mm, sheet y mm from the top, screen x, screen y]: that point of the sheet
+     ends up under that point of the screen (the pointer, or the middle of the view) */
+  const ZOOM_MAX = 40;
+  function applyZoom(at) {
+    const stage = $('sh-stage'), paper = $('sh-paper');
+    if (!stage) return;
     const fit = Math.min((stage.clientWidth - 24) / A3_W, (stage.clientHeight - 24) / A3_H);
     const pxmm = Math.max(0.5, fit * zoom);
-    $('sh-paper').style.width = A3_W * pxmm + 'px';
-    $('sh-paper').style.height = A3_H * pxmm + 'px';
+    const w = A3_W * pxmm, h = A3_H * pxmm;
+    paper.style.width = w + 'px';
+    paper.style.height = h + 'px';
+    /* centred while smaller than the view; scrollable edge to edge once larger */
+    paper.style.marginTop = Math.max(0, (stage.clientHeight - 24 - h) / 2) + 'px';
+    if (at) {
+      const pr = paper.getBoundingClientRect();
+      stage.scrollLeft += (pr.left + at[0] * pxmm) - at[2];
+      stage.scrollTop += (pr.top + at[1] * pxmm) - at[3];
+    }
+    $('sh-zoom-fit').textContent = zoom === 1 ? 'Fit' : Math.round(zoom * 100) + '%';
+    drawRack();
   }
+  /* the sheet point (mm from the top-left) under a screen point */
+  const sheetAt = (cx, cy) => {
+    const pr = $('sh-paper').getBoundingClientRect(), pxmm = pr.width / A3_W;
+    return [(cx - pr.left) / pxmm, (cy - pr.top) / pxmm, cx, cy];
+  };
+  const stageMid = () => { const r = $('sh-stage').getBoundingClientRect(); return sheetAt(r.left + r.width / 2, r.top + r.height / 2); };
+  const zoomTo = (z, at) => { const a = at || stageMid(); zoom = Math.max(0.6, Math.min(ZOOM_MAX, z)); applyZoom(a); };
   render(); applyZoom();
   wfResizableSide(document.querySelector('.sh-body'));
-  new ResizeObserver(applyZoom).observe($('sh-stage'));
-  $('sh-zoom-in').onclick = () => { zoom = Math.min(6, zoom * 1.4); applyZoom(); };
-  $('sh-zoom-out').onclick = () => { zoom = Math.max(0.6, zoom / 1.4); applyZoom(); };
-  $('sh-zoom-fit').onclick = () => { zoom = 1; applyZoom(); };
+  new ResizeObserver(() => applyZoom()).observe($('sh-stage'));
+  $('sh-stage').addEventListener('scroll', drawRack, { passive: true });
+  $('sh-zoom-in').onclick = () => zoomTo(zoom * 1.5);
+  $('sh-zoom-out').onclick = () => zoomTo(zoom / 1.5);
+  $('sh-zoom-fit').onclick = () => { zoom = 1; applyZoom(); $('sh-stage').scrollTo(0, 0); };
+  /* mouse wheel (or pinch on a touchpad) zooms at the pointer; Shift + wheel scrolls */
+  $('sh-stage').addEventListener('wheel', ev => {
+    if (ev.shiftKey) return;
+    ev.preventDefault();
+    const dy = Math.max(-60, Math.min(60, ev.deltaY * (ev.deltaMode === 1 ? 16 : 1)));
+    zoomTo(zoom * Math.exp(-dy * 0.004), sheetAt(ev.clientX, ev.clientY));
+  }, { passive: false });
+  /* keyboard: + and - zoom, 0 fits (not while typing in the title block) */
+  const zoomKeys = ev => {
+    if (!$('sh-stage')) { document.removeEventListener('keydown', zoomKeys); return; }
+    if (/INPUT|TEXTAREA|SELECT/.test((ev.target && ev.target.tagName) || '') || ev.ctrlKey || ev.metaKey) return;
+    if (ev.key === '+' || ev.key === '=') zoomTo(zoom * 1.5);
+    else if (ev.key === '-') zoomTo(zoom / 1.5);
+    else if (ev.key === '0') $('sh-zoom-fit').onclick();
+  };
+  document.addEventListener('keydown', zoomKeys);
 
   /* ---- title block and options ---- */
   const side = document.querySelector('.sh-side');
@@ -1941,7 +2089,9 @@ async function renderSheetPage(id) {
     render(); save();
     const x = markCrossings();
     const mine = x.filter(p => p.a === id || p.b === id);
-    if (mine.length) say(`${what} ⚠ It now crosses ${mine.map(p => p.a === id ? p.b : p.a).join(', ')} (outlined). Move it again or right-click it to undo.`, 'warn');
+    const onPort = (x.over || []).some(h => h.id === id);
+    if (onPort) say(`${what} ⚠ It now runs over a connector (orange ring). Pull it clear of the port, or right-click it to undo.`, 'warn');
+    else if (mine.length) say(`${what} ⚠ It now crosses ${mine.map(p => p.a === id ? p.b : p.a).join(', ')} (outlined). Move it again or right-click it to undo.`, 'warn');
     else if (x.length > planned) say(`${what} Other edited cables still cross (outlined).`, 'warn');
     else say(what, 'cad-ok');
   };
@@ -2020,19 +2170,29 @@ async function renderSheetPage(id) {
         ev.preventDefault();
         return;
       }
-      if (type === 'straight') { say('A straight cable has nothing to drag. Double-click it to make it bent or curved.'); return; }
-      const pts = (st.edits.cables[cab.id] || cab.pts).map(p => p.slice());
-      /* nearest middle section (not the first or last stub into a terminal) */
-      const best = nearestSeg(pts, drawingPt(s0), 1, pts.length - 2);
-      if (best < 0) { say('This cable has no middle section to move. Shift + double-click it to add a bend, then drag the bend.'); return; }
-      const a = pts[best], b = pts[best + 1];
-      drag = { kind: 'cable', start: s0, el: cEl, cab: cab, pts: pts, seg: best, horiz: Math.abs(b[1] - a[1]) < Math.abs(b[0] - a[0]), orig: pts.map(p => p.slice()) };
-    } else return;
+      /* a straight cable becomes bent as soon as it is pulled */
+      const pts = (st.edits.cables[cab.id] || (type === 'straight' ? shapeOf(cab, 'bent') : cab.pts)).map(p => p.slice());
+      const best = nearestSeg(pts, drawingPt(s0), 0, pts.length - 1);
+      if (best < 0) return;
+      /* which way it moves is decided by the first few millimetres of the pull (pointermove) */
+      drag = { kind: 'cable', start: s0, el: cEl, cab: cab, base: pts, seg: best, mode: null, toBent: type === 'straight' };
+    } else {
+      /* empty paper: drag to move around the sheet */
+      const stage = $('sh-stage');
+      drag = { kind: 'pan', x: ev.clientX, y: ev.clientY, sl: stage.scrollLeft, st: stage.scrollTop };
+      svgEl.classList.add('sh-panning');
+    }
     try { svgEl.setPointerCapture(ev.pointerId); } catch (err) {}
     ev.preventDefault();
   });
   svgEl.addEventListener('pointermove', ev => {
     if (!drag) return;
+    if (drag.kind === 'pan') {
+      const stage = $('sh-stage');
+      stage.scrollLeft = drag.sl - (ev.clientX - drag.x);
+      stage.scrollTop = drag.st - (ev.clientY - drag.y);
+      return;
+    }
     const s1 = toSheet(ev);
     const dx = s1[0] - drag.start[0], dy = s1[1] - drag.start[1];
     if (drag.kind === 'curve') {
@@ -2047,9 +2207,16 @@ async function renderSheetPage(id) {
       svgEl.querySelectorAll(`[data-id="${CSS.escape(drag.cab.id)}"]`).forEach(el => el.setAttribute('points', attr));
       drag.moved = true;
     } else if (drag.kind === 'cable') {
-      const i = drag.seg, o = drag.orig, p = drag.pts;
-      if (drag.horiz) { p[i][1] = o[i][1] + dy / P.k; p[i + 1][1] = o[i + 1][1] + dy / P.k; }
-      else { p[i][0] = o[i][0] + dx / P.k; p[i + 1][0] = o[i + 1][0] + dx / P.k; }
+      const mv = [dx / P.k, dy / P.k];             /* drawing units */
+      if (!drag.mode) {
+        if (Math.hypot(dx, dy) < 0.5) return;      /* half a sheet millimetre before deciding */
+        pullSetup(drag, mv);
+      }
+      const i = drag.seg, o = drag.orig;
+      const p = o.map(q => q.slice());
+      if (drag.horiz) { p[i][1] += mv[1]; p[i + 1][1] += mv[1]; }
+      else { p[i][0] += mv[0]; p[i + 1][0] += mv[0]; }
+      drag.pts = p;
       const pts = p.map(q => P.X(q[0]).toFixed(3) + ',' + P.Y(q[1]).toFixed(3)).join(' ');
       svgEl.querySelectorAll(`[data-id="${CSS.escape(drag.cab.id)}"]`).forEach(el => el.setAttribute('points', pts));
       drag.moved = true;
@@ -2063,12 +2230,15 @@ async function renderSheetPage(id) {
   const end = () => {
     if (!drag) return;
     const d = drag; drag = null;
+    svgEl.classList.remove('sh-panning');
+    if (d.kind === 'pan') return;
     if (!d.moved) return;
     const keep = v => Math.round(v * 1e4) / 1e4;
     if (d.kind === 'cable' || d.kind === 'curve') {
       /* tidy: drop zero-length pieces and points in the middle of a straight run */
       const pts = d.kind === 'curve' ? d.pts : cadwClean(d.pts);
       st.edits.cables[d.cab.id] = pts.map(p => [keep(p[0]), keep(p[1])]);
+      if (d.toBent) st.edits.kinds[d.cab.id] = 'bent';
       afterEdit(`${d.cab.id} moved.`, d.cab.id);
       return;
     }
@@ -2077,6 +2247,45 @@ async function renderSheetPage(id) {
     else if (d.kind === 'ground') st.edits.ground = [d.orig[0] + d.dx, d.orig[1] + d.dy];
     render(); save();
   };
+  /* how a pull moves a bent cable (decided on the first half millimetre):
+     - across a section: that section moves sideways (its neighbours stretch);
+     - along a section: the next bend that way moves, so the cable takes a new bend;
+     - a section that ends at a terminal keeps a short straight stub into the terminal and
+       the rest moves, so the cable can step round a port beside it. */
+  function pullSetup(d, mv) {
+    const pts = d.base.map(q => q.slice());
+    const n = pts.length;
+    const seglen = k => Math.hypot(pts[k + 1][0] - pts[k][0], pts[k + 1][1] - pts[k][1]);
+    const isH = k => Math.abs(pts[k + 1][1] - pts[k][1]) < Math.abs(pts[k + 1][0] - pts[k][0]);
+    let i = d.seg;
+    const horiz0 = isH(i);
+    const along = horiz0 ? mv[0] : mv[1], across = horiz0 ? mv[1] : mv[0];
+    if (Math.abs(along) > Math.abs(across) * 1.2 && seglen(i) > 0) {
+      /* toward the end of the section the pull points to: the next real section there */
+      const a = pts[i], b = pts[i + 1];
+      const toB = Math.sign(horiz0 ? b[0] - a[0] : b[1] - a[1]) * Math.sign(along) > 0;
+      let j = toB ? i + 1 : i - 1;
+      while (j >= 0 && j <= n - 2 && seglen(j) < 1e-9) j += toB ? 1 : -1;
+      if (j >= 0 && j <= n - 2 && isH(j) !== horiz0) i = j;
+    }
+    /* a section into a terminal: keep a stub at the terminal (25 mm, at most a third) */
+    const stubOf = k => Math.min(seglen(k) * 0.35, 25 * unit);
+    if (i === 0 && n > 1) {
+      const T = pts[0], N = pts[1], L = seglen(0) || 1, sl = stubOf(0);
+      const S = [T[0] + (N[0] - T[0]) / L * sl, T[1] + (N[1] - T[1]) / L * sl];
+      pts.splice(1, 0, S, S.slice(), N.slice());
+      i = 2;
+    } else if (i === n - 2) {
+      const T = pts[n - 1], N = pts[n - 2], L = seglen(n - 2) || 1, sl = stubOf(n - 2);
+      const S = [T[0] + (N[0] - T[0]) / L * sl, T[1] + (N[1] - T[1]) / L * sl];
+      pts.splice(n - 1, 0, N.slice(), S.slice(), S);
+      i = n - 1;
+    }
+    d.orig = pts;
+    d.seg = i;
+    d.horiz = Math.abs(pts[i + 1][1] - pts[i][1]) < Math.abs(pts[i + 1][0] - pts[i][0]);
+    d.mode = 'move';
+  }
   svgEl.addEventListener('pointerup', end);
   svgEl.addEventListener('pointercancel', end);
   /* double-click a cable: choose how it is drawn — straight, bent (right-angle bends) or

@@ -9,7 +9,7 @@ const fs = require('fs');
 const path = require('path');
 const ROOT = path.resolve(__dirname, '..');
 const W = new Function(fs.readFileSync(path.join(ROOT, 'js', 'cadwire.js'), 'utf8') +
-  '\nreturn { cadWirePlan, cadwColumns, cadwSegCross, cadwPowerCrossings, cadwLen, cadWireGuide };')();
+  '\nreturn { cadWirePlan, cadwColumns, cadwSegCross, cadwPowerCrossings, cadwLen, cadWireGuide, cadwPortHits, cadwPorts };')();
 
 let passed = 0; const failed = [];
 function ok(name, cond, info) { if (cond) passed++; else failed.push(name + (info ? '  [' + info + ']' : '')); console.log((cond ? 'PASS  ' : 'FAIL  ') + name + (info ? '  [' + info + ']' : '')); }
@@ -54,6 +54,12 @@ ok('111: riser in the 100 mm gap between columns', Math.abs(cols[1].riserL - 328
 const comps = rack111();
 const t0 = Date.now();
 const plan = W.cadWirePlan(comps, sscList(comps), { pair: 'P1' });
+ok('rack 111: no cable runs over a port', plan.cables.every(c => !W.cadwPortHits(c.pts, W.cadwPorts(comps)).length));
+/* a cable that passes right by a port it does not connect to is caught; its own two ports are not counted */
+{
+  const ports = [[0, 0], [100, 0], [50, 5]];
+  ok('ports: a run past another port is caught, its own ends are not', W.cadwPortHits([[0, 0], [100, 0]], ports).length === 1 && W.cadwPortHits([[0, 0], [0, 50], [100, 50], [100, 0]], ports).length === 0);
+}
 const ms = Date.now() - t0;
 ok('111: plan is complete', plan.ok, plan.errors.join(' | '));
 ok('111: planned quickly', ms < 3000, ms + ' ms');
@@ -239,6 +245,10 @@ ok('refused: junction box terminals not taught', !nj.ok && /has no P1 terminals/
   ok('1:44 rack: planned quickly', ms < 6000, ms + ' ms');
   const k = 9 / 400.45, x0 = Math.min(...rc.map(c => c.x0)), x1 = Math.max(...rc.map(c => c.x1)), y0 = Math.min(...rc.map(c => c.y0)), y1 = Math.max(...rc.map(c => c.y1));
   const out = pl.cables.filter(c => c.pts.some(p => p[0] < x0 - 50 * k || p[0] > x1 + 50 * k || p[1] < y0 - 50 * k || p[1] > y1 + 50 * k));
+  /* no cable runs over a connector (port) it is not connected to */
+  const overPort = pl.cables.filter(c => W.cadwPortHits(c.pts, W.cadwPorts(rc)).length);
+  ok('1:44 rack: no cable runs over a port', overPort.length === 0 && !(pl.portHits || []).length, overPort.map(c => c.id).slice(0, 3).join(', '));
+  ok('1:44 rack: the other ways offered keep clear of ports too', pl.cables.every(c => !c.ways || c.ways.every(w => !W.cadwPortHits(w.pts, W.cadwPorts(rc)).length)));
   ok('1:44 rack: no cable leaves the rack (no giant loops)', out.length === 0, out.map(c => c.id).slice(0, 3).join(', '));
   const curves = pl.cables.filter(c => c.curve);
   const sag = c => Math.max(...c.pts.map(p => Math.abs(p[1] - c.pts[0][1])));

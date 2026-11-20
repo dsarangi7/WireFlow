@@ -141,7 +141,55 @@ function cadwColumns(comps) {
   });
   /* every part a cable must not run across: modules, SSCs, junction boxes, MSMs */
   cols.bodies = all.filter(c => c.kind === 'module' || c.kind === 'ssc' || c.kind === 'jb' || c.kind === 'msm');
+  /* every connector (port): no cable may run over one, or look as if it does */
+  cols.ports = cadwPorts(comps);
   return cols;
+}
+
+/* ---------- ports ---------- */
+const CADW_PORT_R = 15;       // a cable closer than this to a port (mm) looks as if it is connected there
+/** Every terminal of every part, as points, sorted by x (for a quick search). */
+function cadwPorts(comps) {
+  const out = [];
+  for (const c of comps) for (const t of c.terminals || []) if (isFinite(t.x) && isFinite(t.y)) out.push([t.x, t.y]);
+  return out.sort((a, b) => a[0] - b[0]);
+}
+/** Ports a route runs over (not counting the two it connects). */
+function cadwPortHits(pts, ports) {
+  if (!ports || !ports.length || pts.length < 2) return [];
+  const r = cadwU(CADW_PORT_R), own = cadwU(1);
+  const a = pts[0], z = pts[pts.length - 1];
+  let hits = null;
+  for (let i = 1; i < pts.length; i++) {
+    const p = pts[i - 1], e = pts[i];
+    const xa = Math.min(p[0], e[0]) - r, xb = Math.max(p[0], e[0]) + r;
+    const ya = Math.min(p[1], e[1]) - r, yb = Math.max(p[1], e[1]) + r;
+    /* first port at or right of xa */
+    let lo = 0, hi = ports.length;
+    while (lo < hi) { const m = (lo + hi) >> 1; if (ports[m][0] < xa) lo = m + 1; else hi = m; }
+    const dx = e[0] - p[0], dy = e[1] - p[1], L2 = dx * dx + dy * dy;
+    for (let k = lo; k < ports.length && ports[k][0] <= xb; k++) {
+      const q = ports[k];
+      if (q[1] < ya || q[1] > yb) continue;
+      if (Math.abs(q[0] - a[0]) < own && Math.abs(q[1] - a[1]) < own) continue;
+      if (Math.abs(q[0] - z[0]) < own && Math.abs(q[1] - z[1]) < own) continue;
+      const t = L2 ? Math.max(0, Math.min(1, ((q[0] - p[0]) * dx + (q[1] - p[1]) * dy) / L2)) : 0;
+      if (Math.hypot(q[0] - p[0] - t * dx, q[1] - p[1] - t * dy) < r) {
+        if (!hits) hits = [];
+        if (hits.indexOf(q) < 0) hits.push(q);
+      }
+    }
+  }
+  return hits || [];
+}
+/** Routes that keep clear of every port; all of them when none does (then the plan warns). */
+function cadwPortFree(routes, cols, get) {
+  if (!cols || !cols.ports) return routes;
+  get = get || (r => r);
+  const free = routes.filter(r => !cadwPortHits(get(r), cols.ports).length);
+  if (!free.length) return routes;
+  if (routes.alts) free.alts = routes.alts;
+  return free;
 }
 
 /* ---------- routes ---------- */
@@ -257,11 +305,12 @@ function cadwCurve(t1, t2, sag, dir) {
 function cadwJump(m1, m2, t1, t2, cols, kind) {
   const sameCol = m1._col === m2._col;
   const straight = [[t1.x, t1.y], [t2.x, t2.y]];
-  if (sameCol && (!cols || !cols.bodies || cadwClear(straight, cols, [m1, m2]))) return [straight];
+  if (sameCol && (!cols || !cols.bodies || cadwClear(straight, cols, [m1, m2])) && !(cols && cadwPortHits(straight, cols.ports).length)) return [straight];
   const routes = cadwJumpRoutes(m1, m2, t1, t2, cols, kind);
-  const keep = cadwKeepInside(routes, cols && cols.bounds);
+  if (sameCol && !routes.length) routes.push(straight);
+  const keep = cadwPortFree(cadwKeepInside(routes, cols && cols.bounds), cols);
   /* shallower curves: not the drawing style, kept for when a long cable must pass */
-  keep.alts = routes.alts || [];
+  keep.alts = cadwPortFree(routes.alts || [], cols).filter(r => !(cols && cadwPortHits(r, cols.ports).length));
   return keep;
 }
 function cadwJumpRoutes(m1, m2, t1, t2, cols, kind) {
@@ -478,9 +527,11 @@ function cadWirePlan(comps, sscs, opts) {
     return { ok: false, errors: ['Could not split the modules into one connected group per SSC with these counts. Check the module count of each SSC.'], warnings: warnings, strings: [], cables: [], crossings: [], outline: [] };
   }
   const crossings = cadwPowerCrossings(best.cables);
+  const portHits = best.cables.map(c => ({ id: c.id, n: cadwPortHits(c.pts, cols.ports).length })).filter(h => h.n);
+  if (portHits.length) warnings.push(`${portHits.length} cable${portHits.length === 1 ? ' runs' : 's run'} over a connector with no clear way round: ${portHits.slice(0, 4).map(h => h.id).join(', ')}${portHits.length > 4 ? ' …' : ''}. Move ${portHits.length === 1 ? 'it' : 'them'} on the wiring sheet.`);
   if (crossings.length) warnings.push(`${crossings.length} power cable crossing${crossings.length === 1 ? '' : 's'}${best.custom ? ' with this numbering' : ' could not be avoided'}: check the highlighted cables.`);
   for (const st of best.strings) if (st.far) warnings.push(`${st.name} is not next to its modules; its long cables may be impractical.`);
-  return { ok: true, errors: [], warnings: warnings, pair: pair, custom: !!best.custom, suggested: best.suggested || null, strings: best.strings, cables: best.cables, crossings: crossings,
+  return { ok: true, errors: [], warnings: warnings, pair: pair, custom: !!best.custom, suggested: best.suggested || null, strings: best.strings, cables: best.cables, crossings: crossings, portHits: portHits,
     outline: best.strings.map(st => ({ ssc: st.name, segs: cadwOutline(st.modules.concat([st.ssc])) })) };
 }
 
@@ -677,7 +728,7 @@ function cadwPlanString(st, cols, jb, pair, placed, gapUse, jbName, tray) {
         const pool = prePlaced.concat(cables).filter(z => z.kind === kind);
         let pick = null;
         /* shortest first: once a route is free of crossings, no longer one can beat it */
-        const inside = cadwKeepInside(cands, cols.bounds, true).map(c => ({ c: c, len: cadwLen(c.pts) })).sort((p, q) => p.len - q.len);
+        const inside = cadwPortFree(cadwKeepInside(cands, cols.bounds, true), cols, c => c.pts).map(c => ({ c: c, len: cadwLen(c.pts) })).sort((p, q) => p.len - q.len);
         for (const { c, len } of inside) {
           if (pick && pick.v <= len) break;
           /* count crossings, stopping as soon as this route cannot beat the best one */
@@ -1087,7 +1138,7 @@ function cadWireSave(plan, key) {
   const r = v => Math.round(v * 100) / 100;
   return {
     key: key, pair: plan.pair, custom: !!plan.custom, generated: new Date().toISOString(),
-    crossings: plan.crossings.slice(), warnings: plan.warnings.slice(),
+    crossings: plan.crossings.slice(), portHits: (plan.portHits || []).slice(), warnings: plan.warnings.slice(),
     cables: plan.cables.map(c => ({ id: c.id, ssc: c.ssc, kind: c.kind, from: c.from, to: c.to, curve: !!c.curve, pts: c.pts.map(p => [r(p[0]), r(p[1])]),
       ways: c.kind === 'power' && c.ways && c.ways.length ? c.ways.map(w => ({ curve: !!w.curve, pts: w.pts.map(p => [r(p[0]), r(p[1])]) })) : undefined })),
     strings: plan.strings.map(st => ({ name: st.name, tag: st.tag, modules: st.modules.map(m => m.id),
