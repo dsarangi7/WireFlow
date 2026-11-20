@@ -3,7 +3,7 @@
  *
  *   MSM.dxf     MSM back panel (bare geometry)
  *   SSC.dxf     SSC front (left view) and back (right view), in a 1:5 factory frame
- *   MODULE.dxf  module front (upper view) and back (lower view), same frame
+ *   MODULE.dxf  module front (upper view); its back (lower view) is not used
  *
  * Only layer "0" (the part itself) is kept: the frame, title block and notes are
  * dropped. Views are separated by the empty space between them. Coordinates stay in
@@ -23,7 +23,7 @@ const DIR = process.argv[2] || 'G:\\WiringTool\\Electrical Interactive tool\\Ele
 const PARTS = [
   { id: 'msm', file: 'MSM.dxf', label: 'MSM', views: [{ id: 'back', label: 'MSM back' }] },
   { id: 'ssc', file: 'SSC.dxf', label: 'SSC', order: 'x', views: [{ id: 'front', label: 'SSC front' }, { id: 'back', label: 'SSC back' }] },
-  { id: 'module', file: 'MODULE.dxf', label: 'Battery module', order: '-y', views: [{ id: 'front', label: 'Module front' }, { id: 'back', label: 'Module back' }] },
+  { id: 'module', file: 'MODULE.dxf', label: 'Battery module', order: '-y', views: [{ id: 'front', label: 'Module front' }, { id: 'back', label: 'Module back', drop: true }] },
 ];
 
 function boxOf(pts) {
@@ -89,6 +89,8 @@ for (const P of PARTS) {
     }
     part.views.push({ id: P.views[i].id, label: P.views[i].label, w: r1(x1 - x0), h: r1(y1 - y0), at: [r1(x0), r1(y0)], d: d, circles: circles });
   });
+  /* views not used on the diagram are left out (the module back, AYK 20 Nov 2026) */
+  part.views = part.views.filter(v => !P.views.find(x => x.id === v.id).drop);
   out.parts.push(part);
   console.log(P.file, part.views.map(v => `${v.label} ${v.w} x ${v.h}, ${v.circles.length} circles, ${(v.d.length / 1024).toFixed(0)} kB`).join(' | '));
 }

@@ -728,17 +728,18 @@ async function renderElecPage(id) {
     body.innerHTML = `
       <section class="el-card">
         <div class="el-card-head"><h2>Banks</h2><button class="btn btn-ghost btn-sm" id="el-add-bank">Add bank</button></div>
-        <p class="muted small">One bank per MSM. Same rack = AYK supplies the whole harness; different racks = inline connector and a cable the customer makes (dashed on the sheet).</p>
+        <p class="muted small">One bank per MSM; its model (3, 6 or 9 SSCs) sets the ports it has. Same rack = AYK supplies the whole harness; different racks = inline connector and a cable the customer makes (dashed on the sheet).</p>
         ${src}
         ${setup.banks.length ? `<div class="el-table-wrap"><table class="el-table">
-          <thead><tr><th>Bank</th><th>MSM</th><th>MSM rack</th><th>ACDP (optional)</th><th>ACDP rack</th><th>SSCs</th><th></th></tr></thead>
+          <thead><tr><th>Bank</th><th>MSM</th><th>MSM model</th><th>MSM rack</th><th>ACDP</th><th>ACDP rack</th><th>SSCs</th><th></th></tr></thead>
           <tbody>${setup.banks.map(b => `<tr data-bank="${esc(b.id)}">
             <td><input data-f="name" value="${esc(b.name)}" aria-label="Bank name"></td>
             <td><input data-f="msm.name" value="${esc(b.msm.name)}" placeholder="MSM-1" aria-label="MSM name"></td>
+            <td><select data-f="msm.model" aria-label="MSM model"><option value="" ${ELEC_MSM_MODELS[b.msm.model] ? '' : 'selected'}>Choose…</option>${Object.keys(ELEC_MSM_MODELS).map(k => `<option value="${k}" ${String(b.msm.model) === k ? 'selected' : ''}>${k} SSCs</option>`).join('')}</select></td>
             <td><input data-f="msm.rack" value="${esc(b.msm.rack)}" list="el-racks" placeholder="Rack 1" aria-label="MSM rack"></td>
             <td><input data-f="acdp.name" value="${esc(b.acdp.name)}" placeholder="ACDP1" aria-label="ACDP name"></td>
             <td><input data-f="acdp.rack" value="${esc(b.acdp.rack)}" list="el-racks" placeholder="Rack 1" aria-label="ACDP rack"></td>
-            <td class="el-num">${elecBankSscs(setup, b.id).length} / ${ELEC_MSM_SSC_PORTS}</td>
+            <td class="el-num">${elecBankSscs(setup, b.id).length}${ELEC_MSM_MODELS[b.msm.model] ? ' / ' + ELEC_MSM_MODELS[b.msm.model].sscs : ''}</td>
             <td><button class="btn btn-ghost btn-xs" data-del-bank="${esc(b.id)}" title="Remove this bank">×</button></td></tr>`).join('')}</tbody></table></div>`
           : '<div class="d-empty"><b>No banks yet</b><span>Add one bank for each MSM.</span></div>'}
       </section>
@@ -754,7 +755,7 @@ async function renderElecPage(id) {
             <td><input data-f="name" value="${esc(c.name)}" placeholder="SSC1" aria-label="SSC name"></td>
             <td><input data-f="rack" value="${esc(c.rack)}" list="el-racks" placeholder="Rack 1" aria-label="SSC rack"></td>
             <td><select data-f="bank" aria-label="Bank">${bankOpts(c.bank)}</select></td>
-            <td><select data-f="fans" aria-label="Cooling fans"><option value="" ${c.fans ? '' : 'selected'}>Choose…</option><option value="2" ${c.fans === 2 ? 'selected' : ''}>2</option><option value="3" ${c.fans === 3 ? 'selected' : ''}>3</option></select></td>
+            <td><select data-f="fans" aria-label="Cooling fans"><option value="" ${c.fans ? '' : 'selected'}>Choose…</option>${ELEC_FAN_CHOICES.map(k => `<option value="${k}" ${c.fans === k ? 'selected' : ''}>${k}</option>`).join('')}</select></td>
             <td><span class="el-link el-link-${k}">${k === 'harness' ? 'AYK harness' : k === 'inline' ? 'Inline connector' : '—'}</span></td>
             <td><button class="btn btn-ghost btn-xs" data-del-ssc="${esc(c.id)}" title="Remove this SSC">×</button></td></tr>`;
           }).join('')}</tbody></table></div>`
@@ -764,7 +765,8 @@ async function renderElecPage(id) {
       <section class="el-card">
         <div class="el-card-head"><h2>Customer connections</h2></div>
         <p class="muted small">At the MSM back. Only the ones in use are drawn.</p>
-        <ul class="el-options">${ELEC_OPTIONS.map(o => `<li><div><b>${esc(o.label)}</b><small>${esc(o.note)}</small></div>${yesNo('opt-' + o.id, setup.options[o.id])}</li>`).join('')}
+        <p class="muted small">Always drawn: ${ELEC_OPTIONS.filter(o => o.always).map(o => esc(o.label)).join(', ')}.</p>
+        <ul class="el-options">${ELEC_OPTIONS.filter(o => !o.always).map(o => `<li><div><b>${esc(o.label)}</b><small>${esc(o.note)}</small></div>${yesNo('opt-' + o.id, setup.options[o.id])}</li>`).join('')}
           <li><div><b>Master valves (fire fighting)</b><small>LP16-7 female to male, 5 × 0.3 mm²</small></div>
             <select id="el-valves" aria-label="Master valves"><option value="" ${[0, 1, 2].includes(setup.valves) ? '' : 'selected'}>Choose…</option>${[0, 1, 2].map(v => `<option value="${v}" ${setup.valves === v ? 'selected' : ''}>${v}</option>`).join('')}</select></li>
         </ul>
@@ -791,7 +793,7 @@ async function renderElecPage(id) {
   function wire() {
     body.querySelectorAll('[data-bank] [data-f]').forEach(inp => inp.onchange = () => {
       const b = setup.banks.find(x => x.id === inp.closest('[data-bank]').dataset.bank);
-      setPath(b, inp.dataset.f, inp.value.trim()); changed();
+      setPath(b, inp.dataset.f, inp.dataset.f === 'msm.model' ? (inp.value ? +inp.value : null) : inp.value.trim()); changed();
     });
     body.querySelectorAll('[data-ssc] [data-f]').forEach(inp => inp.onchange = () => {
       const c = setup.sscs.find(x => x.id === inp.closest('[data-ssc]').dataset.ssc);
@@ -813,7 +815,7 @@ async function renderElecPage(id) {
     });
     document.getElementById('el-add-bank').onclick = () => {
       const n = setup.banks.length + 1;
-      setup.banks.push({ id: 'b' + Date.now().toString(36), name: 'Bank ' + n, msm: { name: '', rack: '' }, acdp: { name: '', rack: '' } });
+      setup.banks.push({ id: 'b' + Date.now().toString(36), name: 'Bank ' + n, msm: { name: '', rack: '', model: null }, acdp: { name: '', rack: '' } });
       changed();
     };
     document.getElementById('el-add-ssc').onclick = () => {

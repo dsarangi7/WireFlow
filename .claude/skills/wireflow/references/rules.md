@@ -70,8 +70,13 @@ the engineer confirms every SSC/ACDP/MSM name and each SSC's module count.
 - Same project folders as the wiring diagram. Projects have 3, 6 or 9 SSCs; the engineer
   decides how they split into banks (one MSM per bank). The MSM back shows SSC ports 1–6, so
   more than 6 on one MSM is pointed out, never blocked.
-- Parts drawn: MSM back, SSC front/back, module front/back, from AYK's DXFs
-  (`tools/make-elec-parts.js` → `assets/elec/parts.json`). ACDP is optional.
+- Parts drawn: MSM back, SSC front/back, module front (no module back), from AYK's DXFs
+  (`tools/make-elec-parts.js` → `assets/elec/parts.json`). Every bank has an ACDP (no ACDP
+  drawing yet); only the junction box is gone.
+- MSM models by SSCs served: 3, 6 or 9 (`ELEC_MSM_MODELS`); the engineer picks each bank's model.
+  Only the 9-SSC MSM has a DXF. The 3-SSC MSM (AYK picture): Cloud, EMS, PCS / SSC1P–3P /
+  SSC1B–3B / Spare; round Estop1–2 / Estop3, Ex.FanFB, Dry Contact, RemoteE / PowerP, PowerB,
+  Valve 1, Valve 2. The 6-SSC MSM is DWG2527 sheet 1 (P and B alternate along each row).
 - No junction box on the electrical diagram of future projects. The wiring diagram keeps its
   junction boxes (B+/B− and the customer plug leads) — do not remove them there.
 - Safety (AYK, 20 Nov 2026): the junction box HVIL wire to the SSC (SSC Ext-HVIL) is never wired
@@ -83,7 +88,23 @@ the engineer confirms every SSC/ACDP/MSM name and each SSC's module count.
     PowerP/PowerB (3-pin), Ex.FanFB (5-pin), Valve 1/Valve 2 (7-pin); the 19-pin connector is unused.
   - SSC back: PowerP, PowerB, CommP, CommB, Ext-HVIL (never wired), Cooling Fan, Estop.
   - SSC front: S, N, S+, B+, B−, S−. The module carries no ports on this diagram.
+- Connection rules (only confirmed ones live in `ELEC_RULES`, `js/elec.js`):
+  - MSM SSCnP → SSCn CommP, Cat6 (confirmed 20 Nov 2026). n is the SSC's place in its bank, in
+    name order (MSM-2 serves SSC7, SSC8 … from its SSC1P, SSC2P …, as on DWG2527).
+  - MSM Estop n → SSCn Estop, 4 × 0.518 mm² (confirmed 20 Nov 2026), same n.
+  - MSM Valve n → LP16-7 female to LP16-7 male connector → Master Valve n (5 × 0.3 mm²),
+    one per valve in use (confirmed 20 Nov 2026).
+  - The SSC Cooling Fan port is one connector, pins 1–6 (AYK, 20 Nov 2026).
+  - ACDP back, left to right: SSC3B, SSC3P, SSC2B, SSC2P, SSC1B, SSC1P, MSMB, MSMP,
+    ACPowerInB, ACPowerInP. ACDP SSCnP → SSCn PowerP (red), SSCnB → SSCn PowerB (blue);
+    ACDP MSMP/MSMB → MSM PowerP/PowerB; customer normal power / backup UPS → ACPowerInP/B
+    through an inline connector (confirmed 20 Nov 2026 from AYK's ACDP1 picture).
+  - Always drawn, never asked (AYK, 20 Nov 2026): MSM RemoteE → client-side remote E-stop
+    (LP16-4 inline, 4 × 0.518 mm²) and MSM Dry Contact → client-side thermal runaway status
+    signal (pins 1–2, 2 × 0.518 mm²).
+  - Not yet confirmed: SSCnB/CommB (DWG2527 notes call them the backup), power for SSC4 and
+    up in a bank (DWG2527 shows a second ACDP), sheet order.
 - Same rack = AYK harness (solid); different racks = inline connector + customer cable (dashed).
-- Never guess fan counts (2 or 3 per SSC), port maps or bank splits: the engineer answers them
+- Never guess fan counts (1 to 6 per SSC), port maps or bank splits: the engineer answers them
   on the setup page and confirms it.
 

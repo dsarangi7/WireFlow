@@ -18,7 +18,20 @@
    Projects have 3, 6 or 9 SSCs; how they split into banks is the engineer's decision, so more
    than this on one MSM is only pointed out, never blocked. */
 const ELEC_MSM_SSC_PORTS = 6;
-const ELEC_FAN_CHOICES = [2, 3];
+/* cooling fans per SSC: 1 to 6 (the Cooling Fan port has pins 1 to 6) */
+const ELEC_FAN_CHOICES = [1, 2, 3, 4, 5, 6];
+
+/* MSM models, by how many SSCs they serve (each bank's model is the engineer's choice).
+   Port layouts as AYK's drawings show them, rows top to bottom, left to right. */
+const ELEC_MSM_MODELS = {
+  3: { sscs: 3, drawing: null, source: 'AYK picture of MSM-1 back (20 Nov 2026); no DXF yet',
+       jacks: [['Cloud', 'EMS', 'PCS'], ['SSC1P', 'SSC2P', 'SSC3P'], ['SSC1B', 'SSC2B', 'SSC3B'], ['Spare']],
+       round: [['Estop1', 'Estop2'], ['Estop3', 'Ex.FanFB', 'Dry Contact', 'RemoteE'], ['PowerP', 'PowerB', 'Valve 1', 'Valve 2']] },
+  6: { sscs: 6, drawing: null, source: 'DWG2527 sheet 1 (S10195); no DXF yet',
+       jacks: [['Cloud', 'EMS', 'PCS', 'Spare'], ['SSC1P', 'SSC1B', 'SSC2P', 'SSC2B'], ['SSC3P', 'SSC3B', 'SSC4P', 'SSC4B'], ['SSC5P', 'SSC5B', 'SSC6P', 'SSC6B']],
+       round: [['Estop1', 'Estop2', 'Estop3'], ['Estop4', 'Estop5', 'Estop6', 'Dry Contact', 'RemoteE'], ['PowerP', 'PowerB', 'Ex.FanFB', 'Valve 1', 'Valve 2']] },
+  9: { sscs: 9, drawing: 'msm', source: 'MSM.dxf (assets/elec/parts.json), names confirmed 20 Nov 2026' },
+};
 
 /* The part drawings every project uses (assets/elec/parts.json, from AYK's CADS folder).
    There is no junction box on future projects, so none is drawn. */
@@ -40,8 +53,9 @@ const ELEC_OPTIONS = [
   { id: 'cloud', label: 'Cloud (secure remote access)', note: 'Ethernet, supplied by the customer (DOC2225)' },
   { id: 'ems', label: 'EMS port', note: 'Cat6, customer access to the BMS' },
   { id: 'pcs', label: 'PCS port', note: 'Cat6, customer access to the BMS' },
-  { id: 'remoteEstop', label: 'Customer remote E-stop (RemoteE)', note: 'LP16-4, 1 kΩ series + 10 kΩ parallel at the switch' },
-  { id: 'dryContact', label: 'Dry contact (thermal runaway status)', note: '25 V / 200 mA max (TN0080)' },
+  /* always used on every project (AYK, 20 Nov 2026): never asked, always drawn */
+  { id: 'remoteEstop', label: 'Customer remote E-stop (RemoteE)', note: 'LP16-4, 1 kΩ series + 10 kΩ parallel at the switch', always: true },
+  { id: 'dryContact', label: 'Dry contact (thermal runaway status)', note: '25 V / 200 mA max (TN0080)', always: true },
   { id: 'extFanFb', label: 'Extraction fan failure signal', note: 'Optional; trips the bank instantly' },
   { id: 'servicing', label: '230 VAC control power inlet for battery servicing', note: 'At the ACDP' },
 ];
@@ -50,8 +64,8 @@ function elecNewSetup() {
   return {
     version: 1,
     banks: [],              // [{ id, name, msm: {name, rack}, acdp: {name, rack} }]
-    sscs: [],               // [{ id, name, rack, bank (bank id or ''), fans (2|3|null) }]
-    options: Object.fromEntries(ELEC_OPTIONS.map(o => [o.id, null])),  // null = not answered yet
+    sscs: [],               // [{ id, name, rack, bank (bank id or ''), fans (1…6 or null) }]
+    options: Object.fromEntries(ELEC_OPTIONS.map(o => [o.id, o.always ? true : null])),  // null = not answered yet
     valves: null,           // master valves (fire fighting) on this system: 0, 1 or 2
     confirmed: false,
     source: null,           // how it was filled: { racks: [names], at }
@@ -73,7 +87,7 @@ function elecCompare(a, b) { return String(a).localeCompare(String(b), undefined
 function elecFromRacks(parts, rackNames) {
   const s = elecNewSetup();
   const msms = parts.filter(p => p.kind === 'msm').sort((a, b) => elecCompare(a.name, b.name));
-  msms.forEach((m, i) => s.banks.push({ id: elecId('b'), name: 'Bank ' + (i + 1), msm: { name: m.name, rack: m.rack }, acdp: { name: '', rack: '' } }));
+  msms.forEach((m, i) => s.banks.push({ id: elecId('b'), name: 'Bank ' + (i + 1), msm: { name: m.name, rack: m.rack, model: null }, acdp: { name: '', rack: '' } }));
   const bankOfRack = rack => {
     const here = s.banks.filter(b => b.msm.rack === rack);
     return here.length === 1 ? here[0] : null;
@@ -117,20 +131,26 @@ function elecIssues(setup) {
     if (!String(b.name).trim()) err('Every bank needs a name.');
     if (!String(b.msm.name).trim()) err(`${n}: enter its MSM name.`);
     if (!String(b.msm.rack).trim()) err(`${n}: which rack is ${b.msm.name || 'its MSM'} in?`);
-    /* the ACDP is optional: the diagram is drawn from the MSM, SSC and module drawings */
-    if (String(b.acdp.name).trim() && !String(b.acdp.rack).trim()) err(`${n}: which rack is ${b.acdp.name} in?`);
+    const model = ELEC_MSM_MODELS[b.msm.model];
+    if (!model) err(`${n}: which MSM model (3, 6 or 9 SSCs)?`);
+    /* every bank has its ACDP (AYK, 20 Nov 2026); only the junction box is gone */
+    if (!String(b.acdp.name).trim()) err(`${n}: enter its ACDP name.`);
+    else if (!String(b.acdp.rack).trim()) err(`${n}: which rack is ${b.acdp.name} in?`);
     seen('a bank', b.name); seen('an MSM', b.msm.name); seen('an ACDP', b.acdp.name);
     const sscs = elecBankSscs(setup, b.id);
     if (!sscs.length) err(`${n} has no SSCs.`);
-    if (sscs.length > ELEC_MSM_SSC_PORTS) note(`${n} has ${sscs.length} SSCs on one MSM; the MSM back in DWG2527 shows SSC ports 1 to ${ELEC_MSM_SSC_PORTS}. Check this split is intended.`);
+    if (model && sscs.length > model.sscs) err(`${n} has ${sscs.length} SSCs, but a ${model.sscs}-SSC MSM has SSC ports 1 to ${model.sscs}.`);
+    if (sscs.length > ELEC_ACDP_SSCS) note(`${n}: its ACDP feeds SSC ports 1 to ${ELEC_ACDP_SSCS}; how ${sscs.slice(ELEC_ACDP_SSCS).map(c => c.name).join(', ')} get${sscs.length - ELEC_ACDP_SSCS === 1 ? 's' : ''} power is not confirmed yet (DWG2527 shows a second ACDP).`);
+    if (model && !model.drawing) note(`${n}: there is no drawing of the ${model.sscs}-SSC MSM yet, so its sheet cannot be drawn until AYK adds one.`);
   }
   for (const c of setup.sscs) {
     if (!String(c.name).trim()) { err('Every SSC needs a name.'); continue; }
     seen('an SSC', c.name);
     if (!c.bank || !setup.banks.some(b => b.id === c.bank)) err(`${c.name}: choose its bank.`);
     if (!String(c.rack).trim()) err(`${c.name}: which rack is it in?`);
-    if (!ELEC_FAN_CHOICES.includes(c.fans)) err(`${c.name}: how many cooling fans (2 or 3)?`);
+    if (!ELEC_FAN_CHOICES.includes(c.fans)) err(`${c.name}: how many cooling fans (1 to 6)?`);
   }
+  for (const o of ELEC_OPTIONS) if (o.always) setup.options[o.id] = true;   /* older setups asked them */
   const open = ELEC_OPTIONS.filter(o => setup.options[o.id] !== true && setup.options[o.id] !== false);
   if (open.length) err(`Answer yes or no for: ${open.map(o => o.label).join('; ')}.`);
   if (![0, 1, 2].includes(setup.valves)) err('How many master valves (fire fighting): 0, 1 or 2?');
@@ -157,4 +177,87 @@ function elecSummary(setup) {
   return { banks: s.banks.length, sscs: s.sscs.length, confirmed: !!s.confirmed };
 }
 
-if (typeof module !== 'undefined') module.exports = { ELEC_PARTS, ELEC_NOT_WIRED, elecPortBlocked, ELEC_MSM_SSC_PORTS, ELEC_OPTIONS, elecNewSetup, elecFromRacks, elecBankSscs, elecIssues, elecReady, elecLinkKind, elecSummary, elecCompare };
+/* ---------- connections ----------
+ * Only rules AYK has confirmed are here; every other port waits for its rule.
+ * The n-th SSC of a bank (in name order) uses the MSM's SSCn ports, as on DWG2527
+ * (MSM-2 serves SSC7, SSC8 … from its first ports). */
+const ELEC_RULES = [
+  { id: 'comm-primary', cable: 'comm', confirmed: '2026-11-20',
+    text: 'MSM SSCnP to SSCn CommP (primary communication, Cat6)' },
+  { id: 'estop', cable: 'estop', confirmed: '2026-11-20',
+    text: 'MSM Estop n to SSCn Estop (MSM_SSC Estop, 4 x 0.518 mm²)' },
+  { id: 'ssc-power', cable: 'power', confirmed: '2026-11-20',
+    text: 'ACDP SSCnP to SSCn PowerP (primary, red) and ACDP SSCnB to SSCn PowerB (backup, blue), 3 x 1.5 mm²' },
+  { id: 'msm-power', cable: 'power', confirmed: '2026-11-20',
+    text: 'ACDP MSMP to MSM PowerP (primary) and ACDP MSMB to MSM PowerB (backup), 3 x 1.5 mm²' },
+  { id: 'ac-in', cable: 'ac-in', confirmed: '2026-11-20',
+    text: "Customer AC supply to ACDP ACPowerInP (normal power) and ACPowerInB (backup UPS), inline connector, 3 x 2.5 mm²" },
+  { id: 'remote-estop', cable: 'remote-estop', confirmed: '2026-11-20',
+    text: 'MSM RemoteE to the client-side remote E-stop, LP16-4 inline connector, pin to pin, 4 x 0.518 mm² (always)' },
+  { id: 'dry-contact', cable: 'dry-contact', confirmed: '2026-11-20',
+    text: 'MSM Dry Contact to the client-side thermal runaway status signal, pins 1-2, 2 x 0.518 mm² (always)' },
+  { id: 'valve', cable: 'valve', confirmed: '2026-11-20',
+    text: 'MSM Valve n to Master Valve n, through an LP16-7 female to LP16-7 male connector (5 x 0.3 mm²)' },
+];
+/* ACDP back, left to right (AYK picture of ACDP1 back and DWG2527, 20 Nov 2026):
+   it feeds three SSCs and the MSM, and takes the customer's AC power in. */
+const ELEC_ACDP_PORTS = ['SSC3B', 'SSC3P', 'SSC2B', 'SSC2P', 'SSC1B', 'SSC1P', 'MSMB', 'MSMP', 'ACPowerInB', 'ACPowerInP'];
+const ELEC_ACDP_SSCS = 3;
+/* The SSC Cooling Fan port is one connector, pins 1 to 6 (AYK, 20 Nov 2026). */
+const ELEC_FAN_PINS = 6;
+
+/**
+ * The connections a confirmed setup gives under ELEC_RULES:
+ * [{ rule, cable, from: {part, name, port}, to: {part, name, port}, link: 'harness'|'inline'|'unknown', bank }]
+ */
+function elecLinks(setup) {
+  const out = [];
+  for (const b of setup.banks) {
+    elecBankSscs(setup, b.id).forEach((c, i) => {
+      const n = i + 1;
+      const model = ELEC_MSM_MODELS[b.msm.model];
+      if (n > (model ? model.sscs : 9)) return;   /* past the MSM's SSC ports */
+      out.push({ rule: 'comm-primary', cable: 'comm', bank: b.id,
+        from: { part: 'msm', name: b.msm.name, port: 'SSC' + n + 'P' },
+        to: { part: 'ssc', name: c.name, port: 'CommP' },
+        link: elecLinkKind(b.msm.rack, c.rack) });
+      out.push({ rule: 'estop', cable: 'estop', bank: b.id,
+        from: { part: 'msm', name: b.msm.name, port: 'Estop' + n },
+        to: { part: 'ssc', name: c.name, port: 'Estop' },
+        link: elecLinkKind(b.msm.rack, c.rack) });
+    });
+  }
+  /* power from the ACDP: its SSC1-3 ports feed the bank's first three SSCs; the MSM; AC in */
+  for (const b of setup.banks) {
+    if (!String(b.acdp.name).trim()) continue;
+    elecBankSscs(setup, b.id).slice(0, ELEC_ACDP_SSCS).forEach((c, i) => {
+      for (const pb of ['P', 'B']) out.push({ rule: 'ssc-power', cable: 'power-' + pb, bank: b.id,
+        from: { part: 'acdp', name: b.acdp.name, port: 'SSC' + (i + 1) + pb },
+        to: { part: 'ssc', name: c.name, port: 'Power' + pb }, link: elecLinkKind(b.acdp.rack, c.rack) });
+    });
+    for (const pb of ['P', 'B']) out.push({ rule: 'msm-power', cable: 'power-' + pb, bank: b.id,
+      from: { part: 'acdp', name: b.acdp.name, port: 'MSM' + pb },
+      to: { part: 'msm', name: b.msm.name, port: 'Power' + pb }, link: elecLinkKind(b.acdp.rack, b.msm.rack) });
+    for (const pb of ['P', 'B']) out.push({ rule: 'ac-in', cable: 'ac-in-' + pb, bank: b.id,
+      from: { part: 'customer', name: pb === 'P' ? 'Normal power' : 'Backup UPS', port: 'L/N/G' },
+      to: { part: 'acdp', name: b.acdp.name, port: 'ACPowerIn' + pb }, link: 'inline' });
+  }
+  /* always: the customer's remote E-stop and the thermal runaway status signal (dry contact) */
+  for (const b of setup.banks) {
+    out.push({ rule: 'remote-estop', cable: 'remote-estop', bank: b.id,
+      from: { part: 'msm', name: b.msm.name, port: 'RemoteE' },
+      to: { part: 'customer', name: 'Client-side remote E-stop', port: 'Pin 1-4' }, via: 'LP16-4 inline connector', link: 'inline' });
+    out.push({ rule: 'dry-contact', cable: 'dry-contact', bank: b.id,
+      from: { part: 'msm', name: b.msm.name, port: 'Dry Contact' },
+      to: { part: 'customer', name: 'Client-side thermal runaway status signal', port: 'Pin 1-2' }, link: 'inline' });
+  }
+  /* master valves: one to each of the bank's MSM valve ports in use */
+  for (const b of setup.banks) for (let v = 1; v <= Math.min(2, setup.valves || 0); v++)
+    out.push({ rule: 'valve', cable: 'valve', bank: b.id,
+      from: { part: 'msm', name: b.msm.name, port: 'Valve ' + v },
+      to: { part: 'valve', name: 'Master Valve' + v, port: 'LP16-7' },
+      via: 'LP16-7 female to LP16-7 male connector', link: 'customer' });
+  return out.filter(l => !elecPortBlocked(l.from.part, l.from.port) && !elecPortBlocked(l.to.part, l.to.port));
+}
+
+if (typeof module !== 'undefined') module.exports = { ELEC_FAN_CHOICES, ELEC_ACDP_PORTS, ELEC_ACDP_SSCS, ELEC_MSM_MODELS, ELEC_FAN_PINS, ELEC_RULES, elecLinks, ELEC_PARTS, ELEC_NOT_WIRED, elecPortBlocked, ELEC_MSM_SSC_PORTS, ELEC_OPTIONS, elecNewSetup, elecFromRacks, elecBankSscs, elecIssues, elecReady, elecLinkKind, elecSummary, elecCompare };
