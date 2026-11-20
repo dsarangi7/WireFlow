@@ -654,7 +654,7 @@ async function elecShowPart(partId, viewId) {
   back.className = 'modal-back';
   back.innerHTML = `<div class="modal el-part-modal" role="dialog" aria-label="${esc(v.label)}">
     <div class="el-card-head"><h3>${esc(v.label)}</h3><button class="btn btn-ghost btn-sm" data-x>Close</button></div>
-    <p class="muted small">${n.length ? `${n.length} ports. ${guess ? `<b class="el-guess-key">${guess} amber names (with ?)</b> are proposed by position and need confirming; the rest are certain (pin count or AYK's DWG2527 order).` : 'All names are certain (AYK DWG2527 order).'}` : 'No ports are named on this view: it is only drawn.'}${(v.ports || []).some(p => p.unused) || blocked.length ? ' Grey: not used on the diagram' + (blocked.length ? ` (${blocked.map(p => esc(p.name)).join(', ')}: ${esc(ELEC_NOT_WIRED.find(r => r.part === partId && r.port !== '*').why)})` : '') + '.' : ''}</p>
+    <p class="muted small">${n.length ? `${n.length} ports. ${guess ? `<b class="el-guess-key">${guess} amber names (with ?)</b> are proposed by position and need confirming${guess < n.length ? '; the rest are certain (pin count, AYK DWG2527 order, or confirmed by AYK)' : ''}.` : 'All names are confirmed.'}` : 'No ports are named on this view: it is only drawn.'}${(v.ports || []).some(p => p.unused) || blocked.length ? ' Grey: not used on the diagram' + (blocked.length ? ` (${blocked.map(p => esc(p.name)).join(', ')}: ${esc(ELEC_NOT_WIRED.find(r => r.part === partId && r.port !== '*').why)})` : '') + '.' : ''}</p>
     <div class="el-part-big">${elecViewSvg(v, '', true, partId)}</div></div>`;
   document.body.appendChild(back);
   const close = () => { back.remove(); document.removeEventListener('keydown', key); };
@@ -782,7 +782,7 @@ async function renderElecPage(id) {
 
       <section class="el-card">
         <div class="el-card-head"><h2>Part drawings</h2><span class="muted small">Used on every project</span></div>
-        <p class="muted small">From AYK's CAD files (MSM, SSC, module). No junction box is drawn on new projects, and the SSC Ext-HVIL port stays unconnected: that wire is high voltage and the connector is not rated for it.</p>
+        <p class="muted small">From AYK's CAD files (MSM, SSC, junction box, module). The SSC Ext-HVIL port stays unconnected: the junction box HVIL wire is high voltage and the connector is not rated for it.</p>
         <div class="el-parts" id="el-parts"><span class="muted small">Loading the part drawings…</span></div>
       </section>`;
     elecPartsInto(document.getElementById('el-parts'));

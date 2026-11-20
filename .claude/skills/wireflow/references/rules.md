@@ -70,15 +70,18 @@ the engineer confirms every SSC/ACDP/MSM name and each SSC's module count.
 - Same project folders as the wiring diagram. Projects have 3, 6 or 9 SSCs; the engineer
   decides how they split into banks (one MSM per bank). The MSM back shows SSC ports 1–6, so
   more than 6 on one MSM is pointed out, never blocked.
-- Parts drawn: MSM back, SSC front/back, module front (no module back), from AYK's DXFs
+- Parts drawn: MSM back, SSC front/back, junction box front, module front (no backs of the
+  module or junction box), from AYK's DXFs
   (`tools/make-elec-parts.js` → `assets/elec/parts.json`). Every bank has an ACDP (no ACDP
   drawing yet); only the junction box is gone.
 - MSM models by SSCs served: 3, 6 or 9 (`ELEC_MSM_MODELS`); the engineer picks each bank's model.
   Only the 9-SSC MSM has a DXF. The 3-SSC MSM (AYK picture): Cloud, EMS, PCS / SSC1P–3P /
   SSC1B–3B / Spare; round Estop1–2 / Estop3, Ex.FanFB, Dry Contact, RemoteE / PowerP, PowerB,
   Valve 1, Valve 2. The 6-SSC MSM is DWG2527 sheet 1 (P and B alternate along each row).
-- No junction box on the electrical diagram of future projects. The wiring diagram keeps its
-  junction boxes (B+/B− and the customer plug leads) — do not remove them there.
+- The junction box front IS kept on the electrical diagram (AYK, 20 Nov 2026, reversing the
+  earlier "no junction box"); two junction boxes: JUNCTION BOX2.dxf (2 Bus connectors) and JUNCTION BOX4.dxf
+  (4 Bus connectors), named left to right Bus+, Bus−(, Bus+, Bus−) — confirmed 20 Nov 2026.
+  The wiring diagram keeps its junction boxes too.
 - Safety (AYK, 20 Nov 2026): the junction box HVIL wire to the SSC (SSC Ext-HVIL) is never wired
   on new projects — the wire is high voltage and the connector is not rated for it. Released
   projects are not changed. Kept in `ELEC_NOT_WIRED` (`js/elec.js`).

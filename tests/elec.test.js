@@ -68,9 +68,9 @@ eq(E.elecLinkKind('Rack 1', ''), 'unknown', 'rack not given');
 
 /* never wired on new diagrams */
 ok(E.elecPortBlocked('ssc', 'Ext-HVIL') && E.elecPortBlocked('ssc', 'ext-hvil'), 'SSC Ext-HVIL is not wired');
-ok(E.elecPortBlocked('jb', 'Bus+'), 'no junction box');
+ok(!E.elecPortBlocked('jb', 'Bus+'), 'the junction box front is kept');
 ok(!E.elecPortBlocked('ssc', 'PowerP'), 'other SSC ports are wired');
-eq(E.ELEC_PARTS, ['msm', 'ssc', 'module'], 'the three part drawings');
+eq(E.ELEC_PARTS, ['msm', 'ssc', 'jb2', 'jb4', 'module'], 'the part drawings');
 
 /* confirmed connection: MSM SSCnP -> SSCn CommP, n = position of the SSC in its bank */
 const two2 = E.elecNewSetup();
@@ -113,7 +113,13 @@ ok(!links.some(l => /B$/.test(l.from.port) || l.to.port === 'CommB'), 'backup co
 const lib = JSON.parse(require('fs').readFileSync(require('path').join(__dirname, '../assets/elec/parts.json'), 'utf8'));
 const view = (p, v) => lib.parts.find(x => x.id === p).views.find(x => x.id === v);
 const names = v => v.ports.map(q => q.name);
-eq(lib.parts.map(p => p.id), ['msm', 'ssc', 'module'], 'three parts');
+eq(lib.parts.map(p => p.id), ['msm', 'ssc', 'jb2', 'jb4', 'module'], 'five parts');
+eq(lib.parts.find(p => p.id === 'jb2').views.map(v => v.id), ['front'], 'junction box: front only');
+eq(names(view('jb2', 'front')), ['Bus+', 'Bus-'], '2-connector junction box: Bus+, Bus-');
+eq(names(view('jb4', 'front')), ['Bus+', 'Bus-', 'Bus+', 'Bus-'], '4-connector junction box: Bus+, Bus-, Bus+, Bus-');
+ok(['jb2', 'jb4'].every(id => view(id, 'front').ports.every(q => q.sure)), 'junction box names confirmed');
+const jx = view('jb4', 'front').ports.map(q => q.x);
+ok(jx.every((x, i) => !i || x > jx[i - 1]), '4-connector names run left to right');
 eq(lib.parts.find(p => p.id === 'module').views.map(v => v.id), ['front'], 'module: front only, no back');
 const msm = view('msm', 'back');
 eq(msm.ports.length, 39, 'MSM back: 38 connectors + the 19-pin');

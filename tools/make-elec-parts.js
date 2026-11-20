@@ -4,6 +4,8 @@
  *   MSM.dxf     MSM back panel (bare geometry)
  *   SSC.dxf     SSC front (left view) and back (right view), in a 1:5 factory frame
  *   MODULE.dxf  module front (upper view); its back (lower view) is not used
+ *   JUNCTION BOX2.dxf junction box with 2 Bus connectors: front (left view); back not used
+ *   JUNCTION BOX4.dxf junction box with 4 Bus connectors: front only
  *
  * Only layer "0" (the part itself) is kept: the frame, title block and notes are
  * dropped. Views are separated by the empty space between them. Coordinates stay in
@@ -23,6 +25,8 @@ const DIR = process.argv[2] || 'G:\\WiringTool\\Electrical Interactive tool\\Ele
 const PARTS = [
   { id: 'msm', file: 'MSM.dxf', label: 'MSM', views: [{ id: 'back', label: 'MSM back' }] },
   { id: 'ssc', file: 'SSC.dxf', label: 'SSC', order: 'x', views: [{ id: 'front', label: 'SSC front' }, { id: 'back', label: 'SSC back' }] },
+  { id: 'jb2', file: 'JUNCTION BOX2.dxf', label: 'Junction box, 2 connectors', order: 'x', views: [{ id: 'front', label: 'Junction box front (2 connectors)' }, { id: 'back', label: 'Junction box back', drop: true }] },
+  { id: 'jb4', file: 'JUNCTION BOX4.dxf', label: 'Junction box, 4 connectors', views: [{ id: 'front', label: 'Junction box front (4 connectors)' }] },
   { id: 'module', file: 'MODULE.dxf', label: 'Battery module', order: '-y', views: [{ id: 'front', label: 'Module front' }, { id: 'back', label: 'Module back', drop: true }] },
 ];
 
@@ -139,6 +143,12 @@ function msmPorts(v) {
   if (big) ports.push(port('19-pin connector', big, 'round', 6.6, true, { unused: true }));
   return ports;
 }
+/* junction box front: Bus+, Bus-, Bus+, Bus- left to right (confirmed by AYK, 20 Nov 2026) */
+function jbPorts(v, n, ring) {
+  const row = ringsOf(v, ring, 0.06).sort((a, b) => a[0] - b[0]);
+  expect(row, n, `junction box front (${n} Bus connectors)`);
+  return row.map((p, i) => port(i % 2 ? 'Bus-' : 'Bus+', p, 'round', ring * 2, true));
+}
 function sscPorts(v, side) {
   /* the connector row at the bottom, left to right, in DWG2527's order */
   const names = side === 'back' ? ['PowerP', 'PowerB', 'CommP', 'CommB', 'Ext-HVIL', 'Cooling Fan', 'Estop'] : ['S', 'N', 'S+', 'B+', 'B-', 'S-'];
@@ -155,6 +165,8 @@ function sscPorts(v, side) {
 for (const p of out.parts) for (const v of p.views) {
   if (p.id === 'msm') v.ports = msmPorts(v);
   else if (p.id === 'ssc') v.ports = sscPorts(v, v.id);
+  else if (p.id === 'jb2') v.ports = jbPorts(v, 2, 14.8);
+  else if (p.id === 'jb4') v.ports = jbPorts(v, 4, 12.5);
   else v.ports = [];
   console.log(v.label, 'ports:', v.ports.map(q => q.name + (q.sure ? '' : '?')).join(', ') || '(none needed)');
 }

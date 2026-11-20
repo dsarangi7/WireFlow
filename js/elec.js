@@ -34,14 +34,13 @@ const ELEC_MSM_MODELS = {
 };
 
 /* The part drawings every project uses (assets/elec/parts.json, from AYK's CADS folder).
-   There is no junction box on future projects, so none is drawn. */
-const ELEC_PARTS = ['msm', 'ssc', 'module'];
+   The junction box front is kept (AYK, 20 Nov 2026); only its HVIL wire to the SSC is gone. */
+const ELEC_PARTS = ['msm', 'ssc', 'jb2', 'jb4', 'module'];
 
 /* Ports that are never wired on new diagrams, with AYK's reason. Released projects are
    not changed. */
 const ELEC_NOT_WIRED = [
   { part: 'ssc', port: 'Ext-HVIL', why: 'No junction box HVIL wire to the SSC (AYK safety decision, 20 Nov 2026): the wire is high voltage and the connector is not rated for it.' },
-  { part: 'jb', port: '*', why: 'No junction box on future projects.' },
 ];
 /** True when a port must stay unconnected on a new diagram. */
 function elecPortBlocked(part, port) {
