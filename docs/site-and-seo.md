@@ -5,9 +5,11 @@
 | Address | Shows |
 |---|---|
 | `/` (no hash), `#/`, `#features`, `#faq` … | Public product page (static HTML in `index.html`) |
-| `#/app` | Drawings home: import a DXF, list of drawings, legacy projects |
-| `#/cad/<id>` | CAD rack view (teach parts, confirm SSCs / ACDPs / MSM) |
-| `#/project/<id>` | Legacy picture workspace |
+| `#/app` | Projects: import a DXF, folders by project number |
+| `#/folder/<id>` | Racks of one project (`none` = racks not in a project) |
+| `#/cad/<id>` | Rack view (teach parts, confirm SSCs / ACDPs / MSM, number modules) |
+| `#/sheet/<id>` | Wiring sheet editor and PDF download |
+| `#/example` | Opens the bundled example rack 111 |
 
 Only `#/<something>` routes belong to the app; plain anchors such as `#faq`
 scroll the product page. `route()` in `js/app.js` toggles `#landing` and

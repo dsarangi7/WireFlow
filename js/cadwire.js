@@ -6,8 +6,7 @@
  *     the modules the engineer enters for it;
  *   - power, series:  SSC S- -> M1 -,  Mk + -> Mk+1 -,  last + -> SSC S+;
  *   - communication:  SSC S -> M1 N,   Mk S -> Mk+1 N,  last S -> SSC N
- *                     (user-confirmed 19 Nov 2026; matches engine.js, frontview.js,
- *                     simple-wiring.js and the R03/R06 specification);
+ *                     (user-confirmed 19 Nov 2026);
  *   - bus:            SSC B+ -> JB +,  SSC B- -> JB -  (pair P1 or P2,
  *                     chosen once by the engineer, same on every JB);
  *   - power cables never cross each other anywhere in the rack; power and
