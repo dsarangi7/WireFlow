@@ -105,8 +105,14 @@ the engineer confirms every SSC/ACDP/MSM name and each SSC's module count.
   - Always drawn, never asked (AYK, 20 Nov 2026): MSM RemoteE → client-side remote E-stop
     (LP16-4 inline, 4 × 0.518 mm²) and MSM Dry Contact → client-side thermal runaway status
     signal (pins 1–2, 2 × 0.518 mm²).
-  - Not yet confirmed: SSCnB/CommB (DWG2527 notes call them the backup), power for SSC4 and
-    up in a bank (DWG2527 shows a second ACDP), sheet order.
+  - Each ACDP feeds three SSCs (confirmed 20 Nov 2026): a bank has one ACDP per three SSCs
+    (ACDP 1 → SSC1–3, ACDP 2 → SSC4–6, ACDP 3 → SSC7–9, each from its own SSC1–3 ports).
+    The first ACDP also feeds the MSM; every ACDP takes the customer's AC in.
+  - The backup comm link (MSM SSCnB → SSCn CommB) is NOT wired (AYK, 20 Nov 2026); those ports
+    stay unconnected (`ELEC_NOT_WIRED`).
+- Sheets are numbered 1, 2, 3 … n in this order (`elecSheets`): two notes sheets, then bank by
+  bank: MSM back, SSC backs (three per sheet), one sheet per ACDP back, junction box and SSC
+  fronts (three SSCs per sheet).
 - Same rack = AYK harness (solid); different racks = inline connector + customer cable (dashed).
 - Never guess fan counts (1 to 6 per SSC), port maps or bank splits: the engineer answers them
   on the setup page and confirms it.

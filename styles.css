@@ -711,3 +711,9 @@ select.cad-need { border-color: #f59e0b; box-shadow: 0 0 0 2px rgba(245, 158, 11
 .el-port-guess circle { stroke: #d97706; } .el-port-guess text { fill: #b45309; }
 .el-port-unused circle { stroke: #94a3b8; stroke-dasharray: 2 2; } .el-port-unused text { fill: #64748b; }
 .el-guess-key { color: #b45309; }
+.el-acdps { display: grid; gap: 6px; }
+.el-acdp { display: grid; gap: 2px; }
+.el-acdp small { font-size: 11px; color: #9aabc6; white-space: nowrap; }
+.el-sheets summary { cursor: pointer; font-weight: 600; color: #c3cfe2; }
+.el-sheets ol { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 3px; font-size: 13px; color: #c3cfe2; }
+.el-sheets li b { display: inline-block; min-width: 96px; color: #9aabc6; font-weight: 600; }

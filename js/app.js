@@ -654,7 +654,7 @@ async function elecShowPart(partId, viewId) {
   back.className = 'modal-back';
   back.innerHTML = `<div class="modal el-part-modal" role="dialog" aria-label="${esc(v.label)}">
     <div class="el-card-head"><h3>${esc(v.label)}</h3><button class="btn btn-ghost btn-sm" data-x>Close</button></div>
-    <p class="muted small">${n.length ? `${n.length} ports. ${guess ? `<b class="el-guess-key">${guess} amber names (with ?)</b> are proposed by position and need confirming${guess < n.length ? '; the rest are certain (pin count, AYK DWG2527 order, or confirmed by AYK)' : ''}.` : 'All names are confirmed.'}` : 'No ports are named on this view: it is only drawn.'}${(v.ports || []).some(p => p.unused) || blocked.length ? ' Grey: not used on the diagram' + (blocked.length ? ` (${blocked.map(p => esc(p.name)).join(', ')}: ${esc(ELEC_NOT_WIRED.find(r => r.part === partId && r.port !== '*').why)})` : '') + '.' : ''}</p>
+    <p class="muted small">${n.length ? `${n.length} ports. ${guess ? `<b class="el-guess-key">${guess} amber names (with ?)</b> are proposed by position and need confirming${guess < n.length ? '; the rest are certain (pin count, AYK DWG2527 order, or confirmed by AYK)' : ''}.` : 'All names are confirmed.'}` : 'No ports are named on this view: it is only drawn.'}${(v.ports || []).some(p => p.unused) || blocked.length ? ' Grey: not used on the diagram' + (blocked.length ? ' (' + Array.from(new Set(blocked.map(p => elecPortBlockedWhy(partId, p.name)))).map(why => `${blocked.filter(p => elecPortBlockedWhy(partId, p.name) === why).map(p => esc(p.name)).join(', ')}: ${esc(why.replace(/\.$/, ''))}`).join('; ') + ')' : '') + '.' : ''}</p>
     <div class="el-part-big">${elecViewSvg(v, '', true, partId)}</div></div>`;
   document.body.appendChild(back);
   const close = () => { back.remove(); document.removeEventListener('keydown', key); };
@@ -687,7 +687,12 @@ async function renderElecPage(id) {
   const setup = project.config.elec = project.config.elec || elecNewSetup();
   const folder = rackFolder(project);
   const racks = folder ? (await localProjects()).filter(p => p.underlay_kind === 'cad' && p.folder === folder.id) : [];
-  const rackNames = () => Array.from(new Set(racks.map(r => r.name).concat(setup.banks.flatMap(b => [b.msm.rack, b.acdp.rack]), setup.sscs.map(c => c.rack)).filter(Boolean)))
+  /* one ACDP per three SSCs: a field for each the bank needs, plus any extra already named */
+  const acdpRows = b => {
+    const list = elecAcdps(b), n = Math.max(elecAcdpsNeeded(setup, b), list.length);
+    return Array.from({ length: n }, (_, k) => ({ k: k, a: list[k] || {}, feeds: `SSC ${k * ELEC_ACDP_SSCS + 1}–${k * ELEC_ACDP_SSCS + ELEC_ACDP_SSCS}${k ? '' : ' + MSM'}` }));
+  };
+  const rackNames = () => Array.from(new Set(racks.map(r => r.name).concat(setup.banks.flatMap(b => [b.msm.rack].concat(elecAcdps(b).map(a => a.rack))), setup.sscs.map(c => c.rack)).filter(Boolean)))
     .sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true }));
   let saving = Promise.resolve();
   const save = () => {
@@ -731,14 +736,14 @@ async function renderElecPage(id) {
         <p class="muted small">One bank per MSM; its model (3, 6 or 9 SSCs) sets the ports it has. Same rack = AYK supplies the whole harness; different racks = inline connector and a cable the customer makes (dashed on the sheet).</p>
         ${src}
         ${setup.banks.length ? `<div class="el-table-wrap"><table class="el-table">
-          <thead><tr><th>Bank</th><th>MSM</th><th>MSM model</th><th>MSM rack</th><th>ACDP</th><th>ACDP rack</th><th>SSCs</th><th></th></tr></thead>
+          <thead><tr><th>Bank</th><th>MSM</th><th>MSM model</th><th>MSM rack</th><th>ACDPs (one per 3 SSCs)</th><th>ACDP rack</th><th>SSCs</th><th></th></tr></thead>
           <tbody>${setup.banks.map(b => `<tr data-bank="${esc(b.id)}">
             <td><input data-f="name" value="${esc(b.name)}" aria-label="Bank name"></td>
             <td><input data-f="msm.name" value="${esc(b.msm.name)}" placeholder="MSM-1" aria-label="MSM name"></td>
             <td><select data-f="msm.model" aria-label="MSM model"><option value="" ${ELEC_MSM_MODELS[b.msm.model] ? '' : 'selected'}>Choose…</option>${Object.keys(ELEC_MSM_MODELS).map(k => `<option value="${k}" ${String(b.msm.model) === k ? 'selected' : ''}>${k} SSCs</option>`).join('')}</select></td>
             <td><input data-f="msm.rack" value="${esc(b.msm.rack)}" list="el-racks" placeholder="Rack 1" aria-label="MSM rack"></td>
-            <td><input data-f="acdp.name" value="${esc(b.acdp.name)}" placeholder="ACDP1" aria-label="ACDP name"></td>
-            <td><input data-f="acdp.rack" value="${esc(b.acdp.rack)}" list="el-racks" placeholder="Rack 1" aria-label="ACDP rack"></td>
+            <td><div class="el-acdps">${acdpRows(b).map(r => `<label class="el-acdp"><small>${r.feeds}</small><input data-acdp="${r.k}" data-af="name" value="${esc(r.a.name || '')}" placeholder="ACDP${r.k + 1}" aria-label="ACDP for ${r.feeds}"></label>`).join('')}</div></td>
+            <td><div class="el-acdps">${acdpRows(b).map(r => `<label class="el-acdp"><small>&nbsp;</small><input data-acdp="${r.k}" data-af="rack" value="${esc(r.a.rack || '')}" list="el-racks" placeholder="Rack 1" aria-label="Rack of the ACDP for ${r.feeds}"></label>`).join('')}</div></td>
             <td class="el-num">${elecBankSscs(setup, b.id).length}${ELEC_MSM_MODELS[b.msm.model] ? ' / ' + ELEC_MSM_MODELS[b.msm.model].sscs : ''}</td>
             <td><button class="btn btn-ghost btn-xs" data-del-bank="${esc(b.id)}" title="Remove this bank">×</button></td></tr>`).join('')}</tbody></table></div>`
           : '<div class="d-empty"><b>No banks yet</b><span>Add one bank for each MSM.</span></div>'}
@@ -777,7 +782,9 @@ async function renderElecPage(id) {
           <button class="btn btn-primary btn-sm" id="el-confirm" ${errors.length || setup.confirmed ? 'disabled' : ''}>${setup.confirmed ? 'Confirmed' : 'Confirm setup'}</button></div>
         ${errors.length ? `<p class="small">${errors.length} thing${errors.length === 1 ? '' : 's'} to answer first:</p><ul class="el-issues">${errors.map(i => `<li>${esc(i.text)}</li>`).join('')}</ul>` : setup.confirmed ? '<p class="small cad-ok">Everything is answered and confirmed.</p>' : '<p class="small">Everything is answered. Confirm to lock it in.</p>'}
         ${notes.length ? `<ul class="el-issues el-notes">${notes.map(i => `<li>${esc(i.text)}</li>`).join('')}</ul>` : ''}
-        <p class="muted small">Next: the sheets (notes, then per bank the MSM back, the SSC backs and the SSC fronts with their modules) are drawn from this setup in AYK's DWG2527 format. That step is not built yet.</p>
+        ${setup.banks.length ? (() => { const sh = elecSheets(setup); return `<details class="el-sheets"${setup.confirmed ? ' open' : ''}><summary>This setup gives ${sh.length} sheets, numbered 1 to ${sh.length}</summary>
+          <ol>${sh.map(x => `<li><b>Sheet ${x.n} of ${x.of}</b> ${esc(x.title)}</li>`).join('')}</ol></details>`; })() : ''}
+        <p class="muted small">Next: these sheets are drawn from the confirmed setup in AYK's DWG2527 format. That step is not built yet.</p>
       </section>
 
       <section class="el-card">
@@ -791,6 +798,14 @@ async function renderElecPage(id) {
 
   function setPath(obj, path, v) { const k = path.split('.'); let o = obj; while (k.length > 1) o = o[k.shift()]; o[k[0]] = v; }
   function wire() {
+    body.querySelectorAll('[data-bank] [data-acdp]').forEach(inp => inp.onchange = () => {
+      const b = setup.banks.find(x => x.id === inp.closest('[data-bank]').dataset.bank);
+      const list = elecAcdps(b), k = +inp.dataset.acdp;
+      while (list.length <= k) list.push({ name: '', rack: '' });
+      list[k][inp.dataset.af] = inp.value.trim();
+      while (list.length && !list[list.length - 1].name && !list[list.length - 1].rack) list.pop();
+      changed();
+    });
     body.querySelectorAll('[data-bank] [data-f]').forEach(inp => inp.onchange = () => {
       const b = setup.banks.find(x => x.id === inp.closest('[data-bank]').dataset.bank);
       setPath(b, inp.dataset.f, inp.dataset.f === 'msm.model' ? (inp.value ? +inp.value : null) : inp.value.trim()); changed();
@@ -815,7 +830,7 @@ async function renderElecPage(id) {
     });
     document.getElementById('el-add-bank').onclick = () => {
       const n = setup.banks.length + 1;
-      setup.banks.push({ id: 'b' + Date.now().toString(36), name: 'Bank ' + n, msm: { name: '', rack: '', model: null }, acdp: { name: '', rack: '' } });
+      setup.banks.push({ id: 'b' + Date.now().toString(36), name: 'Bank ' + n, msm: { name: '', rack: '', model: null }, acdps: [] });
       changed();
     };
     document.getElementById('el-add-ssc').onclick = () => {

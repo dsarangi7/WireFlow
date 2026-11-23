@@ -41,10 +41,17 @@ const ELEC_PARTS = ['msm', 'ssc', 'jb2', 'jb4', 'module'];
    not changed. */
 const ELEC_NOT_WIRED = [
   { part: 'ssc', port: 'Ext-HVIL', why: 'No junction box HVIL wire to the SSC (AYK safety decision, 20 Nov 2026): the wire is high voltage and the connector is not rated for it.' },
+  { part: 'msm', match: /^SSC\d+B$/i, why: 'The backup comm link is not wired (AYK, 20 Nov 2026).' },
+  { part: 'ssc', port: 'CommB', why: 'The backup comm link is not wired (AYK, 20 Nov 2026).' },
 ];
 /** True when a port must stay unconnected on a new diagram. */
 function elecPortBlocked(part, port) {
-  return ELEC_NOT_WIRED.some(r => r.part === part && (r.port === '*' || String(r.port).toLowerCase() === String(port).toLowerCase()));
+  return ELEC_NOT_WIRED.some(r => r.part === part && (r.port === '*' || (r.match ? r.match.test(String(port)) : String(r.port).toLowerCase() === String(port).toLowerCase())));
+}
+/** Why a port stays unconnected, or ''. */
+function elecPortBlockedWhy(part, port) {
+  const r = ELEC_NOT_WIRED.find(r => r.part === part && (r.port === '*' || (r.match ? r.match.test(String(port)) : String(r.port).toLowerCase() === String(port).toLowerCase())));
+  return r ? r.why : '';
 }
 
 /* Customer connections at the MSM back (DWG2527 sheet 1); on = used on this system. */
@@ -62,7 +69,7 @@ const ELEC_OPTIONS = [
 function elecNewSetup() {
   return {
     version: 1,
-    banks: [],              // [{ id, name, msm: {name, rack}, acdp: {name, rack} }]
+    banks: [],              // [{ id, name, msm: {name, rack, model}, acdps: [{name, rack}] }]
     sscs: [],               // [{ id, name, rack, bank (bank id or ''), fans (1…6 or null) }]
     options: Object.fromEntries(ELEC_OPTIONS.map(o => [o.id, o.always ? true : null])),  // null = not answered yet
     valves: null,           // master valves (fire fighting) on this system: 0, 1 or 2
@@ -86,14 +93,14 @@ function elecCompare(a, b) { return String(a).localeCompare(String(b), undefined
 function elecFromRacks(parts, rackNames) {
   const s = elecNewSetup();
   const msms = parts.filter(p => p.kind === 'msm').sort((a, b) => elecCompare(a.name, b.name));
-  msms.forEach((m, i) => s.banks.push({ id: elecId('b'), name: 'Bank ' + (i + 1), msm: { name: m.name, rack: m.rack, model: null }, acdp: { name: '', rack: '' } }));
+  msms.forEach((m, i) => s.banks.push({ id: elecId('b'), name: 'Bank ' + (i + 1), msm: { name: m.name, rack: m.rack, model: null }, acdps: [] }));
   const bankOfRack = rack => {
     const here = s.banks.filter(b => b.msm.rack === rack);
     return here.length === 1 ? here[0] : null;
   };
   for (const a of parts.filter(p => p.kind === 'acdp').sort((x, y) => elecCompare(x.name, y.name))) {
     const b = bankOfRack(a.rack);
-    if (b && !b.acdp.name) b.acdp = { name: a.name, rack: a.rack };
+    if (b) b.acdps.push({ name: a.name, rack: a.rack });
     else s.unplacedAcdps = (s.unplacedAcdps || []).concat({ name: a.name, rack: a.rack });
   }
   for (const c of parts.filter(p => p.kind === 'ssc').sort((x, y) => elecCompare(x.name, y.name))) {
@@ -102,6 +109,39 @@ function elecFromRacks(parts, rackNames) {
   }
   s.source = { racks: (rackNames || []).slice(), at: new Date().toISOString() };
   return s;
+}
+
+/* Each ACDP feeds three SSCs (AYK, 20 Nov 2026): a bank has one ACDP per three SSCs. */
+/** The bank's ACDPs, in order (an older setup's single ACDP becomes the first). */
+function elecAcdps(b) {
+  if (!Array.isArray(b.acdps)) { b.acdps = b.acdp && (b.acdp.name || b.acdp.rack) ? [b.acdp] : []; delete b.acdp; }
+  return b.acdps;
+}
+/** How many ACDPs a bank needs: one per three SSCs, at least one. */
+function elecAcdpsNeeded(setup, b) { return Math.max(1, Math.ceil(elecBankSscs(setup, b.id).length / ELEC_ACDP_SSCS)); }
+
+/* ---------- sheets ----------
+ * Numbered 1, 2, 3 … n in this order (AYK, 20 Nov 2026), as DWG2527 lays them out:
+ * the two notes sheets, then bank by bank: MSM back, SSC backs (three per sheet),
+ * ACDP backs, junction box and SSC fronts (three SSCs per sheet). */
+const ELEC_SSCS_PER_SHEET = 3;
+function elecSheets(setup) {
+  const sheets = [];
+  const add = (kind, title, bank, items) => sheets.push({ n: sheets.length + 1, kind: kind, title: title, bank: bank || null, items: items || [] });
+  add('notes', 'Notes: MSM back and customer connections');
+  add('notes', 'Notes: inline connectors, pin mapping and cables');
+  for (const b of setup.banks) {
+    const sscs = elecBankSscs(setup, b.id).map(c => c.name);
+    const groups = [];
+    for (let i = 0; i < sscs.length; i += ELEC_SSCS_PER_SHEET) groups.push(sscs.slice(i, i + ELEC_SSCS_PER_SHEET));
+    add('msm', `${b.name}: ${b.msm.name || 'MSM'} back`, b.id, [b.msm.name]);
+    groups.forEach(g => add('ssc-back', `${b.name}: ${g.join(', ')} back`, b.id, g));
+    elecAcdps(b).slice(0, elecAcdpsNeeded(setup, b)).forEach(a => add('acdp', `${b.name}: ${a.name || 'ACDP'} back`, b.id, [a.name]));
+    groups.forEach(g => add('fronts', `${b.name}: junction box and ${g.join(', ')} front`, b.id, g));
+  }
+  const total = sheets.length;
+  sheets.forEach(s => { s.of = total; });
+  return sheets;
 }
 
 /** SSCs of a bank, in name order. */
@@ -132,14 +172,18 @@ function elecIssues(setup) {
     if (!String(b.msm.rack).trim()) err(`${n}: which rack is ${b.msm.name || 'its MSM'} in?`);
     const model = ELEC_MSM_MODELS[b.msm.model];
     if (!model) err(`${n}: which MSM model (3, 6 or 9 SSCs)?`);
-    /* every bank has its ACDP (AYK, 20 Nov 2026); only the junction box is gone */
-    if (!String(b.acdp.name).trim()) err(`${n}: enter its ACDP name.`);
-    else if (!String(b.acdp.rack).trim()) err(`${n}: which rack is ${b.acdp.name} in?`);
-    seen('a bank', b.name); seen('an MSM', b.msm.name); seen('an ACDP', b.acdp.name);
+    /* one ACDP per three SSCs (AYK, 20 Nov 2026) */
+    const acdps = elecAcdps(b), need = elecAcdpsNeeded(setup, b);
+    for (let k = 0; k < need; k++) {
+      const a = acdps[k] || {}, feeds = `SSC ${k * ELEC_ACDP_SSCS + 1}–${k * ELEC_ACDP_SSCS + ELEC_ACDP_SSCS}`;
+      if (!String(a.name || '').trim()) err(`${n}: enter the ACDP for ${feeds}${k ? '' : ' (it also feeds the MSM)'}.`);
+      else if (!String(a.rack || '').trim()) err(`${n}: which rack is ${a.name} in?`);
+    }
+    acdps.slice(need).filter(a => String(a.name || '').trim()).forEach(a => note(`${n}: ${a.name} feeds no SSC (${need} ACDP${need === 1 ? ' is' : 's are'} enough for its SSCs).`));
+    seen('a bank', b.name); seen('an MSM', b.msm.name); acdps.forEach(a => seen('an ACDP', a.name));
     const sscs = elecBankSscs(setup, b.id);
     if (!sscs.length) err(`${n} has no SSCs.`);
     if (model && sscs.length > model.sscs) err(`${n} has ${sscs.length} SSCs, but a ${model.sscs}-SSC MSM has SSC ports 1 to ${model.sscs}.`);
-    if (sscs.length > ELEC_ACDP_SSCS) note(`${n}: its ACDP feeds SSC ports 1 to ${ELEC_ACDP_SSCS}; how ${sscs.slice(ELEC_ACDP_SSCS).map(c => c.name).join(', ')} get${sscs.length - ELEC_ACDP_SSCS === 1 ? 's' : ''} power is not confirmed yet (DWG2527 shows a second ACDP).`);
     if (model && !model.drawing) note(`${n}: there is no drawing of the ${model.sscs}-SSC MSM yet, so its sheet cannot be drawn until AYK adds one.`);
   }
   for (const c of setup.sscs) {
@@ -226,20 +270,26 @@ function elecLinks(setup) {
         link: elecLinkKind(b.msm.rack, c.rack) });
     });
   }
-  /* power from the ACDP: its SSC1-3 ports feed the bank's first three SSCs; the MSM; AC in */
+  /* power: ACDP k feeds SSCs 3k+1 to 3k+3 from its SSC1-3 ports; the first ACDP also feeds
+     the MSM (as on AYK's ACDP1 picture); every ACDP takes the customer's AC in */
   for (const b of setup.banks) {
-    if (!String(b.acdp.name).trim()) continue;
-    elecBankSscs(setup, b.id).slice(0, ELEC_ACDP_SSCS).forEach((c, i) => {
+    const acdps = elecAcdps(b);
+    const named = a => a && String(a.name || '').trim();
+    elecBankSscs(setup, b.id).forEach((c, i) => {
+      const a = acdps[Math.floor(i / ELEC_ACDP_SSCS)];
+      if (!named(a)) return;
       for (const pb of ['P', 'B']) out.push({ rule: 'ssc-power', cable: 'power-' + pb, bank: b.id,
-        from: { part: 'acdp', name: b.acdp.name, port: 'SSC' + (i + 1) + pb },
-        to: { part: 'ssc', name: c.name, port: 'Power' + pb }, link: elecLinkKind(b.acdp.rack, c.rack) });
+        from: { part: 'acdp', name: a.name, port: 'SSC' + (i % ELEC_ACDP_SSCS + 1) + pb },
+        to: { part: 'ssc', name: c.name, port: 'Power' + pb }, link: elecLinkKind(a.rack, c.rack) });
     });
-    for (const pb of ['P', 'B']) out.push({ rule: 'msm-power', cable: 'power-' + pb, bank: b.id,
-      from: { part: 'acdp', name: b.acdp.name, port: 'MSM' + pb },
-      to: { part: 'msm', name: b.msm.name, port: 'Power' + pb }, link: elecLinkKind(b.acdp.rack, b.msm.rack) });
-    for (const pb of ['P', 'B']) out.push({ rule: 'ac-in', cable: 'ac-in-' + pb, bank: b.id,
-      from: { part: 'customer', name: pb === 'P' ? 'Normal power' : 'Backup UPS', port: 'L/N/G' },
-      to: { part: 'acdp', name: b.acdp.name, port: 'ACPowerIn' + pb }, link: 'inline' });
+    if (named(acdps[0])) for (const pb of ['P', 'B']) out.push({ rule: 'msm-power', cable: 'power-' + pb, bank: b.id,
+      from: { part: 'acdp', name: acdps[0].name, port: 'MSM' + pb },
+      to: { part: 'msm', name: b.msm.name, port: 'Power' + pb }, link: elecLinkKind(acdps[0].rack, b.msm.rack) });
+    acdps.slice(0, elecAcdpsNeeded(setup, b)).filter(named).forEach(a => {
+      for (const pb of ['P', 'B']) out.push({ rule: 'ac-in', cable: 'ac-in-' + pb, bank: b.id,
+        from: { part: 'customer', name: pb === 'P' ? 'Normal power' : 'Backup UPS', port: 'L/N/G' },
+        to: { part: 'acdp', name: a.name, port: 'ACPowerIn' + pb }, link: 'inline' });
+    });
   }
   /* always: the customer's remote E-stop and the thermal runaway status signal (dry contact) */
   for (const b of setup.banks) {
@@ -259,4 +309,4 @@ function elecLinks(setup) {
   return out.filter(l => !elecPortBlocked(l.from.part, l.from.port) && !elecPortBlocked(l.to.part, l.to.port));
 }
 
-if (typeof module !== 'undefined') module.exports = { ELEC_FAN_CHOICES, ELEC_ACDP_PORTS, ELEC_ACDP_SSCS, ELEC_MSM_MODELS, ELEC_FAN_PINS, ELEC_RULES, elecLinks, ELEC_PARTS, ELEC_NOT_WIRED, elecPortBlocked, ELEC_MSM_SSC_PORTS, ELEC_OPTIONS, elecNewSetup, elecFromRacks, elecBankSscs, elecIssues, elecReady, elecLinkKind, elecSummary, elecCompare };
+if (typeof module !== 'undefined') module.exports = { elecSheets, ELEC_SSCS_PER_SHEET, elecPortBlockedWhy, elecAcdps, elecAcdpsNeeded, ELEC_FAN_CHOICES, ELEC_ACDP_PORTS, ELEC_ACDP_SSCS, ELEC_MSM_MODELS, ELEC_FAN_PINS, ELEC_RULES, elecLinks, ELEC_PARTS, ELEC_NOT_WIRED, elecPortBlocked, ELEC_MSM_SSC_PORTS, ELEC_OPTIONS, elecNewSetup, elecFromRacks, elecBankSscs, elecIssues, elecReady, elecLinkKind, elecSummary, elecCompare };
