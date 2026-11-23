@@ -50,7 +50,8 @@ ok(E.elecReady(s), 'complete setup is ready: ' + E.elecIssues(s).map(i => i.text
 /* an MSM serves at most 6 SSCs */
 s.banks[0].msm.model = 3;
 ok(/3-SSC MSM has SSC ports 1 to 3/.test(E.elecIssues(s).map(i => i.text).join()), 'more SSCs than the MSM model serves is an error');
-ok(E.elecIssues(s).some(i => i.level === 'note' && /no drawing of the 3-SSC MSM/.test(i.text)), 'missing MSM drawing is pointed out');
+ok(!E.elecIssues(s).some(i => /no drawing of the/.test(i.text)), 'every MSM model uses MSM.dxf, so none lacks a drawing');
+ok(Object.values(E.ELEC_MSM_MODELS).every(m => m.drawing === 'msm'), 'one MSM drawing for 3, 6 and 9 SSCs');
 s.banks[0].msm.model = 9;
 ok(E.elecReady(s), '6 SSCs on a 9-SSC MSM is fine');
 

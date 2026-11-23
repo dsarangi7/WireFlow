@@ -22,12 +22,14 @@ const ELEC_MSM_SSC_PORTS = 6;
 const ELEC_FAN_CHOICES = [1, 2, 3, 4, 5, 6];
 
 /* MSM models, by how many SSCs they serve (each bank's model is the engineer's choice).
-   Port layouts as AYK's drawings show them, rows top to bottom, left to right. */
+   Every model is drawn with the same MSM drawing, MSM.dxf (AYK, 23 Nov 2026): a model with
+   fewer SSCs uses SSC ports 1 to its count and leaves the rest empty. The layouts below are
+   AYK's earlier pictures of each model, kept for reference only. */
 const ELEC_MSM_MODELS = {
-  3: { sscs: 3, drawing: null, source: 'AYK picture of MSM-1 back (20 Nov 2026); no DXF yet',
+  3: { sscs: 3, drawing: 'msm', source: 'MSM.dxf (same drawing for every model, AYK 23 Nov 2026); picture of MSM-1 back for reference',
        jacks: [['Cloud', 'EMS', 'PCS'], ['SSC1P', 'SSC2P', 'SSC3P'], ['SSC1B', 'SSC2B', 'SSC3B'], ['Spare']],
        round: [['Estop1', 'Estop2'], ['Estop3', 'Ex.FanFB', 'Dry Contact', 'RemoteE'], ['PowerP', 'PowerB', 'Valve 1', 'Valve 2']] },
-  6: { sscs: 6, drawing: null, source: 'DWG2527 sheet 1 (S10195); no DXF yet',
+  6: { sscs: 6, drawing: 'msm', source: 'MSM.dxf (same drawing for every model, AYK 23 Nov 2026); DWG2527 sheet 1 for reference',
        jacks: [['Cloud', 'EMS', 'PCS', 'Spare'], ['SSC1P', 'SSC1B', 'SSC2P', 'SSC2B'], ['SSC3P', 'SSC3B', 'SSC4P', 'SSC4B'], ['SSC5P', 'SSC5B', 'SSC6P', 'SSC6B']],
        round: [['Estop1', 'Estop2', 'Estop3'], ['Estop4', 'Estop5', 'Estop6', 'Dry Contact', 'RemoteE'], ['PowerP', 'PowerB', 'Ex.FanFB', 'Valve 1', 'Valve 2']] },
   9: { sscs: 9, drawing: 'msm', source: 'MSM.dxf (assets/elec/parts.json), names confirmed 20 Nov 2026' },

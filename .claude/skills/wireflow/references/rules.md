@@ -75,7 +75,8 @@ the engineer confirms every SSC/ACDP/MSM name and each SSC's module count.
   (`tools/make-elec-parts.js` → `assets/elec/parts.json`). Every bank has an ACDP (no ACDP
   drawing yet); only the junction box is gone.
 - MSM models by SSCs served: 3, 6 or 9 (`ELEC_MSM_MODELS`); the engineer picks each bank's model.
-  Only the 9-SSC MSM has a DXF. The 3-SSC MSM (AYK picture): Cloud, EMS, PCS / SSC1P–3P /
+  Every model is drawn with the same MSM.dxf (AYK, 23 Nov 2026); a smaller model uses SSC ports
+  1 to its count. For reference, the 3-SSC MSM (AYK picture): Cloud, EMS, PCS / SSC1P–3P /
   SSC1B–3B / Spare; round Estop1–2 / Estop3, Ex.FanFB, Dry Contact, RemoteE / PowerP, PowerB,
   Valve 1, Valve 2. The 6-SSC MSM is DWG2527 sheet 1 (P and B alternate along each row).
 - The junction box front IS kept on the electrical diagram (AYK, 20 Nov 2026, reversing the
@@ -110,7 +111,7 @@ the engineer confirms every SSC/ACDP/MSM name and each SSC's module count.
     The first ACDP also feeds the MSM; every ACDP takes the customer's AC in.
   - The backup comm link (MSM SSCnB → SSCn CommB) is NOT wired (AYK, 20 Nov 2026); those ports
     stay unconnected (`ELEC_NOT_WIRED`).
-- Sheets are numbered 1, 2, 3 … n in this order (`elecSheets`): two notes sheets, then bank by
+- Sheets are numbered 1, 2, 3 … n in this order (`elecSheets`, order confirmed by AYK 23 Nov 2026): two notes sheets, then bank by
   bank: MSM back, SSC backs (three per sheet), one sheet per ACDP back, junction box and SSC
   fronts (three SSCs per sheet).
 - Same rack = AYK harness (solid); different racks = inline connector + customer cable (dashed).
