@@ -774,6 +774,8 @@ async function renderElecPage(id) {
         <ul class="el-options">${ELEC_OPTIONS.filter(o => !o.always).map(o => `<li><div><b>${esc(o.label)}</b><small>${esc(o.note)}</small></div>${yesNo('opt-' + o.id, setup.options[o.id])}</li>`).join('')}
           <li><div><b>Master valves (fire fighting)</b><small>LP16-7 female to male, 5 × 0.3 mm²</small></div>
             <select id="el-valves" aria-label="Master valves"><option value="" ${[0, 1, 2].includes(setup.valves) ? '' : 'selected'}>Choose…</option>${[0, 1, 2].map(v => `<option value="${v}" ${setup.valves === v ? 'selected' : ''}>${v}</option>`).join('')}</select></li>
+          <li><div><b>Junction box</b><small>Drawn on the junction box and SSC front sheets (0.6/1 kV, 95 mm² to the customer)</small></div>
+            <select id="el-jb" aria-label="Junction box"><option value="" ${[2, 4].includes(setup.jbModel) ? '' : 'selected'}>Choose…</option>${[2, 4].map(v => `<option value="${v}" ${setup.jbModel === v ? 'selected' : ''}>${v} Bus connectors</option>`).join('')}</select></li>
         </ul>
       </section>
 
@@ -784,7 +786,15 @@ async function renderElecPage(id) {
         ${notes.length ? `<ul class="el-issues el-notes">${notes.map(i => `<li>${esc(i.text)}</li>`).join('')}</ul>` : ''}
         ${setup.banks.length ? (() => { const sh = elecSheets(setup); return `<details class="el-sheets"${setup.confirmed ? ' open' : ''}><summary>This setup gives ${sh.length} sheets, numbered 1 to ${sh.length}</summary>
           <ol>${sh.map(x => `<li><b>Sheet ${x.n} of ${x.of}</b> ${esc(x.title)}</li>`).join('')}</ol></details>`; })() : ''}
-        <p class="muted small">Next: these sheets are drawn from the confirmed setup in AYK's DWG2527 format. That step is not built yet.</p>
+        <div class="el-export">
+          <div class="el-export-fields">
+            <label>Document no.<input data-sf="docNumber" value="${esc(sheetInfo().docNumber)}" placeholder="DWG2527"></label>
+            <label>Rev<input data-sf="rev" value="${esc(sheetInfo().rev)}" placeholder="0"></label>
+            <label>Drawn by<input data-sf="drawnBy" value="${esc(sheetInfo().drawnBy)}" placeholder="Name"></label>
+          </div>
+          <button class="btn btn-primary" id="el-export" ${setup.confirmed ? '' : 'disabled'}>Export PDF</button>
+        </div>
+        <p class="muted small">${setup.confirmed ? `Exports every sheet above as one A3 PDF in AYK's DWG2527 format, titled "${esc(sheetInfo().title)}".` : 'Confirm the setup to export the PDF.'}</p>
       </section>
 
       <section class="el-card">
@@ -796,6 +806,15 @@ async function renderElecPage(id) {
     wire();
   }
 
+  /* title block of the exported sheets (kept with the setup) */
+  function sheetInfo() {
+    const i = setup.sheetInfo = Object.assign({ docNumber: '', rev: '0', drawnBy: '' }, setup.sheetInfo || {});
+    const d = new Date();
+    return Object.assign({}, i, {
+      title: `${folder ? folder.number + ' ' : ''}Battery System Electrical Connection Diagram`,
+      date: d.getFullYear() + '.' + String(d.getMonth() + 1).padStart(2, '0') + '.' + String(d.getDate()).padStart(2, '0'),
+    });
+  }
   function setPath(obj, path, v) { const k = path.split('.'); let o = obj; while (k.length > 1) o = o[k.shift()]; o[k[0]] = v; }
   function wire() {
     body.querySelectorAll('[data-bank] [data-acdp]').forEach(inp => inp.onchange = () => {
@@ -843,6 +862,28 @@ async function renderElecPage(id) {
       setup.options[r.name.replace(/^opt-/, '')] = r.value === 'yes'; changed();
     });
     document.getElementById('el-valves').onchange = e => { setup.valves = e.target.value === '' ? null : +e.target.value; changed(); };
+    document.getElementById('el-jb').onchange = e => { setup.jbModel = e.target.value === '' ? null : +e.target.value; changed(); };
+    body.querySelectorAll('[data-sf]').forEach(inp => inp.onchange = () => {
+      sheetInfo();
+      setup.sheetInfo[inp.dataset.sf] = inp.value.trim();
+      save();                                   /* title block only: the setup stays confirmed */
+    });
+    document.getElementById('el-export').onclick = async ev => {
+      const btn = ev.currentTarget;
+      if (!setup.confirmed) return;
+      btn.disabled = true; btn.textContent = 'Building the PDF…';
+      try {
+        const lib = await elecPartsLoad();
+        const info = sheetInfo();
+        const bytes = await elecPdf(setup, lib, info);
+        const name = `${info.docNumber ? info.docNumber + ' ' : ''}${info.title}.pdf`.replace(/[\\/:*?"<>|]+/g, '-');
+        download(name, bytes, 'application/pdf');
+        toast(`Exported ${elecSheets(setup).length} sheets.`);
+      } catch (e) {
+        console.error('Electrical PDF failed', e);
+        toast('Could not build the PDF: ' + e.message, 'error');
+      } finally { btn.disabled = false; btn.textContent = 'Export PDF'; }
+    };
     document.getElementById('el-confirm').onclick = () => {
       if (!elecReady(setup)) return;
       setup.confirmed = true; setup.confirmedAt = new Date().toISOString(); save(); draw();

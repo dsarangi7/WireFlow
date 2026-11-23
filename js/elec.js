@@ -75,6 +75,7 @@ function elecNewSetup() {
     sscs: [],               // [{ id, name, rack, bank (bank id or ''), fans (1…6 or null) }]
     options: Object.fromEntries(ELEC_OPTIONS.map(o => [o.id, o.always ? true : null])),  // null = not answered yet
     valves: null,           // master valves (fire fighting) on this system: 0, 1 or 2
+    jbModel: null,          // junction box front drawn: 2 or 4 Bus connectors (JUNCTION BOX2/4.dxf)
     confirmed: false,
     source: null,           // how it was filled: { racks: [names], at }
   };
@@ -199,6 +200,7 @@ function elecIssues(setup) {
   const open = ELEC_OPTIONS.filter(o => setup.options[o.id] !== true && setup.options[o.id] !== false);
   if (open.length) err(`Answer yes or no for: ${open.map(o => o.label).join('; ')}.`);
   if (![0, 1, 2].includes(setup.valves)) err('How many master valves (fire fighting): 0, 1 or 2?');
+  if (![2, 4].includes(setup.jbModel)) err('Which junction box: 2 or 4 Bus connectors?');
   for (const a of setup.unplacedAcdps || []) note(`${a.name} (${a.rack}) was found on the racks but not placed in a bank.`);
   return out;
 }

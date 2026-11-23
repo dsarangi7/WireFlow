@@ -33,6 +33,8 @@ js/cadwire.js       wiring planner: trays, rails, crossings, ports, alternative 
 js/pdf.js           minimal vector PDF writer
 js/sheet.js         DWG2396 A3 sheet layout (screen SVG + PDF)
 js/numlib.js        numbering library on the device
+js/elec.js          electrical diagram: setup, AYK connection rules, sheet list
+js/elecsheet.js     electrical diagram sheets and multi-page PDF (DWG2527 format)
 js/app.js           UI: projects, rack view, wiring sheet editor
 js/tutorial.js      product page scroll tutorial
 assets/examples/    example rack 111
@@ -55,6 +57,8 @@ node tests/cad.test.js
 node tests/cadwire.test.js
 node tests/numlib.test.js
 node tests/sheet.test.js
+node tests/elec.test.js
+node tests/elecsheet.test.js
 ```
 
 ## AYK rules

@@ -37,6 +37,8 @@ s.banks[0].msm.model = 9;
 for (const c of s.sscs) { c.bank = s.banks[0].id; c.fans = 3; }
 for (const k of Object.keys(s.options)) s.options[k] = true;
 s.valves = 2;
+ok(/Which junction box: 2 or 4/.test(E.elecIssues(s).map(i => i.text).join()), 'junction box asked');
+s.jbModel = 4;
 /* six SSCs: two ACDPs (one per three SSCs) */
 ok(/enter the ACDP for SSC 4–6/.test(E.elecIssues(s).map(i => i.text).join()), 'six SSCs need a second ACDP');
 const keepAcdps = s.banks[0].acdps;

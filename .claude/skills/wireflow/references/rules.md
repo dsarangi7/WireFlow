@@ -117,4 +117,8 @@ the engineer confirms every SSC/ACDP/MSM name and each SSC's module count.
 - Same rack = AYK harness (solid); different racks = inline connector + customer cable (dashed).
 - Never guess fan counts (1 to 6 per SSC), port maps or bank splits: the engineer answers them
   on the setup page and confirms it.
-
+- Export: the setup page's "Export PDF" (enabled once the setup is confirmed) writes every sheet
+  as one A3 PDF (`elecPdf` in `js/elecsheet.js`). Each connected port gets a lead in its cable's
+  colour, dashed between racks, labelled "To <part> <port> · Sheet n". Blocked ports never get a
+  lead. The ACDP is a labelled schematic until AYK supplies its drawing. Title block fields
+  (document no., rev, drawn by) are kept with the setup and do not un-confirm it.

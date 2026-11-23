@@ -1,7 +1,7 @@
 /* ============================================================
  * WireFlow — minimal vector PDF writer (no libraries)
  * ------------------------------------------------------------
- * One page, coordinates in MILLIMETRES with the origin at the
+ * One page or more (newPage), coordinates in MILLIMETRES with the origin at the
  * bottom-left (Y up, like the DXF). Lines, polylines, rectangles,
  * circles, Arial / Arial Bold text (WinAnsi), one JPEG image.
  * Content is Flate-compressed when CompressionStream is available.
@@ -54,7 +54,8 @@ function pdfRgb(hex) {
  * @param {{w:number,h:number,title?:string}} page size in mm.
  */
 function pdfDoc(page) {
-  const out = [];
+  let out = [];
+  const pages = [out];
   let image = null;
   let state = { stroke: null, fill: null, lw: null, dash: null };
   const k = 72 / 25.4;
@@ -117,26 +118,44 @@ function pdfDoc(page) {
       out.push(`q ${pdfNum(w)} 0 0 ${pdfNum(h)} ${pdfNum(x)} ${pdfNum(y)} cm /Im1 Do Q`);
       return api;
     },
+    /** Starts the next page (same size); later drawing goes there. */
+    newPage() {
+      out = [];
+      pages.push(out);
+      state = { stroke: null, fill: null, lw: null, dash: null };
+      out.push(`${pdfNum(k)} 0 0 ${pdfNum(k)} 0 0 cm 1 J 1 j`);
+      return api;
+    },
+    /** Pages so far. */
+    pageCount() { return pages.length; },
     /** Finished file as bytes. */
     async bytes() {
       const enc = s => new TextEncoder().encode(s);
-      let content = enc(out.join('\n'));
-      let filter = '';
-      if (typeof CompressionStream !== 'undefined') {
-        const cs = new Blob([content]).stream().pipeThrough(new CompressionStream('deflate'));
-        content = new Uint8Array(await new Response(cs).arrayBuffer());
-        filter = '/Filter /FlateDecode ';
-      }
+      const stream = async text => {
+        let content = enc(text);
+        let filter = '';
+        if (typeof CompressionStream !== 'undefined') {
+          const cs = new Blob([content]).stream().pipeThrough(new CompressionStream('deflate'));
+          content = new Uint8Array(await new Response(cs).arrayBuffer());
+          filter = '/Filter /FlateDecode ';
+        }
+        return [enc(`<< ${filter}/Length ${content.length} >>\nstream\n`), content, enc('\nendstream')];
+      };
       const W = pdfNum(page.w * k), H = pdfNum(page.h * k);
       const objs = [];
+      /* page 1 keeps objects 3 (page) and 4 (content); further pages follow the fonts/image */
+      let n = image ? 8 : 7;
+      const pageObj = [3], contentObj = [4];
+      for (let i = 1; i < pages.length; i++) { pageObj.push(n++); contentObj.push(n++); }
+      const res = `/Resources << /Font << /F1 5 0 R /F2 6 0 R >>${image ? ' /XObject << /Im1 7 0 R >>' : ''} >>`;
       objs[1] = enc('<< /Type /Catalog /Pages 2 0 R >>');
-      objs[2] = enc('<< /Type /Pages /Kids [3 0 R] /Count 1 >>');
-      objs[3] = enc(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${W} ${H}] /Contents 4 0 R /Resources << /Font << /F1 5 0 R /F2 6 0 R >>${image ? ' /XObject << /Im1 7 0 R >>' : ''} >> >>`);
-      objs[4] = [enc(`<< ${filter}/Length ${content.length} >>\nstream\n`), content, enc('\nendstream')];
-      let n = 7;
+      objs[2] = enc(`<< /Type /Pages /Kids [${pageObj.map(o => o + ' 0 R').join(' ')}] /Count ${pages.length} >>`);
+      for (let i = 0; i < pages.length; i++) {
+        objs[pageObj[i]] = enc(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${W} ${H}] /Contents ${contentObj[i]} 0 R ${res} >>`);
+        objs[contentObj[i]] = await stream(pages[i].join('\n'));
+      }
       if (image) {
         objs[7] = [enc(`<< /Type /XObject /Subtype /Image /Width ${image.w} /Height ${image.h} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${image.bytes.length} >>\nstream\n`), image.bytes, enc('\nendstream')];
-        n = 8;
       }
       /* AYK sheets use Arial: TrueType Arial / Arial Bold (not embedded; every PC has them),
          with widths for WinAnsi 32..255 so viewers lay the text out exactly (Arial has
