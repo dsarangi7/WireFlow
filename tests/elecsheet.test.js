@@ -33,7 +33,10 @@ const ok = (c, m) => { assert.ok(c, m); n++; };
   /* sheet 1: AYK's notes, editable */
   ok(/only need to connect to the primary ports/.test(all(1)) && /Figure 1/.test(all(1)), 'sheet 1: the MSM notes and figure 1');
   ok(/Inline Connector Wiring Instructions/.test(all(2)), 'sheet 2: the wiring instructions');
-  ok(texts(1).includes('SSC_Cooling_Fan_Power: 0.3/0.5kV 3*0.823mm², OD 5-9mm') && /Dotted: the customer/.test(all(1)) && !texts(2).some(t => /^Dashed:/.test(t)), 'the cable legend is on sheet 1, with dashed and dotted');
+  ok(texts(2).includes('SSC_Cooling_Fan_Power: 0.3/0.5kV 3*0.823mm², OD 5-9mm') && /Dotted: the customer/.test(all(2)) && !texts(1).some(t => /^Dashed:/.test(t)), 'the cable legend is on sheet 2 with the inline connectors, with dashed and dotted');
+  ok(calls.filter(c => c[0] === 'poly' && c[1] === 2 && c[2] && c[2].dash && c[2].dash[0] === 0 && c[3].length === 4).length === 9 + 1, 'sheet 2: the customer side of each of the nine inline connectors dotted (and the legend sample)');
+  const harness = calls.filter(c => c[0] === 'poly' && c[1] === 3 && c[2] && /^lead:To Client-side/.test(c[2].id || '')), custSide = calls.filter(c => c[0] === 'poly' && c[1] === 3 && c[2] && /^customer:To Client-side/.test(c[2].id || ''));
+  ok(harness.length === 2 && harness.every(c => !c[2].dash) && custSide.length === 2 && custSide.every(c => c[2].dash[0] === 0), 'MSM sheet: AYK harness to the dry contact / remote E-stop connectors solid, the customer side dotted');
   ok(texts(1).includes('Figure 1') && texts(1).includes('Resistor Network') && texts(1).includes('1K') && texts(1).includes('10K'), 'sheet 1: Figure 1 as the technote (E-stop, resistor network, 1K, 10K)');
   /* sheet 2: the nine inline connectors of AYK's P1562, in its order, each drawn from the part */
   const plugNames = ['ACDP', 'ACDP', 'SSC', 'SSC', 'SSC', 'Master', 'Dry', 'Remote'];

@@ -469,10 +469,8 @@ function elecNotesMsm(doc, setup, view) {
   const rem = note('remoteE', 276, 276, 104, 1.9);
   if (rem && P('RemoteE')) elecLeader(doc, rem, P('RemoteE').x, P('RemoteE').y);
   elecItem(doc, 'figure1', 'figure', null, () => elecFigure1(doc, 292, 118));
-  /* the cable legend, bottom left (the sheet's empty corner) */
-  const lg = elecItem(doc, 'legend', 'legend', null, () => elecLegend(doc, 15, 112, 104));
   const extra = elecNote(setup, 'extra');
-  if (extra.trim()) elecNoteBox(doc, extra, 15, lg.y - 3, 104, { size: 2.2, fill: '#fef9c3', id: 'note:extra' });
+  if (extra.trim()) elecNoteBox(doc, extra, 15, 112, 104, { size: 2.2, fill: '#fef9c3', id: 'note:extra' });
 }
 
 /** The cable legend (DWG2527): colour per cable, then dashed and dotted. Top-left at x, top. */
@@ -525,8 +523,10 @@ function elecFigure1(doc, fx, fy) {
   elecTag(doc, 'Figure 1', fx + 46 - tw / 2, fy - 9, 2.4);
 }
 
-/** Sheet 2: inline connectors and the wiring instructions (the cable legend is on sheet 1). */
+/** Sheet 2: inline connectors, the cable legend and the wiring instructions. */
 function elecNotesInline(doc, setup, inline) {
+  /* the cable legend, top right (user, 24 Nov 2026: always on sheet 2 with the inline connectors) */
+  elecItem(doc, 'legend', 'legend', null, () => elecLegend(doc, 298, 284, 112));
   /* the inline connectors, in the order and groups of AYK's P1562 (Rev.2), each drawn
      from its part drawing (assets/elec/parts.json "inline") when the library has it */
   const groups = [
@@ -553,7 +553,7 @@ function elecNotesInline(doc, setup, inline) {
       /* on the drawn connector: two lines between the upper nut and the middle band, the third (B/P) below it */
       [p[0], p[1], p[2]].filter(Boolean).forEach((t, i) => doc.text(t, cx, inline ? y0 + [21.2, 18.7, 13.8][i] : y0 + h - 9 - i * 3.6, { size: inline ? 1.8 : 2, align: 'center', bold: true }));
       doc.line(cx, y0 + h, cx, y0 + h + 30, { color: col, w: 0.4 });
-      doc.line(cx, y0, cx, y0 - 30, { color: col, w: 0.4 });
+      doc.line(cx, y0, cx, y0 - 30, { color: col, w: 0.4, dash: ELEC_DOT });   /* the customer's cable */
     });
     const tag = elecNoteBox(doc, g.tag, x + w / 2 - 12, gi % 2 ? y0 - 37 : y0 + h + 58, 24, { fill: ELEC_TAG, size: 1.8, align: 'center' });
     doc.line(x + w / 2, gi % 2 ? tag.top : tag.y, x + w / 2, gi % 2 ? y0 - 31 : y0 + h + 31, { color: '#94a3b8', w: 0.15 });
@@ -594,7 +594,8 @@ function elecMsmSheet(doc, setup, b, sh, ctx) {
        its row, since the valve leads drop straight down beside it */
     const over = of('valve').some(v => Math.abs(v.y - e.y) < 1 && v.x > e.x);
     const lane = over ? e.y + e.r + 1.4 + kk * 1.5 : e.y - e.r - 1.4 - kk * 1.5;
-    doc.poly([e.x, over ? e.y + e.r : e.y - e.r, e.x, lane, col, lane, col, boxTop - 1.5], { color: e.color, w: 0.35, dash: ELEC_DASH, id: 'lead:' + e.text });
+    /* AYK's harness from the MSM to the inline connector: solid; the customer's side below it dotted */
+    doc.poly([e.x, over ? e.y + e.r : e.y - e.r, e.x, lane, col, lane, col, boxTop - 1.5], { color: e.color, w: 0.35, id: 'lead:' + e.text });
     elecPlug(doc, col, boxTop - 1.5, e.cable === 'dry-contact' ? ['Dry', 'Contact'] : ['Remote', 'Estop']);
     const tagTop = k ? 120 : 134;
     doc.poly([col, boxTop - boxH + 1.5, col, tagTop], { color: e.color, w: 0.35, dash: ELEC_DOT, id: 'customer:' + e.text });
