@@ -153,6 +153,16 @@ const ok = (c, m) => { assert.ok(c, m); n++; };
   ok(sscLead3[sscLead3.length - 1] === sscLead3Base[sscLead3Base.length - 1] - 4, 'a moved label takes the end of its lead with it');
   drawSheet({ [key]: { add: [{ id: 'add:1', kind: 'note', text: 'Check gland sizes on site', x: 300, y: 100, w: 50 }] } });
   ok(texts(1).includes('Check gland sizes on site'), 'an added note is drawn');
+  /* boxes and lines the engineer drew: dashed by default, dotted or solid on request, in the PDF too */
+  const rects = [];
+  const withRects = Object.assign({}, rec, { pages: 1, newPage() { this.pages++; return this; }, rect(x, y, w, h, o) { rects.push([x, y, w, h, o]); return this; } });
+  calls.length = 0;
+  s.edits = { [key]: { add: [{ id: 'add:b', kind: 'box', x: 276, y: 145, w: 34, h: 19 }, { id: 'add:l', kind: 'line', pts: [310, 150, 330, 120], style: 'dotted', color: '#e11d1d' }] } };
+  L.elecDraw(withRects, s, lib, { title: 'x' }, { only: msmSheet.n });
+  const drawnBox = rects.find(r => r[0] === 276 && r[1] === 145 && r[2] === 34 && r[3] === 19);
+  ok(drawnBox && drawnBox[4].dash && drawnBox[4].dash[0] === 1.6 && rects.filter(r => r[0] === 276 && r[1] === 145).length === 1, 'a drawn box prints dashed, without the editor\'s grab edge');
+  const drawnLine = calls.find(c => c[0] === 'poly' && c[3].join() === '310,150,330,120');
+  ok(drawnLine && drawnLine[2].dash[0] === 0 && drawnLine[2].color === '#e11d1d', 'a drawn line prints dotted and red as chosen');
   /* the editor's view marks each item */
   const groups = [];
   const withGroups = Object.assign({}, rec, { pages: 1, newPage() { this.pages++; return this; }, group(open, o) { if (open) groups.push(o.data); return this; } });

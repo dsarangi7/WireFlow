@@ -56,7 +56,9 @@ let elecInlineView = null;   /* the P1562 inline connector drawing, set by elecD
  *   hide: { id: true }       an item deleted
  *   path: { id: [x, y, …] }  a lead re-routed (its whole polyline)
  *   text: { id: text }       an item's words changed (AYK notes change setup.notes instead)
- *   add:  [{ id, kind: 'note' | 'tag' | 'text', text, x, y, w }]  items the engineer added }
+ *   add:  [{ id, kind: 'note' | 'tag' | 'text', text, x, y, w }
+ *          | { id, kind: 'box', x, y, w, h, style, color } | { id, kind: 'line', pts, style, color }]
+ *         items the engineer added (style: 'dashed' (default), 'dotted' or 'solid') }
  * Items are drawn between doc.begin(id, kind, text) and doc.end() (elecItem); a lead carries
  * its id in its style ({ id, end: the id of the label at its far end }). */
 function elecSheetKey(sh) { return [sh.kind, sh.bank || '', (sh.items || []).join(','), sh.kind === 'notes' ? sh.n : ''].join('|'); }
@@ -126,6 +128,15 @@ function elecAdded(doc, ed) {
     elecItem(doc, a.id, 'added-' + a.kind, a.text, t => {
       if (a.kind === 'tag') elecTag(doc, t, a.x, a.y, ELEC_TAG_SIZE, true);
       else if (a.kind === 'text') doc.text(t, a.x, a.y, { size: a.size || 2.4, color: ELEC_INK });
+      else if (a.kind === 'box' || a.kind === 'line') {
+        const st = { color: a.color || ELEC_CABLES['remote-estop'].color, w: a.w2 || 0.35, dash: a.style === 'solid' ? null : a.style === 'dotted' ? ELEC_DOT : ELEC_DASH };
+        if (a.kind === 'box') doc.rect(a.x, a.y, a.w, a.h, st); else doc.poly(a.pts, st);
+        /* on screen only: a wide invisible edge, so a thin outline is easy to grab */
+        if (typeof doc.svg === 'function') {
+          const grab = { color: 'rgba(0,0,0,0)', w: 2.4 };
+          if (a.kind === 'box') doc.rect(a.x, a.y, a.w, a.h, grab); else doc.poly(a.pts, grab);
+        }
+      }
       else elecNoteBox(doc, t, a.x, a.y, a.w || 60, { size: a.size || 2.2, raw: true });
     }, true);
   }

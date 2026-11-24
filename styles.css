@@ -748,3 +748,7 @@ select.cad-need { border-color: #f59e0b; box-shadow: 0 0 0 2px rgba(245, 158, 11
 .d-card-wrap:has(.d-card-btns) .d-card-title { padding-right: 170px; }
 .d-card-del:hover, .d-card-del:focus-visible { border-color: rgba(239,68,68,.7); color: #fecaca; }
 .btn-site-danger:hover, .btn-site-danger:focus-visible { border-color: rgba(239,68,68,.7) !important; color: #fecaca !important; }
+.sh-paper .ed-preview { fill: none; stroke: #7c3aed; stroke-width: 0.35; stroke-dasharray: 1.6 1.1; pointer-events: none; }
+.el-ed .ed-shape { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 6px; }
+.el-ed .ed-shape label { display: grid; gap: 3px; font-size: 12px; color: #9aabc6; }
+.el-ed .ed-shape select, .el-ed .ed-shape input { padding: 5px 7px; border-radius: 8px; border: 1px solid rgba(120,145,185,.3); background: #0d1528; color: #f3f6fc; font: inherit; font-size: 13px; }

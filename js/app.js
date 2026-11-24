@@ -760,7 +760,7 @@ async function renderElecSheetsPage(id) {
         <aside class="cad-info sh-side">
           <section>
             <h3>Check and edit</h3>
-            <p class="muted small">This is the sheet exactly as it will print. <b>Drag</b> a label, note or tag to move it · <b>pull a lead</b> sideways to re-route it (pull its first or last part to step it aside) · <b>click</b> anything to change its words or delete it (<b>Delete</b> key) · arrow keys nudge (Shift: 5 mm) · <b>Ctrl+Z</b> undoes. Mouse wheel zooms; drag empty paper to move around.</p>
+            <p class="muted small">This is the sheet exactly as it will print. <b>Drag</b> a label, note or tag to move it · <b>pull a lead</b> sideways to re-route it (pull its first or last part to step it aside) · <b>Box</b> / <b>Line</b> draw dashed boxes and lines (round two inline connectors and point them to one note) · <b>click</b> anything to change its words or delete it (<b>Delete</b> key) · arrow keys nudge (Shift: 5 mm) · <b>Ctrl+Z</b> undoes. Mouse wheel zooms; drag empty paper to move around.</p>
           </section>
           <section id="ed-sel-box">
             <h3>Selected</h3>
@@ -772,7 +772,10 @@ async function renderElecSheetsPage(id) {
               <button class="btn btn-ghost btn-sm" data-add="note">Note</button>
               <button class="btn btn-ghost btn-sm" data-add="tag">Tag</button>
               <button class="btn btn-ghost btn-sm" data-add="text">Text</button>
+              <button class="btn btn-ghost btn-sm" data-tool="box" title="Drag on the sheet to draw a dashed box (round inline connectors, a group of parts)">Box</button>
+              <button class="btn btn-ghost btn-sm" data-tool="line" title="Drag on the sheet to draw a dashed line (from a box to a note). Shift keeps it straight across or down">Line</button>
             </div>
+            <p class="muted small" id="ed-tool-hint"></p>
           </section>
           <section>
             <h3>This sheet</h3>
@@ -844,8 +847,20 @@ async function renderElecSheetsPage(id) {
     $('sh-g').querySelectorAll('.el-sel').forEach(e => e.classList.remove('el-sel'));
     if (sel) $('sh-g').querySelectorAll(`[data-id="${cssId(sel.id)}"]`).forEach(e => e.classList.add('el-sel'));
   }
-  const KIND = { tag: 'Tag', note: 'AYK note', box: 'Label', end: 'Lead label', lead: 'Lead', figure: 'Figure 1', legend: 'Cable legend', group: 'Inline connector', 'added-note': 'Your note', 'added-tag': 'Your tag', 'added-text': 'Your text' };
+  const KIND = { 'added-box': 'Your box', 'added-line': 'Your line', tag: 'Tag', note: 'AYK note', box: 'Label', end: 'Lead label', lead: 'Lead', figure: 'Figure 1', legend: 'Cable legend', group: 'Inline connector', 'added-note': 'Your note', 'added-tag': 'Your tag', 'added-text': 'Your text' };
   const added = id => (ed(false).add || []).find(a => a.id === id);
+  const shiftAdded = (a, dx, dy) => { if (a.pts) for (let i = 0; i < a.pts.length; i += 2) { a.pts[i] += dx; a.pts[i + 1] += dy; } else { a.x += dx; a.y += dy; } };
+  const r2 = v => Math.round(v * 100) / 100;
+  /* drawing tools: drag on the sheet to draw a box or a line */
+  let tool = null;
+  const setTool = t => {
+    tool = tool === t ? null : t;
+    document.querySelectorAll('[data-tool]').forEach(b => b.classList.toggle('btn-primary', b.dataset.tool === tool));
+    $('ed-tool-hint').textContent = tool === 'box' ? 'Drag on the sheet to draw the box. Esc to stop.' : tool === 'line' ? 'Drag on the sheet from where the line starts to where it ends (Shift: straight across or down). Esc to stop.' : '';
+    svgEl.style.cursor = tool ? 'crosshair' : '';
+  };
+  const STYLES = [['dashed', 'Dashed'], ['dotted', 'Dotted'], ['solid', 'Solid']];
+  const COLOURS = [['#7c3aed', 'Purple'], ['#111827', 'Black'], ['#e11d1d', 'Red'], ['#0ea5e9', 'Blue'], ['#16a34a', 'Green'], ['#f2b600', 'Yellow'], ['#22d3ee', 'Cyan']];
   /* the selected item's panel: its words, delete, put back */
   function showSel() {
     const box = $('ed-sel');
@@ -853,9 +868,15 @@ async function renderElecSheetsPage(id) {
     const e = ed(false), a = added(sel.id);
     const noteId = /^note:/.test(sel.id) ? sel.id.slice(5) : null;
     const text = a ? a.text : noteId ? elecNote(setup, noteId) : sel.text;
-    const wordy = a || noteId || ['tag', 'box', 'end'].includes(sel.kind);
+    const shape = a && (a.kind === 'box' || a.kind === 'line');
+    const wordy = (a && !shape) || noteId || ['tag', 'box', 'end'].includes(sel.kind);
     const moved = (e.move && e.move[sel.id]) || (e.path && e.path[sel.id]) || (e.text && Object.prototype.hasOwnProperty.call(e.text, sel.id));
     box.innerHTML = `<p class="small"><b>${esc(KIND[sel.kind] || sel.kind)}</b>${noteId ? ' <span class="muted">(changes this note on every sheet)</span>' : ''}</p>
+      ${shape ? `<div class="ed-shape">
+        <label>Style<select id="ed-style">${STYLES.map(([v, l]) => `<option value="${v}" ${(a.style || 'dashed') === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+        <label>Colour<select id="ed-colour">${COLOURS.map(([v, l]) => `<option value="${v}" ${(a.color || '#7c3aed') === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+        ${a.kind === 'box' ? `<label>Width<input id="ed-w" type="number" min="2" step="0.5" value="${a.w}"></label><label>Height<input id="ed-h" type="number" min="2" step="0.5" value="${a.h}"></label>` : ''}
+      </div><p class="muted small">${a.kind === 'box' ? 'Drag a corner to resize it, the edge to move it.' : 'Drag an end to move that end, the middle to move the line.'}</p>` : ''}
       ${wordy ? `<textarea id="ed-text" rows="${Math.min(12, Math.max(2, Math.ceil(String(text || '').length / 48)))}">${esc(text || '')}</textarea>` : ''}
       <div class="ed-sel-btns">
         <button class="btn btn-ghost btn-sm" id="ed-del">Delete</button>
@@ -871,6 +892,15 @@ async function renderElecSheetsPage(id) {
       else edPart('text')[sel.id] = ta.value;
       save(); render();
     };
+    if (shape) {
+      const upd = f => () => { remember(); f(); save(); render(); };
+      $('ed-style').onchange = upd(() => { a.style = $('ed-style').value; });
+      $('ed-colour').onchange = upd(() => { a.color = $('ed-colour').value; });
+      if ($('ed-w')) {
+        $('ed-w').onchange = upd(() => { const v = +$('ed-w').value; if (v >= 2) a.w = r2(v); });
+        $('ed-h').onchange = upd(() => { const v = +$('ed-h').value; if (v >= 2) { a.y = r2(a.y + a.h - v); a.h = r2(v); } });
+      }
+    }
     $('ed-del').onclick = del;
     if ($('ed-back')) $('ed-back').onclick = () => {
       remember();
@@ -939,6 +969,7 @@ async function renderElecSheetsPage(id) {
     if (!confirm('Undo every edit on this sheet (moves, routes, words, deletions and added items)?')) return;
     remember(); delete setup.edits[key()]; sel = null; save(); render(); showSel();
   };
+  document.querySelectorAll('[data-tool]').forEach(b => b.onclick = () => setTool(b.dataset.tool));
   document.querySelectorAll('[data-add]').forEach(b => b.onclick = () => {
     remember();
     const m = stageMid(), x = Math.max(20, Math.min(W - 80, m[0] - 20)), y = Math.max(20, Math.min(H - 20, H - m[1]));
@@ -1004,6 +1035,29 @@ async function renderElecSheetsPage(id) {
     const at = sheetAt(ev.clientX, ev.clientY), mx = at[0], my = H - at[1];
     const leadEl = ev.target.closest('polyline[data-id]');
     const item = ev.target.closest('g.el-item');
+    const snapP = v => Math.round(v * 2) / 2;
+    if (tool) {
+      /* draw a box or a line: a dashed preview follows the pointer */
+      const pv = document.createElementNS('http://www.w3.org/2000/svg', tool === 'box' ? 'rect' : 'polyline');
+      pv.setAttribute('class', 'ed-preview');
+      $('sh-g').appendChild(pv);
+      drag = { type: 'draw', tool: tool, p0: [snapP(mx), snapP(my)], pv: pv, x0: ev.clientX, y0: ev.clientY, moved: false };
+      try { svgEl.setPointerCapture(ev.pointerId); } catch (e) {}
+      return;
+    }
+    const ad = item && added(item.dataset.id);
+    if (ad && (ad.kind === 'box' || ad.kind === 'line')) {
+      const near = (x, y) => Math.hypot(x - mx, y - my) < Math.max(1.5, 6 / pxPerMm());
+      let grip = -1;
+      if (ad.kind === 'line') { for (let i = 0; i < ad.pts.length; i += 2) if (near(ad.pts[i], ad.pts[i + 1])) grip = i; }
+      else [[ad.x, ad.y], [ad.x + ad.w, ad.y], [ad.x, ad.y + ad.h], [ad.x + ad.w, ad.y + ad.h]].forEach((c, i) => { if (grip < 0 && near(c[0], c[1])) grip = i; });
+      if (grip >= 0) {
+        sel = { id: ad.id, kind: 'added-' + ad.kind }; markSel(); showSel();
+        drag = { type: 'grip', a: ad, grip: grip, start: JSON.parse(JSON.stringify(ad)), x0: ev.clientX, y0: ev.clientY, moved: false };
+        try { svgEl.setPointerCapture(ev.pointerId); } catch (e) {}
+        return;
+      }
+    }
     if (leadEl && (leadEl.classList.contains('sh-hit') || leadEl.dataset.kind === 'lead')) {
       const id = leadEl.dataset.id;
       sel = { id: id, kind: 'lead' }; markSel(); showSel();
@@ -1030,6 +1084,35 @@ async function renderElecSheetsPage(id) {
     if (!drag.moved && Math.hypot(ev.clientX - drag.x0, ev.clientY - drag.y0) < 3) return;
     drag.moved = true;
     const snap = v => Math.round(v * 2) / 2;
+    if (drag.type === 'draw') {
+      const at = sheetAt(ev.clientX, ev.clientY);
+      let p1 = [snap(at[0]), snap(H - at[1])];
+      const [x0, y0] = drag.p0;
+      if (drag.tool === 'line' && ev.shiftKey) { if (Math.abs(p1[0] - x0) > Math.abs(p1[1] - y0)) p1[1] = y0; else p1[0] = x0; }
+      drag.p1 = p1;
+      if (drag.tool === 'box') {
+        drag.pv.setAttribute('x', Math.min(x0, p1[0])); drag.pv.setAttribute('y', Math.min(y0, p1[1]));
+        drag.pv.setAttribute('width', Math.abs(p1[0] - x0)); drag.pv.setAttribute('height', Math.abs(p1[1] - y0));
+      } else drag.pv.setAttribute('points', `${x0},${y0} ${p1[0]},${p1[1]}`);
+      return;
+    }
+    if (drag.type === 'grip') {
+      const a = drag.a, s0 = drag.start, ddx = snap(dx), ddy = snap(dy);
+      const g = $('sh-g').querySelector(`g.el-item[data-id="${cssId(a.id)}"]`);
+      if (a.kind === 'line') {
+        a.pts = s0.pts.slice(); a.pts[drag.grip] += ddx; a.pts[drag.grip + 1] += ddy;
+        if (ev.shiftKey) { const o = drag.grip ? 0 : 2; if (Math.abs(a.pts[drag.grip] - a.pts[o]) > Math.abs(a.pts[drag.grip + 1] - a.pts[o + 1])) a.pts[drag.grip + 1] = a.pts[o + 1]; else a.pts[drag.grip] = a.pts[o]; }
+        if (g) g.querySelectorAll('polyline').forEach(e => e.setAttribute('points', `${a.pts[0]},${a.pts[1]} ${a.pts[2]},${a.pts[3]}`));
+      } else {
+        const left = drag.grip % 2 === 0, bottom = drag.grip < 2;
+        let x0 = s0.x, x1 = s0.x + s0.w, y0 = s0.y, y1 = s0.y + s0.h;
+        if (left) x0 += ddx; else x1 += ddx;
+        if (bottom) y0 += ddy; else y1 += ddy;
+        a.x = Math.min(x0, x1); a.w = Math.max(2, Math.abs(x1 - x0)); a.y = Math.min(y0, y1); a.h = Math.max(2, Math.abs(y1 - y0));
+        if (g) g.querySelectorAll('rect').forEach(e => { e.setAttribute('x', a.x); e.setAttribute('y', a.y); e.setAttribute('width', a.w); e.setAttribute('height', a.h); });
+      }
+      return;
+    }
     if (drag.type === 'item') {
       drag.dx = snap(dx); drag.dy = snap(dy);
       $('sh-g').querySelectorAll(`g.el-item[data-id="${cssId(drag.id)}"]`).forEach(g => g.setAttribute('transform', `translate(${drag.dx} ${drag.dy})`));
@@ -1044,11 +1127,35 @@ async function renderElecSheetsPage(id) {
     if (!drag) return;
     const d = drag; drag = null;
     svgEl.classList.remove('sh-panning');
+    if (d.type === 'draw') {
+      d.pv.remove();
+      const p1 = d.p1, p0 = d.p0;
+      if (!d.moved || !p1 || Math.hypot(p1[0] - p0[0], p1[1] - p0[1]) < 1.5) return;
+      remember();
+      const id = 'add:' + Date.now().toString(36);
+      const shape = d.tool === 'box'
+        ? { id: id, kind: 'box', x: Math.min(p0[0], p1[0]), y: Math.min(p0[1], p1[1]), w: Math.max(2, Math.abs(p1[0] - p0[0])), h: Math.max(2, Math.abs(p1[1] - p0[1])), style: 'dashed', color: '#7c3aed' }
+        : { id: id, kind: 'line', pts: [p0[0], p0[1], p1[0], p1[1]], style: 'dashed', color: '#7c3aed' };
+      edPart('add').push(shape);
+      sel = { id: id, kind: 'added-' + shape.kind };
+      setTool(tool);                       /* one shape per pick of the tool */
+      save(); render(); showSel();
+      return;
+    }
+    if (d.type === 'grip') {
+      if (!d.moved) return;
+      const now = JSON.parse(JSON.stringify(d.a));
+      Object.assign(d.a, d.start);          /* undo keeps the state before the drag */
+      remember();
+      Object.assign(d.a, now);
+      save(); render(); showSel();
+      return;
+    }
     if (!d.moved || d.type === 'pan') return;
     remember();
     if (d.type === 'item') {
       const a = added(d.id);
-      if (a) { a.x += d.dx; a.y += d.dy; }
+      if (a) shiftAdded(a, d.dx, d.dy);
       else {
         const m = edPart('move'), o = m[d.id] || [0, 0];
         m[d.id] = [o[0] + d.dx, o[1] + d.dy];
@@ -1077,7 +1184,7 @@ async function renderElecSheetsPage(id) {
     if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === 'z') { ev.preventDefault(); undo(); return; }
     if (ev.ctrlKey || ev.metaKey) return;
     if (ev.key === 'Delete' || ev.key === 'Backspace') { if (sel) { ev.preventDefault(); del(); } return; }
-    if (ev.key === 'Escape') { sel = null; markSel(); showSel(); return; }
+    if (ev.key === 'Escape') { if (tool) { setTool(tool); return; } sel = null; markSel(); showSel(); return; }
     if (ev.key === 'PageUp') { ev.preventDefault(); go(cur - 1); return; }
     if (ev.key === 'PageDown') { ev.preventDefault(); go(cur + 1); return; }
     if (ev.key === '+' || ev.key === '=') { zoomTo(zoom * 1.5); return; }
@@ -1089,7 +1196,7 @@ async function renderElecSheetsPage(id) {
       ev.preventDefault();
       remember();
       const a = added(sel.id);
-      if (a) { a.x += dir[0]; a.y += dir[1]; }
+      if (a) shiftAdded(a, dir[0], dir[1]);
       else { const m = edPart('move'), o = m[sel.id] || [0, 0]; m[sel.id] = [o[0] + dir[0], o[1] + dir[1]]; }
       save(); render();
     }
