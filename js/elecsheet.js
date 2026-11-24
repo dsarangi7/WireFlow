@@ -533,22 +533,77 @@ function elecFrontsSheet(doc, setup, sh, b, ctx) {
   }
   /* SSC B+ / B- to the junction box: odd SSCs of the bank to the first Bus pair, even to the second */
   const pairs = jb ? (() => { const plus = jb.list.filter(p => p.name === 'Bus+'), minus = jb.list.filter(p => p.name === 'Bus-'); return plus.map((p, i) => ({ plus: p, minus: minus[i] })).filter(p => p.minus); })() : [];
+  const mv = ctx.view('module', 'front');
   sh.items.forEach((name, k) => {
     const x0 = 30 + k * 200;
-    elecTag(doc, `${name} Front`, x0 + 4, 243, 3.4);
     const d = elecDrawPart(doc, v, [x0, 150, 120, 90], { nameSize: 2 });
+    elecTag(doc, `${name} Front`, x0 + 20, 134, 3.4);
     const ref = elecNote(setup, 'sscFront');
-    if (ref.trim()) elecNoteBox(doc, ref, x0 + 104, 200, 56, { size: 2, align: 'center' });
+    if (ref.trim()) elecNoteBox(doc, ref, x0 + 18, 131.5, 42, { size: 1.8 });
+    if (mv) elecModuleChain(doc, mv, d, x0 + 108, (setup.sscs.find(c => c.name === name) || {}).modules);
     const pair = pairs.length ? pairs[bank.indexOf(name) % pairs.length] : null;
     if (!pair) return;
     const bp = d.ports['B+'], bm = d.ports['B-'];
     const col = ELEC_CABLES.bus.color;
     const goRight = pair.plus.x > bp.x;
     /* nested so the two never cross: the port nearer the box takes the higher lane */
-    const hi = 132 - k * 2.5, lo = 125 - k * 2.5;
+    const hi = 118 - k * 2.5, lo = 112 - k * 2.5;
     const near = goRight ? [bm, pair.minus, hi] : [bp, pair.plus, hi], far = goRight ? [bp, pair.plus, lo] : [bm, pair.minus, lo];
     for (const [p, q, lane] of [near, far]) doc.poly([p.x, p.y - p.r, p.x, lane, q.x, lane, q.x, q.y + q.r], { color: col, w: 0.45 });
   });
+}
+
+/**
+ * The SSC's string of battery modules beside its front (DWG2527 sheet 7): Module 1, Module 2
+ * and the last module, from MODULE.dxf. Wiring as DWG2527: SSC S → M1 N, Mk S → Mk+1 N,
+ * last S → SSC N (comm); SSC S− → M1 −, Mk + → Mk+1 −, last + → SSC S+ (power).
+ * Routed so nothing crosses: S, N and S+ go round the left of the SSC and over its top, S− runs
+ * below the string and in from the right; the module-to-module power alternates sides.
+ * count: modules on this SSC (null = not given: the last one is "Module n").
+ */
+function elecModuleChain(doc, mv, d, mx, count) {
+  const W = 56, H = 18.2, slots = [222, 196, 160];
+  const n = count >= 1 ? count : null;
+  const shown = n && n < 3 ? slots.slice(0, n).map((y, i) => ({ y, label: 'Module ' + (i + 1) }))
+    : [{ y: slots[0], label: 'Module 1' }, { y: slots[1], label: 'Module 2' }, { y: slots[2], label: 'Module ' + (n || 'n') }];
+  const mods = shown.map(m => {
+    const r = elecDrawPart(doc, mv, [mx, m.y, W, H], { portNames: false, lw: 0.1 });
+    doc.text(m.label, mx + 34, m.y + 13.5, { size: 2, align: 'center', color: ELEC_INK });
+    for (const t of ['S', 'N']) { const p = r.ports[t]; doc.text(t, p.x - p.r - 0.6, p.y - 0.6, { size: 1.4, align: 'right', color: ELEC_INK }); }
+    return r.ports;
+  });
+  if (n === null || n > 3) {
+    const gx = mx + 34;
+    doc.poly([gx, slots[1] - 1, gx, slots[2] + H + 1], { color: '#6b7280', w: 0.3, dash: [1.2, 1.2] });
+    doc.text(n ? `Modules 3 to ${n - 1}` : 'Modules 3 …', gx + 1.5, (slots[1] + slots[2] + H) / 2 - 0.7, { size: 1.6, color: '#6b7280' });
+  }
+  const green = { color: ELEC_CABLES.comm.color, w: 0.35 }, red = { color: ELEC_CABLES.bus.color, w: 0.45 };
+  const first = mods[0], last = mods[mods.length - 1];
+  const P = d.ports, out = p => p.y - p.r;
+  /* between modules: comm straight down the jacks; power from + round to the next − */
+  mods.slice(1).forEach((m, i) => {
+    const a = mods[i];
+    doc.poly([a.S.x, a.S.y - a.S.r, m.N.x, m.N.y + m.N.r], green);
+    const lane = (mods.length - 2 - i) % 2 === 0 ? mx + 58 : mx + 44;
+    const side = lane > a['+'].x ? 1 : -1;
+    doc.poly([a['+'].x + side * a['+'].r, a['+'].y, lane, a['+'].y, lane, m['-'].y, m['-'].x + side * m['-'].r, m['-'].y], red);
+  });
+  /* S, N, S+: down, left round the SSC, over its top, down into the string */
+  const L = d.box[0];
+  const over = [
+    { p: P.S, lane: 148.5, col: L - 6, top: 244, down: first.N.x, to: first.N, style: green, end: 'top' },
+    { p: P.N, lane: 146.5, col: L - 9, top: 247, down: mx + 20, to: last.S, style: green, end: 'left' },
+    { p: P['S+'], lane: 144.5, col: L - 12, top: 250, down: mx + 24, to: last['+'], style: red, end: 'right' },
+  ];
+  for (const o of over) {
+    const pts = [o.p.x, out(o.p), o.p.x, o.lane, o.col, o.lane, o.col, o.top, o.down, o.top];
+    if (o.end === 'top') pts.push(o.down, o.to.y + o.to.r);
+    else pts.push(o.down, o.to.y, o.to.x + (o.end === 'left' ? o.to.r : -o.to.r), o.to.y);
+    doc.poly(pts, o.style);
+  }
+  /* S−: below the string, up its right side, into Module 1 − */
+  const m1 = first['-'], col = mx + 62;
+  doc.poly([P['S-'].x, out(P['S-']), P['S-'].x, 142.5, col, 142.5, col, m1.y, m1.x + m1.r, m1.y], red);
 }
 
 /** Draws every sheet of a confirmed setup onto doc (a pdfDoc); returns the sheet list. */

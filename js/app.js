@@ -507,7 +507,8 @@ function elecPartsOfRacks(racks) {
     for (const c of cad.components || []) {
       if (c.kind !== 'ssc' && c.kind !== 'acdp' && c.kind !== 'msm') continue;
       if (!c.labelConfirmed) { unconfirmed++; continue; }
-      parts.push({ rack: r.name, kind: c.kind, name: cadCompLabel(c, cad.labels) });
+      const saved = (cad.labels || {})[cadCompKey(c)] || {};
+      parts.push({ rack: r.name, kind: c.kind, name: cadCompLabel(c, cad.labels), modules: c.kind === 'ssc' && saved.modules >= 1 ? +saved.modules : null });
     }
   }
   return { parts: parts, unconfirmed: unconfirmed };
@@ -752,7 +753,7 @@ async function renderElecPage(id) {
       <section class="el-card">
         <div class="el-card-head"><h2>SSCs</h2><button class="btn btn-ghost btn-sm" id="el-add-ssc">Add SSC</button></div>
         ${setup.sscs.length ? `<div class="el-table-wrap"><table class="el-table">
-          <thead><tr><th>SSC</th><th>Rack</th><th>Bank</th><th>Cooling fans</th><th>Link to MSM</th><th></th></tr></thead>
+          <thead><tr><th>SSC</th><th>Rack</th><th>Bank</th><th>Cooling fans</th><th>Modules</th><th>Link to MSM</th><th></th></tr></thead>
           <tbody>${setup.sscs.map(c => {
             const b = setup.banks.find(x => x.id === c.bank);
             const k = b ? elecLinkKind(c.rack, b.msm.rack) : 'unknown';
@@ -761,6 +762,7 @@ async function renderElecPage(id) {
             <td><input data-f="rack" value="${esc(c.rack)}" list="el-racks" placeholder="Rack 1" aria-label="SSC rack"></td>
             <td><select data-f="bank" aria-label="Bank">${bankOpts(c.bank)}</select></td>
             <td><select data-f="fans" aria-label="Cooling fans"><option value="" ${c.fans ? '' : 'selected'}>Choose…</option>${ELEC_FAN_CHOICES.map(k => `<option value="${k}" ${c.fans === k ? 'selected' : ''}>${k}</option>`).join('')}</select></td>
+            <td><input data-f="modules" type="number" min="1" max="99" step="1" class="el-count" value="${c.modules || ''}" placeholder="n" aria-label="Battery modules on this SSC" title="Battery modules on this SSC (the last one drawn on its front sheet)"></td>
             <td><span class="el-link el-link-${k}">${k === 'harness' ? 'AYK harness' : k === 'inline' ? 'Inline connector' : '—'}</span></td>
             <td><button class="btn btn-ghost btn-xs" data-del-ssc="${esc(c.id)}" title="Remove this SSC">×</button></td></tr>`;
           }).join('')}</tbody></table></div>`
@@ -846,7 +848,8 @@ async function renderElecPage(id) {
     });
     body.querySelectorAll('[data-ssc] [data-f]').forEach(inp => inp.onchange = () => {
       const c = setup.sscs.find(x => x.id === inp.closest('[data-ssc]').dataset.ssc);
-      c[inp.dataset.f] = inp.dataset.f === 'fans' ? (inp.value ? +inp.value : null) : inp.value.trim();
+      const f = inp.dataset.f;
+      c[f] = f === 'fans' ? (inp.value ? +inp.value : null) : f === 'modules' ? (+inp.value >= 1 ? Math.round(+inp.value) : null) : inp.value.trim();
       changed();
     });
     body.querySelectorAll('[data-del-bank]').forEach(b => b.onclick = () => {

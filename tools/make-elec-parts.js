@@ -3,7 +3,7 @@
  *
  *   MSM.dxf     MSM back panel (bare geometry)
  *   SSC.dxf     SSC front (left view) and back (right view), in a 1:5 factory frame
- *   MODULE.dxf  module front (upper view); its back (lower view) is not used
+ *   MODULE.dxf  module front (upper view, ports S, N, +, −); its back (lower view) is not used
  *   JUNCTION BOX2.dxf junction box with 2 Bus connectors: front (left view); back not used
  *   JUNCTION BOX4.dxf junction box with 4 Bus connectors: front only
  *   A2012504 AC_Breaker_Panel_12.DXF  ACDP panel (one view, AYK 24 Nov 2026)
@@ -69,9 +69,15 @@ for (const P of PARTS) {
   const q = Math.pow(10, Math.round(Math.log10(5000 / span)));
   r1 = v => Math.round(v * q) / q;
   /* a part with one view (MSM back) keeps everything; otherwise the views are the largest groups */
-  let groups = (P.views.length === 1 ? [items] : clusters(items, span * 0.01)).map(g => ({ g, b: boxOf(g.flatMap(it => [it.b[0], it.b[1], it.b[2], it.b[3]])) }))
-    .sort((a, b) => (b.b[2] - b.b[0]) * (b.b[3] - b.b[1]) - (a.b[2] - a.b[0]) * (a.b[3] - a.b[1]))
-    .slice(0, P.views.length);
+  const found = (P.views.length === 1 ? [items] : clusters(items, span * 0.01)).map(g => ({ g, b: boxOf(g.flatMap(it => [it.b[0], it.b[1], it.b[2], it.b[3]])) }))
+    .sort((a, b) => (b.b[2] - b.b[0]) * (b.b[3] - b.b[1]) - (a.b[2] - a.b[0]) * (a.b[3] - a.b[1]));
+  let groups = found.slice(0, P.views.length);
+  /* detail floating inside a view without touching its lines (the module's RJ45 jacks and
+     power sockets) belongs to that view */
+  for (const o of found.slice(P.views.length)) {
+    const home = groups.find(G => o.b[0] >= G.b[0] && o.b[2] <= G.b[2] && o.b[1] >= G.b[1] && o.b[3] <= G.b[3]);
+    if (home) home.g = home.g.concat(o.g);
+  }
   if (P.order === 'x') groups.sort((a, b) => a.b[0] - b.b[0]);
   if (P.order === '-y') groups.sort((a, b) => b.b[1] - a.b[1]);
   const part = { id: P.id, label: P.label, file: P.file, views: [] };
@@ -161,6 +167,18 @@ function jbPorts(v, n, ring) {
   expect(row, n, `junction box front (${n} Bus connectors)`);
   return row.map((p, i) => port(i % 2 ? 'Bus-' : 'Bus+', p, 'round', ring * 2, true));
 }
+/* module front: the two power sockets (rings r7) on the right, + above − as the drawing marks
+   them; the two RJ45 jacks on the left, found by their corner screws (r3, two per jack). The
+   jacks carry no mark on the drawing: N above, S below, read from DWG2527 sheet 7 (S, N, −, +
+   left to right there) turned onto this view the way its + and − turn. To confirm with AYK. */
+function modulePorts(v) {
+  const power = expect(ringsOf(v, 7, 0.05), 2, 'module power sockets').sort((a, b) => b[1] - a[1]);
+  const screws = ringsOf(v, 3, 0.05).filter(p => p[0] > v.w * 0.15 && p[0] < v.w / 2).sort((a, b) => b[1] - a[1]);
+  expect(screws, 4, 'module RJ45 jack screws');
+  const jack = k => [(screws[2 * k][0] + screws[2 * k + 1][0]) / 2, (screws[2 * k][1] + screws[2 * k + 1][1]) / 2];
+  return [port('N', jack(0), 'rj45', 26, false), port('S', jack(1), 'rj45', 26, false),
+    port('+', power[0], 'round', 28, true), port('-', power[1], 'round', 28, true)];
+}
 function sscPorts(v, side) {
   /* the connector row at the bottom, left to right, in DWG2527's order */
   const names = side === 'back' ? ['PowerP', 'PowerB', 'CommP', 'CommB', 'Ext-HVIL', 'Cooling Fan', 'Estop'] : ['S', 'N', 'S+', 'B+', 'B-', 'S-'];
@@ -180,6 +198,7 @@ for (const p of out.parts) for (const v of p.views) {
   else if (p.id === 'acdp') v.ports = acdpPorts(v);
   else if (p.id === 'jb2') v.ports = jbPorts(v, 2, 14.8);
   else if (p.id === 'jb4') v.ports = jbPorts(v, 4, 12.5);
+  else if (p.id === 'module') v.ports = modulePorts(v);
   else v.ports = [];
   console.log(v.label, 'ports:', v.ports.map(q => q.name + (q.sure ? '' : '?')).join(', ') || '(none needed)');
 }

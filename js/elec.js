@@ -106,7 +106,7 @@ function elecNewSetup() {
   return {
     version: 1,
     banks: [],              // [{ id, name, msm: {name, rack, model}, acdps: [{name, rack}] }]
-    sscs: [],               // [{ id, name, rack, bank (bank id or ''), fans (1…6 or null) }]
+    sscs: [],               // [{ id, name, rack, bank (bank id or ''), fans (1…6 or null), modules (count or null) }]
     options: Object.fromEntries(ELEC_OPTIONS.map(o => [o.id, o.always ? true : null])),  // null = not answered yet
     valves: null,           // master valves (fire fighting) on this system: 0, 1 or 2
     jbModel: null,          // junction box front drawn: 2 or 4 Bus connectors (JUNCTION BOX2/4.dxf)
@@ -124,7 +124,7 @@ function elecCompare(a, b) { return String(a).localeCompare(String(b), undefined
 
 /**
  * A setup proposed from the parts confirmed on the project's racks.
- * parts: [{ rack, kind: 'ssc'|'acdp'|'msm', name }]
+ * parts: [{ rack, kind: 'ssc'|'acdp'|'msm', name, modules (SSCs: count from the rack, or null) }]
  * One bank per MSM. An SSC or ACDP joins a bank only when its rack holds exactly one MSM;
  * everything else is left for the engineer to place.
  */
@@ -143,7 +143,7 @@ function elecFromRacks(parts, rackNames) {
   }
   for (const c of parts.filter(p => p.kind === 'ssc').sort((x, y) => elecCompare(x.name, y.name))) {
     const b = bankOfRack(c.rack);
-    s.sscs.push({ id: elecId('s'), name: c.name, rack: c.rack, bank: b ? b.id : '', fans: null });
+    s.sscs.push({ id: elecId('s'), name: c.name, rack: c.rack, bank: b ? b.id : '', fans: null, modules: c.modules >= 1 ? c.modules : null });
   }
   s.source = { racks: (rackNames || []).slice(), at: new Date().toISOString() };
   return s;
@@ -234,6 +234,7 @@ function elecIssues(setup) {
     if (!c.bank || !setup.banks.some(b => b.id === c.bank)) err(`${c.name}: choose its bank.`);
     if (!String(c.rack).trim()) err(`${c.name}: which rack is it in?`);
     if (!ELEC_FAN_CHOICES.includes(c.fans)) err(`${c.name}: how many cooling fans (1 to 6)?`);
+    if (!(c.modules >= 1)) note(`${c.name}: how many battery modules? Until you enter it, its front sheet names the last one "Module n".`);
   }
   for (const o of ELEC_OPTIONS) if (o.always) setup.options[o.id] = true;   /* older setups asked them */
   const open = ELEC_OPTIONS.filter(o => setup.options[o.id] !== true && setup.options[o.id] !== false);

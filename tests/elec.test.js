@@ -62,6 +62,12 @@ s.sscs[1].name = 'SSC1';
 ok(/used twice/.test(E.elecIssues(s).map(i => i.text).join()), 'duplicate names caught');
 s.sscs[1].name = 'SSC2';
 
+/* module counts come from the racks; a missing one is a note, not a blocker */
+const counted = E.elecFromRacks([{ rack: 'R', kind: 'msm', name: 'MSM-1' }, { rack: 'R', kind: 'ssc', name: 'SSC1', modules: 12 }, { rack: 'R', kind: 'ssc', name: 'SSC2' }], ['R']);
+eq(counted.sscs.map(c => c.modules), [12, null], 'module count carried from the rack');
+const cn = E.elecIssues(counted).filter(i => /battery modules/.test(i.text));
+ok(cn.length === 1 && /SSC2/.test(cn[0].text) && cn[0].level !== 'error', 'missing module count is a note');
+
 /* two MSMs in one rack: nothing in that rack is placed automatically */
 const two = E.elecFromRacks([{ rack: 'R', kind: 'msm', name: 'MSM-2' }, { rack: 'R', kind: 'msm', name: 'MSM-1' }, { rack: 'R', kind: 'ssc', name: 'SSC1' }], ['R']);
 eq(two.banks.map(b => b.msm.name), ['MSM-1', 'MSM-2'], 'banks follow MSM names');

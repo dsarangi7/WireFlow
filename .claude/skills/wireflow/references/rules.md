@@ -91,7 +91,17 @@ the engineer confirms every SSC/ACDP/MSM name and each SSC's module count.
     row, left to right; Estop1–9 then RemoteE (4-pin) in reading order; Dry Contact (2-pin),
     PowerP/PowerB (3-pin), Ex.FanFB (5-pin), Valve 1/Valve 2 (7-pin); the 19-pin connector is unused.
   - SSC back: PowerP, PowerB, CommP, CommB, Ext-HVIL (never wired), Cooling Fan, Estop.
-  - SSC front: S, N, S+, B+, B−, S−. The module carries no ports on this diagram.
+  - SSC front: S, N, S+, B+, B−, S−.
+  - Module front (MODULE.dxf upper view): power sockets + (upper) and − (lower), marked on the
+    drawing; RJ45 jacks N (upper) and S (lower) — not marked on the drawing, read from DWG2527
+    sheet 7 (S, N, −, + left to right there); still to confirm with AYK.
+- Module string on the fronts sheets (DWG2527 sheet 7, added 24 Nov 2026): beside each SSC front,
+  Module 1, Module 2 and the last module (the SSC's module count from the rack or the setup page;
+  "Module n" when not given). Wiring as DWG2527: SSC S → M1 N, Mk S → Mk+1 N, last S → SSC N;
+  SSC S− → M1 −, Mk + → Mk+1 −, last + → SSC S+. Note: DWG2527's comm direction is the mirror of
+  the 18 Nov rack rule (SSC N → M1 S …). Routed without crossings (S, N, S+ round the left and over
+  the SSC; S− under the string, in from the right); an SSC of exactly two modules has one
+  unavoidable crossing.
 - Connection rules (only confirmed ones live in `ELEC_RULES`, `js/elec.js`):
   - MSM SSCnP → SSCn CommP, Cat6 (confirmed 20 Nov 2026). n is the SSC's place in its bank, in
     name order (MSM-2 serves SSC7, SSC8 … from its SSC1P, SSC2P …, as on DWG2527).

@@ -17,7 +17,7 @@ const ok = (c, m) => { assert.ok(c, m); n++; };
   /* a 6-SSC bank: two ACDPs, SSC1-3 in rack 1 with the MSM, SSC4-6 in rack 2 */
   const s = L.elecNewSetup();
   s.banks.push({ id: 'b', name: 'Bank 1', msm: { name: 'MSM-1', rack: 'Rack 1', model: 6 }, acdps: [{ name: 'ACDP1', rack: 'Rack 1' }, { name: 'ACDP2', rack: 'Rack 2' }] });
-  for (let i = 1; i <= 6; i++) s.sscs.push({ id: 's' + i, name: 'SSC' + i, rack: i <= 3 ? 'Rack 1' : 'Rack 2', bank: 'b', fans: 2 });
+  for (let i = 1; i <= 6; i++) s.sscs.push({ id: 's' + i, name: 'SSC' + i, rack: i <= 3 ? 'Rack 1' : 'Rack 2', bank: 'b', fans: 2, modules: i === 1 ? 12 : i === 3 ? 2 : null });
   for (const o of L.ELEC_OPTIONS) s.options[o.id] = true;
   s.valves = 2; s.jbModel = 4; s.confirmed = true;
 
@@ -56,6 +56,19 @@ const ok = (c, m) => { assert.ok(c, m); n++; };
   ok(texts(6).includes('To SSC4 PowerP · Sheet 7'), 'ACDP2 sheet: SSC power');
   ok(texts(9).includes('Junction Box Front') && texts(10).some(t => /SSC4 Front/.test(t)), 'fronts sheets: junction box and SSC fronts');
   ok(calls.filter(c => c[0] === 'text' && c[1] === 9 && /^Bus[+-]$/.test(c[2])).length === 4, '4-connector junction box: all four Bus names drawn');
+  /* the module string beside each SSC front (DWG2527 sheet 7) */
+  ok(texts(9).includes('Module 12') && texts(9).includes('Modules 3 to 11') && texts(9).includes('Module n') && texts(9).filter(t => t === 'Module 1').length === 2, 'fronts: Module 1, 2 and the last one for each SSC (n when not given)');
+  ok(texts(10).filter(t => t === 'Module 2').length === 2 && texts(10).filter(t => /^Module n$/.test(t)).length === 1 && texts(10).filter(t => /^Modules 3/.test(t)).length === 1, 'an SSC with two modules (SSC3) draws both and no gap');
+  const crossingsOn = page => {
+    const sg = calls.filter(c => c[0] === 'poly' && c[1] === page && c[2] && (c[2].w === 0.35 || c[2].w === 0.45)).map(c => c[3])
+      .map(p => { const r = []; for (let i = 0; i + 3 < p.length; i += 2) r.push([p[i], p[i + 1], p[i + 2], p[i + 3]]); return r; });
+    let k = 0; for (let i = 0; i < sg.length; i++) for (let j = i + 1; j < sg.length; j++) for (const a of sg[i]) for (const b of sg[j]) if (cross(a, b)) k++;
+    return k;
+  };
+  ok(crossingsOn(9) === 0, 'fronts sheet: SSC leads, module string and Bus leads never cross; found ' + crossingsOn(9));
+  ok(crossingsOn(10) === 1, 'fronts sheet with an SSC of two modules: one unavoidable crossing (S- into Module 1 over the link to Module 2); found ' + crossingsOn(10));
+  const greens = calls.filter(c => c[0] === 'poly' && c[1] === 9 && c[2] && c[2].color === '#16a34a').length;
+  ok(greens === 2 * (2 + 2), 'fronts: S and N to the string plus two module-to-module comm links per SSC (' + greens + ')');
   const dashed = calls.filter(c => c[0] === 'poly' && c[1] === 7 && c[2] && c[2].dash).length;
   ok(dashed > 0, 'cables between racks are dashed');
   /* an edited note prints; an emptied one is left off */
