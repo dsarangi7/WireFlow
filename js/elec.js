@@ -22,22 +22,24 @@ const ELEC_MSM_SSC_PORTS = 6;
 const ELEC_FAN_CHOICES = [1, 2, 3, 4, 5, 6];
 
 /* MSM models, by how many SSCs they serve (each bank's model is the engineer's choice).
-   Every model is drawn with the same MSM drawing, MSM.dxf (AYK, 23 Nov 2026): a model with
-   fewer SSCs uses SSC ports 1 to its count and leaves the rest empty. The layouts below are
+   Each model is drawn from its own AYK drawing (24 Nov 2026): A2008305 (3 SSCs), A2012104 (6),
+   A2012203 (9), parts msm3, msm6 and msm in assets/elec/parts.json. The layouts below are
    AYK's earlier pictures of each model, kept for reference only. */
 const ELEC_MSM_MODELS = {
-  3: { sscs: 3, drawing: 'msm', source: 'MSM.dxf (same drawing for every model, AYK 23 Nov 2026); picture of MSM-1 back for reference',
+  3: { sscs: 3, drawing: 'msm3', source: 'A2008305 MSM_Unit_NoHeatSink_AL (1-3); picture of MSM-1 back for reference',
        jacks: [['Cloud', 'EMS', 'PCS'], ['SSC1P', 'SSC2P', 'SSC3P'], ['SSC1B', 'SSC2B', 'SSC3B'], ['Spare']],
        round: [['Estop1', 'Estop2'], ['Estop3', 'Ex.FanFB', 'Dry Contact', 'RemoteE'], ['PowerP', 'PowerB', 'Valve 1', 'Valve 2']] },
-  6: { sscs: 6, drawing: 'msm', source: 'MSM.dxf (same drawing for every model, AYK 23 Nov 2026); DWG2527 sheet 1 for reference',
+  6: { sscs: 6, drawing: 'msm6', source: 'A2012104 MSM_Unit_NoHeatsink_AL_02 (1-6); DWG2527 sheet 1 for reference',
        jacks: [['Cloud', 'EMS', 'PCS', 'Spare'], ['SSC1P', 'SSC1B', 'SSC2P', 'SSC2B'], ['SSC3P', 'SSC3B', 'SSC4P', 'SSC4B'], ['SSC5P', 'SSC5B', 'SSC6P', 'SSC6B']],
        round: [['Estop1', 'Estop2', 'Estop3'], ['Estop4', 'Estop5', 'Estop6', 'Dry Contact', 'RemoteE'], ['PowerP', 'PowerB', 'Ex.FanFB', 'Valve 1', 'Valve 2']] },
-  9: { sscs: 9, drawing: 'msm', source: 'MSM.dxf (assets/elec/parts.json), names confirmed 20 Nov 2026' },
+  9: { sscs: 9, drawing: 'msm', source: 'A2012203 MSM_Unit_NoHeatsink_AL_03 (1-9), same panel as the earlier MSM.dxf; names confirmed 20 Nov 2026' },
 };
 
 /* The part drawings every project uses (assets/elec/parts.json, from AYK's CADS folder).
    The junction box front is kept (AYK, 20 Nov 2026); only its HVIL wire to the SSC is gone. */
-const ELEC_PARTS = ['msm', 'ssc', 'jb2', 'jb4', 'acdp', 'module'];
+const ELEC_PARTS = ['msm', 'msm6', 'msm3', 'ssc', 'jb2', 'jb4', 'acdp', 'module', 'inline'];
+/** The drawing (part id) of a bank's MSM: its model's own, the 9-SSC one when not chosen yet. */
+function elecMsmDrawing(b) { const m = b && b.msm && ELEC_MSM_MODELS[b.msm.model]; return m ? m.drawing : 'msm'; }
 
 /* Ports that are never wired on new diagrams, with AYK's reason. Released projects are
    not changed. */
@@ -353,4 +355,4 @@ function elecLinks(setup) {
   return out.filter(l => !elecPortBlocked(l.from.part, l.from.port) && !elecPortBlocked(l.to.part, l.to.port));
 }
 
-if (typeof module !== 'undefined') module.exports = { elecSheets, ELEC_NOTES, elecNote, ELEC_SSCS_PER_SHEET, elecPortBlockedWhy, elecAcdps, elecAcdpsNeeded, ELEC_FAN_CHOICES, ELEC_ACDP_PORTS, ELEC_ACDP_SSCS, ELEC_MSM_MODELS, ELEC_FAN_PINS, ELEC_RULES, elecLinks, ELEC_PARTS, ELEC_NOT_WIRED, elecPortBlocked, ELEC_MSM_SSC_PORTS, ELEC_OPTIONS, elecNewSetup, elecFromRacks, elecBankSscs, elecIssues, elecReady, elecLinkKind, elecSummary, elecCompare };
+if (typeof module !== 'undefined') module.exports = { elecMsmDrawing, elecSheets, ELEC_NOTES, elecNote, ELEC_SSCS_PER_SHEET, elecPortBlockedWhy, elecAcdps, elecAcdpsNeeded, ELEC_FAN_CHOICES, ELEC_ACDP_PORTS, ELEC_ACDP_SSCS, ELEC_MSM_MODELS, ELEC_FAN_PINS, ELEC_RULES, elecLinks, ELEC_PARTS, ELEC_NOT_WIRED, elecPortBlocked, ELEC_MSM_SSC_PORTS, ELEC_OPTIONS, elecNewSetup, elecFromRacks, elecBankSscs, elecIssues, elecReady, elecLinkKind, elecSummary, elecCompare };

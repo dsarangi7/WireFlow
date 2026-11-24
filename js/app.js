@@ -6,7 +6,7 @@
  *   #/cad/<id> rack view (teach, confirm, number) · #/sheet/<id> wiring sheet (PDF) ·
  *   #/example the example rack
  * Electrical diagram: #/electrical projects · #/efolder/<id> diagrams of a project ·
- *   #/elec/<id> system setup
+ *   #/elec/<id> system setup · #/elecsheets/<id> its sheets: check, edit, export the PDF
  * ============================================================ */
 
 const app = document.getElementById('app');
@@ -99,6 +99,7 @@ async function route() {
   if (h.startsWith('#/sheet/')) { renderSheetPage(+h.split('/')[2]); return; }
   if (h.startsWith('#/folder/')) { renderDashboard(decodeURIComponent(h.split('/')[2] || '') || undefined); return; }
   if (h.startsWith('#/efolder/')) { renderElecDashboard(decodeURIComponent(h.split('/')[2] || '') || undefined); return; }
+  if (h.startsWith('#/elecsheets/')) { renderElecSheetsPage(+h.split('/')[2].split('?')[0]); return; }
   if (h.startsWith('#/elec/')) { renderElecPage(+h.split('/')[2]); return; }
   switch (h) {
     case '#/app': renderHome(); return;
@@ -674,6 +675,405 @@ async function elecPartsInto(el) {
   el.querySelectorAll('[data-part]').forEach(b => b.onclick = () => elecShowPart(b.dataset.part, b.dataset.view));
 }
 
+/* ================= ELECTRICAL DIAGRAM: SHEET EDITOR =================
+ * Every sheet as it will print, one at a time, before the PDF. The engineer can drag any
+ * label, note, tag or connector label; pull a lead's segment sideways (a lead's end segment
+ * steps aside, keeping a short stub in its port); change words; delete things and bring
+ * them back; add notes, tags and text. Edits are kept per sheet in setup.edits and drawn by
+ * the same code that writes the PDF, so the export is exactly what is on screen.
+ * Exporting the PDF is the last step, from here. */
+function elecSheetInfoOf(setup, folder) {
+  const i = setup.sheetInfo = Object.assign({ docNumber: '', rev: '0', drawnBy: '', checkedBy: '', state: 'Issued for Review', note: 'Initial Released' }, setup.sheetInfo || {});
+  const d = new Date();
+  return Object.assign({}, i, {
+    title: `${folder ? folder.number + ' ' : ''}Battery System Electrical Connection Diagram`,
+    date: d.getFullYear() + '.' + String(d.getMonth() + 1).padStart(2, '0') + '.' + String(d.getDate()).padStart(2, '0'),
+  });
+}
+
+async function renderElecSheetsPage(id) {
+  shell('<div class="loading">Opening the sheets…</div>', 'dash');
+  const project = await localProject(id).catch(() => null);
+  const back = `<a class="btn btn-primary" href="#/elec/${id}">Back to the setup</a>`;
+  if (!project || project.underlay_kind !== 'elec') { shell(`<div class="empty"><h3>Diagram not found</h3>${back}</div>`, 'dash'); return; }
+  const setup = project.config && project.config.elec;
+  if (!setup || !setup.confirmed) { shell(`<div class="empty"><h3>Confirm the setup first</h3><p>The sheets are drawn from the confirmed setup.</p>${back}</div>`, 'dash'); return; }
+  let lib;
+  try { lib = await elecPartsLoad(); } catch (e) { shell(`<div class="empty"><h3>Could not load the part drawings</h3><p>${esc(e.message)}</p>${back}</div>`, 'dash'); return; }
+  const folder = rackFolder(project);
+  const logo = await sheetLogo().catch(() => null);
+  const info = () => Object.assign(elecSheetInfoOf(setup, folder), { logo: logo });
+  const sheets = elecSheets(setup);
+  const start = Math.max(1, Math.min(sheets.length, +(new URLSearchParams(location.hash.split('?')[1] || '').get('sheet')) || 1));
+  let cur = start, sel = null, zoom = 1;
+  setup.edits = setup.edits || {};
+  const F = setup.sheetInfo || {};
+  const field = (k, label, ph) => `<label class="sh-field"><span>${label}</span><input type="text" data-sf="${k}" value="${esc(F[k] || '')}" placeholder="${ph}" maxlength="60"></label>`;
+
+  shell(`
+    <div class="cad-page sh-page el-ed">
+      <header class="cad-head">
+        <a class="back" href="#/elec/${id}">← Setup</a>
+        <h1>${esc(project.name)} · sheets</h1>
+        <span class="chip">A3 · ${sheets.length} sheets</span>
+        <div class="cad-tools">
+          <button class="btn btn-ghost btn-sm" id="ed-prev" title="Previous sheet (Page Up)">‹</button>
+          <select id="ed-sheet" aria-label="Sheet">${sheets.map(s => `<option value="${s.n}">Sheet ${s.n} · ${esc(s.title)}</option>`).join('')}</select>
+          <button class="btn btn-ghost btn-sm" id="ed-next" title="Next sheet (Page Down)">›</button>
+          <button class="btn btn-ghost btn-sm" id="ed-undo" title="Undo (Ctrl+Z)" disabled>Undo</button>
+          <button class="btn btn-ghost btn-sm" id="sh-zoom-out" title="Zoom out">−</button>
+          <button class="btn btn-ghost btn-sm" id="sh-zoom-fit" title="Fit the sheet (key 0). The mouse wheel zooms at the pointer; drag empty paper to move around.">Fit</button>
+          <button class="btn btn-ghost btn-sm" id="sh-zoom-in" title="Zoom in">+</button>
+          <button class="btn btn-primary btn-sm" id="ed-pdf" title="The last step: every sheet, as you see them here, in one A3 PDF">Export PDF</button>
+        </div>
+      </header>
+      <div class="sh-body">
+        <div class="sh-stage" id="sh-stage"><div class="sh-paper" id="sh-paper"><svg id="sh-svg" viewBox="0 0 ${ELEC_A3.w} ${ELEC_A3.h}" xmlns="http://www.w3.org/2000/svg"><g id="sh-g" transform="translate(0 ${ELEC_A3.h}) scale(1 -1)"></g></svg></div></div>
+        <div class="wf-split" role="separator" aria-orientation="vertical" aria-label="Drag to resize the side panel" tabindex="0"></div>
+        <aside class="cad-info sh-side">
+          <section>
+            <h3>Check and edit</h3>
+            <p class="muted small">This is the sheet exactly as it will print. <b>Drag</b> a label, note or tag to move it · <b>pull a lead</b> sideways to re-route it (pull its first or last part to step it aside) · <b>click</b> anything to change its words or delete it (<b>Delete</b> key) · arrow keys nudge (Shift: 5 mm) · <b>Ctrl+Z</b> undoes. Mouse wheel zooms; drag empty paper to move around.</p>
+          </section>
+          <section id="ed-sel-box">
+            <h3>Selected</h3>
+            <div id="ed-sel"><p class="muted small">Nothing selected. Click a label, note, tag or lead.</p></div>
+          </section>
+          <section>
+            <h3>Add to this sheet</h3>
+            <div class="ed-add">
+              <button class="btn btn-ghost btn-sm" data-add="note">Note</button>
+              <button class="btn btn-ghost btn-sm" data-add="tag">Tag</button>
+              <button class="btn btn-ghost btn-sm" data-add="text">Text</button>
+            </div>
+          </section>
+          <section>
+            <h3>This sheet</h3>
+            <div id="ed-hidden"></div>
+            <button class="btn btn-ghost btn-sm" id="ed-reset">Undo every edit on this sheet</button>
+          </section>
+          <section>
+            <h3>Title block</h3>
+            ${field('docNumber', 'Document no.', 'DWG2527')}${field('rev', 'Rev', '0')}${field('drawnBy', 'Drawn by', 'Name')}
+            ${field('checkedBy', 'Checked by', 'Name')}${field('state', 'State', 'Issued for Review')}${field('note', 'Note', 'Initial Released')}
+          </section>
+          <p class="small" id="sh-status" role="status"></p>
+        </aside>
+      </div>
+    </div>`, 'dash');
+
+  const $ = q => document.getElementById(q);
+  const say = (m, k) => { $('sh-status').textContent = m || ''; $('sh-status').className = 'small ' + (k || ''); };
+  let saving = Promise.resolve();
+  const save = () => {
+    project.updated_at = new Date().toISOString();
+    const copy = JSON.parse(JSON.stringify(project));
+    saving = saving.then(() => localPutProject(copy)).catch(e => say('Could not save: ' + e.message, 'warn'));
+  };
+  /* undo: the edits and notes as they were before each change */
+  const history = [];
+  const remember = () => { history.push(JSON.stringify({ edits: setup.edits, notes: setup.notes || {} })); if (history.length > 200) history.shift(); $('ed-undo').disabled = false; };
+  const undo = () => {
+    const h = history.pop();
+    if (!h) return;
+    const o = JSON.parse(h); setup.edits = o.edits; setup.notes = o.notes;
+    $('ed-undo').disabled = !history.length;
+    save(); render(); showSel();
+  };
+  const sheet = () => sheets.find(s => s.n === cur);
+  const key = () => elecSheetKey(sheet());
+  const ed = make => { const k = key(); if (!setup.edits[k] && make) setup.edits[k] = {}; return setup.edits[k] || {}; };
+  const edPart = (part) => { const e = ed(true); return e[part] = e[part] || (part === 'add' ? [] : {}); };
+  const tidy = () => { const e = setup.edits[key()]; if (!e) return; for (const k of Object.keys(e)) if (!Object.keys(e[k]).length) delete e[k]; if (!Object.keys(e).length) delete setup.edits[key()]; };
+  const cssId = s => (window.CSS && CSS.escape ? CSS.escape(s) : s.replace(/["\\]/g, '\\/* ================= ELECTRICAL DIAGRAM: SYSTEM SETUP ================='));
+
+  function render() {
+    const svg = sheetSvgTarget();
+    elecDraw(svg, setup, lib, info(), { only: cur, interactive: true });
+    $('sh-g').innerHTML = svg.svg();
+    $('ed-sheet').value = String(cur);
+    $('ed-prev').disabled = cur <= 1; $('ed-next').disabled = cur >= sheets.length;
+    markSel();
+    listHidden();
+    /* leads crossing each other: with the engineer's edits, against the sheet as drawn */
+    const n = crossings(setup.edits), planned = plannedCross[cur] != null ? plannedCross[cur] : (plannedCross[cur] = crossings({}));
+    say(n > planned ? `Your edits make leads cross: ${n} crossing${n === 1 ? '' : 's'} on this sheet, ${planned} as drawn.` : n ? `${n} lead crossing${n === 1 ? '' : 's'} on this sheet, as drawn (DWG2527 has it too).` : 'No leads cross on this sheet.', n > planned ? 'warn' : 'cad-ok');
+  }
+  const plannedCross = {};
+  function crossings(edits) {
+    const segs = [], keep = setup.edits;
+    const rec = { newPage() { return rec; }, rect() { return rec; }, circle() { return rec; }, text() { return rec; }, image() { return rec; },
+      line(a, b, c, d, o) { return rec.poly([a, b, c, d], o); },
+      poly(p, o) { if (o && o.id && !/^customer:/.test(o.id)) { const q = Array.isArray(p[0]) ? p.flat() : p, r = []; for (let i = 0; i + 3 < q.length; i += 2) r.push(q.slice(i, i + 4)); segs.push(r); } return rec; } };
+    setup.edits = edits;
+    try { elecDraw(rec, setup, lib, info(), { only: cur }); } finally { setup.edits = keep; }
+    const cross = (a, b) => { const v = Math.abs(a[0] - a[2]) < 1e-6, w = Math.abs(b[0] - b[2]) < 1e-6; if (v === w) return false; const [V, Hh] = v ? [a, b] : [b, a];
+      const e = 0.01; return V[0] > Math.min(Hh[0], Hh[2]) + e && V[0] < Math.max(Hh[0], Hh[2]) - e && Hh[1] > Math.min(V[1], V[3]) + e && Hh[1] < Math.max(V[1], V[3]) - e; };
+    let n = 0;
+    for (let i = 0; i < segs.length; i++) for (let j = i + 1; j < segs.length; j++) for (const a of segs[i]) for (const b of segs[j]) if (cross(a, b)) n++;
+    return n;
+  }
+  function markSel() {
+    $('sh-g').querySelectorAll('.el-sel').forEach(e => e.classList.remove('el-sel'));
+    if (sel) $('sh-g').querySelectorAll(`[data-id="${cssId(sel.id)}"]`).forEach(e => e.classList.add('el-sel'));
+  }
+  const KIND = { tag: 'Tag', note: 'AYK note', box: 'Label', end: 'Lead label', lead: 'Lead', figure: 'Figure 1', legend: 'Cable legend', group: 'Inline connector', 'added-note': 'Your note', 'added-tag': 'Your tag', 'added-text': 'Your text' };
+  const added = id => (ed(false).add || []).find(a => a.id === id);
+  /* the selected item's panel: its words, delete, put back */
+  function showSel() {
+    const box = $('ed-sel');
+    if (!sel) { box.innerHTML = '<p class="muted small">Nothing selected. Click a label, note, tag or lead.</p>'; return; }
+    const e = ed(false), a = added(sel.id);
+    const noteId = /^note:/.test(sel.id) ? sel.id.slice(5) : null;
+    const text = a ? a.text : noteId ? elecNote(setup, noteId) : sel.text;
+    const wordy = a || noteId || ['tag', 'box', 'end'].includes(sel.kind);
+    const moved = (e.move && e.move[sel.id]) || (e.path && e.path[sel.id]) || (e.text && Object.prototype.hasOwnProperty.call(e.text, sel.id));
+    box.innerHTML = `<p class="small"><b>${esc(KIND[sel.kind] || sel.kind)}</b>${noteId ? ' <span class="muted">(changes this note on every sheet)</span>' : ''}</p>
+      ${wordy ? `<textarea id="ed-text" rows="${Math.min(12, Math.max(2, Math.ceil(String(text || '').length / 48)))}">${esc(text || '')}</textarea>` : ''}
+      <div class="ed-sel-btns">
+        <button class="btn btn-ghost btn-sm" id="ed-del">Delete</button>
+        ${!a && moved ? '<button class="btn btn-ghost btn-sm" id="ed-back">Put back as drawn</button>' : ''}
+        ${noteId && setup.notes && typeof setup.notes[noteId] === 'string' ? '<button class="btn btn-ghost btn-sm" id="ed-ayk">Back to AYK\'s text</button>' : ''}
+      </div>`;
+    const ta = $('ed-text');
+    if (ta) ta.onchange = () => {
+      remember();
+      if (a) a.text = ta.value;
+      else if (noteId) { setup.notes = setup.notes || {}; const n = ELEC_NOTES.find(x => x.id === noteId); if (n && ta.value === n.text) delete setup.notes[noteId]; else setup.notes[noteId] = ta.value; }
+      else if (ta.value === sel.text && !(e.text && sel.id in e.text)) return;
+      else edPart('text')[sel.id] = ta.value;
+      save(); render();
+    };
+    $('ed-del').onclick = del;
+    if ($('ed-back')) $('ed-back').onclick = () => {
+      remember();
+      const x = ed(false);
+      for (const k of ['move', 'path', 'text']) if (x[k]) delete x[k][sel.id];
+      tidy(); save(); render(); showSel();
+    };
+    if ($('ed-ayk')) $('ed-ayk').onclick = () => { remember(); delete setup.notes[noteId]; save(); render(); showSel(); };
+  }
+  function del() {
+    if (!sel) return;
+    remember();
+    const e = ed(true);
+    if (/^add:/.test(sel.id)) e.add = (e.add || []).filter(a => a.id !== sel.id);
+    else {
+      const h = edPart('hide');
+      h[sel.id] = true;
+      /* a lead goes with the label at its end */
+      const end = sel.kind === 'lead' && $('sh-g').querySelector(`[data-id="${cssId(sel.id)}"][data-end]`);
+      if (end && end.dataset.end) h[end.dataset.end] = true;
+    }
+    tidy(); sel = null; save(); render(); showSel();
+  }
+  /* deleted items on this sheet, each can come back */
+  function listHidden() {
+    const h = Object.keys(ed(false).hide || {});
+    const name = id => id.replace(/^(tag|box|end|note|lead|customer|fan|bus|lp16|inline):/, '').replace(/#\d+$/, '');
+    $('ed-hidden').innerHTML = h.length ? `<p class="small">${h.length} deleted:</p><ul class="ed-hidden">${h.map(id => `<li><span>${esc(name(id)).slice(0, 60)}</span><button class="btn btn-ghost btn-xs" data-unhide="${esc(id)}">Bring back</button></li>`).join('')}</ul>` : '<p class="muted small">Nothing deleted on this sheet.</p>';
+    $('ed-hidden').querySelectorAll('[data-unhide]').forEach(b => b.onclick = () => { remember(); delete ed(false).hide[b.dataset.unhide]; tidy(); save(); render(); });
+  }
+
+  /* ---- zoom and pan (as the wiring sheet) ---- */
+  const ZOOM_MAX = 40, W = ELEC_A3.w, H = ELEC_A3.h;
+  function applyZoom(at) {
+    const stage = $('sh-stage'), paper = $('sh-paper');
+    if (!stage) return;
+    const fit = Math.min((stage.clientWidth - 24) / W, (stage.clientHeight - 24) / H);
+    const pxmm = Math.max(0.5, fit * zoom);
+    paper.style.width = W * pxmm + 'px'; paper.style.height = H * pxmm + 'px';
+    paper.style.marginTop = Math.max(0, (stage.clientHeight - 24 - H * pxmm) / 2) + 'px';
+    if (at) { const pr = paper.getBoundingClientRect(); stage.scrollLeft += (pr.left + at[0] * pxmm) - at[2]; stage.scrollTop += (pr.top + at[1] * pxmm) - at[3]; }
+    $('sh-zoom-fit').textContent = zoom === 1 ? 'Fit' : Math.round(zoom * 100) + '%';
+  }
+  const pxPerMm = () => $('sh-paper').getBoundingClientRect().width / W;
+  const sheetAt = (cx, cy) => { const pr = $('sh-paper').getBoundingClientRect(), k = pr.width / W; return [(cx - pr.left) / k, (cy - pr.top) / k, cx, cy]; };
+  const stageMid = () => { const r = $('sh-stage').getBoundingClientRect(); return sheetAt(r.left + r.width / 2, r.top + r.height / 2); };
+  const zoomTo = (z, at) => { zoom = Math.max(0.6, Math.min(ZOOM_MAX, z)); applyZoom(at || stageMid()); };
+  $('sh-zoom-in').onclick = () => zoomTo(zoom * 1.5);
+  $('sh-zoom-out').onclick = () => zoomTo(zoom / 1.5);
+  $('sh-zoom-fit').onclick = () => { zoom = 1; applyZoom(); $('sh-stage').scrollTo(0, 0); };
+  $('sh-stage').addEventListener('wheel', ev => {
+    if (ev.shiftKey) return;
+    ev.preventDefault();
+    const dy = Math.max(-60, Math.min(60, ev.deltaY * (ev.deltaMode === 1 ? 16 : 1)));
+    zoomTo(zoom * Math.exp(-dy * 0.004), sheetAt(ev.clientX, ev.clientY));
+  }, { passive: false });
+
+  /* ---- sheets ---- */
+  const go = n => { if (n < 1 || n > sheets.length || n === cur) return; cur = n; sel = null; showSel(); render(); history.length = history.length; };
+  $('ed-sheet').onchange = e => go(+e.target.value);
+  $('ed-prev').onclick = () => go(cur - 1);
+  $('ed-next').onclick = () => go(cur + 1);
+  $('ed-undo').onclick = undo;
+  $('ed-reset').onclick = () => {
+    if (!setup.edits[key()]) { say('Nothing edited on this sheet.'); return; }
+    if (!confirm('Undo every edit on this sheet (moves, routes, words, deletions and added items)?')) return;
+    remember(); delete setup.edits[key()]; sel = null; save(); render(); showSel();
+  };
+  document.querySelectorAll('[data-add]').forEach(b => b.onclick = () => {
+    remember();
+    const m = stageMid(), x = Math.max(20, Math.min(W - 80, m[0] - 20)), y = Math.max(20, Math.min(H - 20, H - m[1]));
+    const kind = b.dataset.add;
+    const a = { id: 'add:' + Date.now().toString(36), kind: kind, text: kind === 'note' ? 'New note' : kind === 'tag' ? 'New tag' : 'New text', x: x, y: y, w: 60 };
+    edPart('add').push(a);
+    save(); sel = { id: a.id, kind: 'added-' + kind, text: a.text }; render(); showSel();
+    const ta = $('ed-text'); if (ta) { ta.focus(); ta.select(); }
+  });
+  document.querySelector('.sh-side').addEventListener('change', e => {
+    const t = e.target;
+    if (!t.dataset.sf) return;
+    setup.sheetInfo = setup.sheetInfo || {};
+    setup.sheetInfo[t.dataset.sf] = t.value.trim();
+    save(); render();
+  });
+  $('ed-pdf').onclick = async ev => {
+    const btn = ev.currentTarget;
+    btn.disabled = true; btn.textContent = 'Building the PDF…';
+    try {
+      const i = info();
+      const bytes = await elecPdf(setup, lib, i);
+      download(`${i.docNumber ? i.docNumber + ' ' : ''}${i.title}.pdf`.replace(/[\\/:*?"<>|]+/g, '-'), bytes, 'application/pdf');
+      toast(`Exported ${sheets.length} sheets.`);
+    } catch (e) {
+      console.error('Electrical PDF failed', e);
+      toast('Could not build the PDF: ' + e.message, 'error');
+    } finally { btn.disabled = false; btn.textContent = 'Export PDF'; }
+  };
+
+  /* ---- pointer: select, move items, pull leads, pan ---- */
+  const svgEl = $('sh-svg');
+  let drag = null;
+  const ptsOf = el => el.getAttribute('points').trim().split(/\s+/).map(p => p.split(',').map(Number));
+  const setPts = (id, P) => { const s = P.map(p => p[0].toFixed(3) + ',' + p[1].toFixed(3)).join(' '); $('sh-g').querySelectorAll(`polyline[data-id="${cssId(id)}"]`).forEach(e => e.setAttribute('points', s)); };
+  /* the lead segment nearest the pointer (sheet mm, y up) */
+  const nearestSeg = (P, x, y) => {
+    let best = 0, bd = Infinity;
+    for (let i = 0; i + 1 < P.length; i++) {
+      const [ax, ay] = P[i], [bx, by] = P[i + 1], dx = bx - ax, dy = by - ay, L = dx * dx + dy * dy;
+      const t = L ? Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / L)) : 0;
+      const d = Math.hypot(ax + t * dx - x, ay + t * dy - y);
+      if (d < bd) { bd = d; best = i; }
+    }
+    return best;
+  };
+  /* a lead end segment steps aside: a 2 mm stub stays in the port (or at the label) */
+  const withStubs = (P, i) => {
+    const stub = (from, to) => { const L = Math.hypot(to[0] - from[0], to[1] - from[1]) || 1, s = Math.min(2, L / 3); return [from[0] + (to[0] - from[0]) / L * s, from[1] + (to[1] - from[1]) / L * s]; };
+    let Q = P.map(p => p.slice()), k = i;
+    if (k === Q.length - 2) { const s = stub(Q[k + 1], Q[k]); Q.splice(k + 1, 0, s.slice(), s.slice()); }
+    if (k === 0) { const s = stub(Q[0], Q[1]); Q.splice(1, 0, s.slice(), s.slice()); k = 2; }
+    return { Q: Q, k: k };
+  };
+  const clean = P => {
+    const out = [];
+    for (const p of P) { const q = out[out.length - 1]; if (!q || Math.hypot(q[0] - p[0], q[1] - p[1]) > 1e-3) out.push(p); }
+    for (let i = out.length - 2; i > 0; i--) { const [a, b, c] = [out[i - 1], out[i], out[i + 1]]; if (Math.abs((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])) < 1e-6) out.splice(i, 1); }
+    return out;
+  };
+  svgEl.addEventListener('pointerdown', ev => {
+    if (ev.button !== 0) return;
+    const at = sheetAt(ev.clientX, ev.clientY), mx = at[0], my = H - at[1];
+    const leadEl = ev.target.closest('polyline[data-id]');
+    const item = ev.target.closest('g.el-item');
+    if (leadEl && (leadEl.classList.contains('sh-hit') || leadEl.dataset.kind === 'lead')) {
+      const id = leadEl.dataset.id;
+      sel = { id: id, kind: 'lead' }; markSel(); showSel();
+      const P = ptsOf(leadEl), i = nearestSeg(P, mx, my);
+      const { Q, k } = withStubs(P, i);
+      const horiz = Math.abs(Q[k][1] - Q[k + 1][1]) < 1e-6;
+      drag = { type: 'seg', id: id, Q: Q, k: k, horiz: horiz, x0: ev.clientX, y0: ev.clientY, moved: false };
+    } else if (item) {
+      const id = item.dataset.id;
+      sel = { id: id, kind: item.dataset.kind, text: item.dataset.text }; markSel(); showSel();
+      drag = { type: 'item', id: id, x0: ev.clientX, y0: ev.clientY, moved: false };
+    } else {
+      if (sel) { sel = null; markSel(); showSel(); }
+      const st = $('sh-stage');
+      drag = { type: 'pan', x0: ev.clientX, y0: ev.clientY, sl: st.scrollLeft, stp: st.scrollTop };
+      svgEl.classList.add('sh-panning');
+    }
+    try { svgEl.setPointerCapture(ev.pointerId); } catch (e) {}
+  });
+  svgEl.addEventListener('pointermove', ev => {
+    if (!drag) return;
+    const k = pxPerMm(), dx = (ev.clientX - drag.x0) / k, dy = -(ev.clientY - drag.y0) / k;
+    if (drag.type === 'pan') { const st = $('sh-stage'); st.scrollLeft = drag.sl - (ev.clientX - drag.x0); st.scrollTop = drag.stp - (ev.clientY - drag.y0); return; }
+    if (!drag.moved && Math.hypot(ev.clientX - drag.x0, ev.clientY - drag.y0) < 3) return;
+    drag.moved = true;
+    const snap = v => Math.round(v * 2) / 2;
+    if (drag.type === 'item') {
+      drag.dx = snap(dx); drag.dy = snap(dy);
+      $('sh-g').querySelectorAll(`g.el-item[data-id="${cssId(drag.id)}"]`).forEach(g => g.setAttribute('transform', `translate(${drag.dx} ${drag.dy})`));
+    } else if (drag.type === 'seg') {
+      const Q = drag.Q.map(p => p.slice()), d = drag.horiz ? snap(dy) : snap(dx);
+      for (const j of [drag.k, drag.k + 1]) { if (drag.horiz) Q[j][1] += d; else Q[j][0] += d; }
+      drag.now = Q;
+      setPts(drag.id, Q);
+    }
+  });
+  const end = () => {
+    if (!drag) return;
+    const d = drag; drag = null;
+    svgEl.classList.remove('sh-panning');
+    if (!d.moved || d.type === 'pan') return;
+    remember();
+    if (d.type === 'item') {
+      const a = added(d.id);
+      if (a) { a.x += d.dx; a.y += d.dy; }
+      else {
+        const m = edPart('move'), o = m[d.id] || [0, 0];
+        m[d.id] = [o[0] + d.dx, o[1] + d.dy];
+        /* a lead label moved: a lead that was re-routed by hand keeps meeting it */
+        const lead = $('sh-g').querySelector(`polyline[data-end="${cssId(d.id)}"]`);
+        const path = lead && ed(false).path && ed(false).path[lead.dataset.id];
+        if (path) {
+          const n = path.length;
+          if (n >= 4 && Math.abs(path[n - 4] - path[n - 2]) < 1e-6) path[n - 4] += d.dx;
+          path[n - 2] += d.dx; path[n - 1] += d.dy;
+        }
+      }
+    } else if (d.type === 'seg' && d.now) {
+      edPart('path')[d.id] = clean(d.now).flat().map(v => Math.round(v * 1000) / 1000);
+    }
+    save(); render();
+  };
+  svgEl.addEventListener('pointerup', end);
+  svgEl.addEventListener('pointercancel', end);
+  svgEl.addEventListener('dblclick', () => { const ta = $('ed-text'); if (ta) { ta.focus(); ta.select(); } });
+
+  /* ---- keys ---- */
+  const keys = ev => {
+    if (!$('sh-stage')) { document.removeEventListener('keydown', keys); return; }
+    if (/INPUT|TEXTAREA|SELECT/.test((ev.target && ev.target.tagName) || '')) return;
+    if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === 'z') { ev.preventDefault(); undo(); return; }
+    if (ev.ctrlKey || ev.metaKey) return;
+    if (ev.key === 'Delete' || ev.key === 'Backspace') { if (sel) { ev.preventDefault(); del(); } return; }
+    if (ev.key === 'Escape') { sel = null; markSel(); showSel(); return; }
+    if (ev.key === 'PageUp') { ev.preventDefault(); go(cur - 1); return; }
+    if (ev.key === 'PageDown') { ev.preventDefault(); go(cur + 1); return; }
+    if (ev.key === '+' || ev.key === '=') { zoomTo(zoom * 1.5); return; }
+    if (ev.key === '-') { zoomTo(zoom / 1.5); return; }
+    if (ev.key === '0') { $('sh-zoom-fit').onclick(); return; }
+    const step = ev.shiftKey ? 5 : 0.5;
+    const dir = { ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, step], ArrowDown: [0, -step] }[ev.key];
+    if (dir && sel && sel.kind !== 'lead') {
+      ev.preventDefault();
+      remember();
+      const a = added(sel.id);
+      if (a) { a.x += dir[0]; a.y += dir[1]; }
+      else { const m = edPart('move'), o = m[sel.id] || [0, 0]; m[sel.id] = [o[0] + dir[0], o[1] + dir[1]]; }
+      save(); render();
+    }
+  };
+  document.addEventListener('keydown', keys);
+
+  render(); applyZoom(); showSel();
+  wfResizableSide(document.querySelector('.sh-body'));
+  new ResizeObserver(() => applyZoom()).observe($('sh-stage'));
+}
+
 /* ================= ELECTRICAL DIAGRAM: SYSTEM SETUP =================
  * What the sheets are drawn from: the banks (one MSM each), each bank's ACDP and SSCs,
  * the rack every part is in, and the customer connections in use. Every answer is the
@@ -797,9 +1197,9 @@ async function renderElecPage(id) {
             <label>State<input data-sf="state" value="${esc(sheetInfo().state)}" placeholder="Issued for Review"></label>
             <label>Note<input data-sf="note" value="${esc(sheetInfo().note)}" placeholder="Initial Released"></label>
           </div>
-          <button class="btn btn-primary" id="el-export" ${setup.confirmed ? '' : 'disabled'}>Export PDF</button>
+          ${setup.confirmed ? `<a class="btn btn-primary" id="el-open" href="#/elecsheets/${project.id}">Open the sheets</a>` : '<button class="btn btn-primary" disabled>Open the sheets</button>'}
         </div>
-        <p class="muted small">${setup.confirmed ? `Exports every sheet above as one A3 PDF in AYK's DWG2527 format, titled "${esc(sheetInfo().title)}".` : 'Confirm the setup to export the PDF.'}</p>
+        <p class="muted small">${setup.confirmed ? `Check every sheet as it will print, move or edit anything you need, then export one A3 PDF in AYK's DWG2527 format ("${esc(sheetInfo().title)}") from there.` : 'Confirm the setup to open the sheets.'}</p>
         <details class="el-notes-edit">
           <summary>Notes on the sheets <span class="muted small">(start as AYK's DWG2527 text; edit them for this project)</span></summary>
           ${[[1, 'Sheet 1: MSM back notes'], [2, 'Sheet 2: inline connectors'], ['bank', 'Bank sheets (every MSM, ACDP, SSC and junction box sheet)']].map(([sh, head]) => `
@@ -824,14 +1224,7 @@ async function renderElecPage(id) {
   }
 
   /* title block of the exported sheets (kept with the setup) */
-  function sheetInfo() {
-    const i = setup.sheetInfo = Object.assign({ docNumber: '', rev: '0', drawnBy: '', checkedBy: '', state: 'Issued for Review', note: 'Initial Released' }, setup.sheetInfo || {});
-    const d = new Date();
-    return Object.assign({}, i, {
-      title: `${folder ? folder.number + ' ' : ''}Battery System Electrical Connection Diagram`,
-      date: d.getFullYear() + '.' + String(d.getMonth() + 1).padStart(2, '0') + '.' + String(d.getDate()).padStart(2, '0'),
-    });
-  }
+  function sheetInfo() { return elecSheetInfoOf(setup, folder); }
   function setPath(obj, path, v) { const k = path.split('.'); let o = obj; while (k.length > 1) o = o[k.shift()]; o[k[0]] = v; }
   function wire() {
     body.querySelectorAll('[data-bank] [data-acdp]').forEach(inp => inp.onchange = () => {
@@ -909,22 +1302,6 @@ async function renderElecPage(id) {
       if (again) again.open = true;
       window.scrollTo(0, y);
     });
-    document.getElementById('el-export').onclick = async ev => {
-      const btn = ev.currentTarget;
-      if (!setup.confirmed) return;
-      btn.disabled = true; btn.textContent = 'Building the PDF…';
-      try {
-        const lib = await elecPartsLoad();
-        const info = sheetInfo();
-        const bytes = await elecPdf(setup, lib, info);
-        const name = `${info.docNumber ? info.docNumber + ' ' : ''}${info.title}.pdf`.replace(/[\\/:*?"<>|]+/g, '-');
-        download(name, bytes, 'application/pdf');
-        toast(`Exported ${elecSheets(setup).length} sheets.`);
-      } catch (e) {
-        console.error('Electrical PDF failed', e);
-        toast('Could not build the PDF: ' + e.message, 'error');
-      } finally { btn.disabled = false; btn.textContent = 'Export PDF'; }
-    };
     document.getElementById('el-confirm').onclick = () => {
       if (!elecReady(setup)) return;
       setup.confirmed = true; setup.confirmedAt = new Date().toISOString(); save(); draw();

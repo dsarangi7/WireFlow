@@ -40,6 +40,97 @@ const ELEC_CABLES = {
   fan: { color: '#9a3412', label: 'SSC_Cooling_Fan_Power: 0.3/0.5kV 3*0.823mm², OD 5-9mm' },
 };
 
+/* line styles: dashed = between racks, through an inline connector; dotted = the customer's
+   own cable (customer side of an inline connector, AC power in, the main power cables) */
+const ELEC_DASH = [1.6, 1.1], ELEC_DOT = [0, 0.9];
+/* every inline connector on the sheets is one size, drawn from AYK's P1562 (11.18 x 34.56) */
+const ELEC_PLUG = { w: 3.6, h: 11.2 };
+/* every part's name tag is one size, centred on its part */
+const ELEC_TAG_SIZE = 3.4;
+let elecInlineView = null;   /* the P1562 inline connector drawing, set by elecDraw */
+
+/* ---------- editing ----------
+ * The sheet editor and the PDF draw through the same edit target, so the PDF is exactly what
+ * the engineer saw. setup.edits[elecSheetKey(sheet)] = {
+ *   move: { id: [dx, dy] }   an item moved (mm)
+ *   hide: { id: true }       an item deleted
+ *   path: { id: [x, y, …] }  a lead re-routed (its whole polyline)
+ *   text: { id: text }       an item's words changed (AYK notes change setup.notes instead)
+ *   add:  [{ id, kind: 'note' | 'tag' | 'text', text, x, y, w }]  items the engineer added }
+ * Items are drawn between doc.begin(id, kind, text) and doc.end() (elecItem); a lead carries
+ * its id in its style ({ id, end: the id of the label at its far end }). */
+function elecSheetKey(sh) { return [sh.kind, sh.bank || '', (sh.items || []).join(','), sh.kind === 'notes' ? sh.n : ''].join('|'); }
+
+/** Draws one editable item: draw(text) gets the item's text (edited or not). */
+function elecItem(doc, id, kind, text, draw, same) {
+  const t = doc.begin ? doc.begin(id, kind, text, same) : text;
+  try { return draw(t == null ? text : t, doc.lastId || id); } finally { if (doc.end) doc.end(); }
+}
+
+/** Wraps a drawing target (pdfDoc, or the editor's SVG target) with one sheet's edits. */
+function elecEditTarget(inner, ed, interactive) {
+  ed = ed || {};
+  const mv = ed.move || {}, hide = ed.hide || {}, path = ed.path || {}, txt = ed.text || {};
+  const seen = {}, stack = [];
+  let dx = 0, dy = 0, hidden = 0;
+  const flat = p => (Array.isArray(p[0]) ? p.flat() : p.slice());
+  const api = {
+    lastId: null,
+    begin(id, kind, text, same) {
+      /* the same words twice on a sheet (two "EW-P25, 4 Pin" tags) get their own ids */
+      if (!same) { seen[id] = (seen[id] || 0) + 1; if (seen[id] > 1) id = id + '#' + seen[id]; }
+      api.lastId = id;
+      const open = interactive && inner.group && !hidden && !hide[id];
+      stack.push([dx, dy, hidden, open]);
+      const o = mv[id];
+      if (o) { dx += o[0]; dy += o[1]; }
+      if (hide[id]) hidden++;
+      const shown = Object.prototype.hasOwnProperty.call(txt, id) ? txt[id] : text;
+      if (open) inner.group(true, { cls: 'el-item', data: { id: id, kind: kind, text: shown == null ? '' : shown } });
+      return shown;
+    },
+    end() { const s = stack.pop(); if (s[3]) inner.group(false); dx = s[0]; dy = s[1]; hidden = s[2]; },
+    poly(p, o) {
+      if (hidden) return api;
+      o = o || {};
+      let q = flat(p);
+      if (o.id) {
+        if (hide[o.id]) return api;
+        if (path[o.id]) q = path[o.id].slice();
+        else if (o.end && mv[o.end]) {
+          /* its label was moved: the last leg follows */
+          const e = mv[o.end], n = q.length;
+          if (n >= 4 && Math.abs(q[n - 4] - q[n - 2]) < 1e-6) q[n - 4] += e[0];
+          q[n - 2] += e[0]; q[n - 1] += e[1];
+        }
+        if (interactive) o = Object.assign({}, o, { cls: 'el-lead', data: { id: o.id, kind: 'lead', end: o.end || '' }, hit: true });
+      } else if (o.pin) { q[0] += dx; q[1] += dy; }       /* a leader: its far end stays on the port */
+      else for (let i = 0; i < q.length; i += 2) { q[i] += dx; q[i + 1] += dy; }
+      inner.poly(q, o);
+      return api;
+    },
+    line(x1, y1, x2, y2, o) { return api.poly([x1, y1, x2, y2], o); },
+    rect(x, y, w, h, o) { if (!hidden) inner.rect(x + dx, y + dy, w, h, o); return api; },
+    circle(cx, cy, r, o) { if (!hidden) inner.circle(o && o.pin ? cx : cx + dx, o && o.pin ? cy : cy + dy, r, o); return api; },
+    text(t, x, y, o) { if (!hidden) inner.text(t, x + dx, y + dy, o); return api; },
+    image(src, pw, ph, x, y, w, h) { if (!hidden) inner.image(src, pw, ph, x + dx, y + dy, w, h); return api; },
+  };
+  if (typeof inner.svg === 'function') api.svg = () => inner.svg();
+  if (inner.group) api.group = (open, o) => { inner.group(open, o); return api; };
+  return api;
+}
+
+/** The items the engineer added to a sheet. */
+function elecAdded(doc, ed) {
+  for (const a of (ed && ed.add) || []) {
+    elecItem(doc, a.id, 'added-' + a.kind, a.text, t => {
+      if (a.kind === 'tag') elecTag(doc, t, a.x, a.y, ELEC_TAG_SIZE, true);
+      else if (a.kind === 'text') doc.text(t, a.x, a.y, { size: a.size || 2.4, color: ELEC_INK });
+      else elecNoteBox(doc, t, a.x, a.y, a.w || 60, { size: a.size || 2.2, raw: true });
+    }, true);
+  }
+}
+
 /** SVG path data of a part view ("M x y L x y … Z") as polylines. */
 function elecPathPolys(d) {
   const polys = [];
@@ -81,12 +172,30 @@ function elecDrawPart(doc, view, box, o) {
 }
 
 /** Yellow name tag (bottom-left at x, y); returns its width. */
-function elecTag(doc, text, x, y, size) {
-  size = size || 3.2;
-  const w = pdfTextWidth(text, size, true) + 4, h = size + 2.4;
-  doc.rect(x, y, w, h, { fill: ELEC_TAG, stroke: false });
-  doc.text(text, x + 2, y + 1.3, { size: size, bold: true, color: ELEC_INK });
-  return w;
+function elecTag(doc, text, x, y, size, raw) {
+  size = size || ELEC_TAG_SIZE;
+  const draw = t => {
+    const w = pdfTextWidth(t, size, true) + 4, h = size + 2.4;
+    doc.rect(x, y, w, h, { fill: ELEC_TAG, stroke: false });
+    doc.text(t, x + 2, y + 1.3, { size: size, bold: true, color: ELEC_INK });
+    return w;
+  };
+  return raw ? draw(text) : elecItem(doc, 'tag:' + text, 'tag', text, draw);
+}
+
+/** A part's name tag, centred over the part as drawn (box from elecDrawPart), 2.5 mm clear of
+    it; slid sideways, nearest first, off any lead that drops into the part at avoidX. */
+function elecPartTag(doc, text, box, below, avoidX) {
+  const w = pdfTextWidth(text, ELEC_TAG_SIZE, true) + 4, h = ELEC_TAG_SIZE + 2.4;
+  const y = below ? box[1] - 2.5 - h : box[1] + box[3] + 2.5;
+  const free = x => !(avoidX || []).some(a => a > x - 1.5 && a < x + w + 1.5);
+  let x = box[0] + box[2] / 2 - w / 2;
+  for (let k = 1; !free(x) && k <= 2 * (box[2] + w); k++) {
+    const t = box[0] + box[2] / 2 - w / 2 + (k % 2 ? -1 : 1) * Math.ceil(k / 2) * 0.5;
+    if (free(t)) { x = t; break; }
+  }
+  elecTag(doc, text, x, y, ELEC_TAG_SIZE);
+  return { x: x, y: y, w: w, h: h };
 }
 
 /** Text broken into lines that fit `width` mm (keeps the author's line breaks). */
@@ -110,40 +219,62 @@ function elecWrap(text, width, size, bold) {
 /** A note box (cyan by default) with its top-left corner at x, top; returns its box. */
 function elecNoteBox(doc, text, x, top, w, o) {
   o = o || {};
-  const size = o.size || 2.2, lh = size * 1.32, pad = 1.2;
-  const lines = elecWrap(text, w - 2 * pad, size, o.bold);
-  const h = lines.length * lh + 2 * pad - (lh - size) + 0.6;
-  if (o.fill !== false) doc.rect(x, top - h, w, h, { fill: o.fill || ELEC_CYAN, stroke: false });
-  lines.forEach((l, i) => doc.text(l, o.align === 'center' ? x + w / 2 : x + pad, top - pad - size - i * lh + 0.3, { size: size, color: ELEC_INK, bold: o.bold, align: o.align }));
-  return { x: x, y: top - h, w: w, h: h, top: top };
+  const draw = (text, id) => {
+    const size = o.size || 2.2, lh = size * 1.32, pad = 1.2;
+    const lines = elecWrap(text, w - 2 * pad, size, o.bold);
+    const h = lines.length * lh + 2 * pad - (lh - size) + 0.6;
+    if (o.fill !== false) doc.rect(x, top - h, w, h, { fill: o.fill || ELEC_CYAN, stroke: false });
+    if (o.frame) doc.rect(x, top - h, w, h, { color: o.frame, w: 0.3 });
+    lines.forEach((l, i) => doc.text(l, o.align === 'center' ? x + w / 2 : x + pad, top - pad - size - i * lh + 0.3, { size: size, color: ELEC_INK, bold: o.bold, align: o.align }));
+    return { x: x, y: top - h, w: w, h: h, top: top, id: id };
+  };
+  /* an AYK note (o.id "note:…") is edited in the project's notes; any other box keeps its own words */
+  return o.raw ? draw(text, null) : elecItem(doc, o.id || 'box:' + String(text).slice(0, 60), o.id ? 'note' : 'box', text, draw);
 }
 
 /** Thin leader from a note box to a point (from the box side nearest the point). */
 function elecLeader(doc, box, px, py, color) {
   const cx = Math.max(box.x, Math.min(box.x + box.w, px)), cy = Math.max(box.y, Math.min(box.y + box.h, py));
-  doc.line(cx, cy, px, py, { color: color || '#22d3ee', w: 0.2 });
-  doc.circle(px, py, 0.5, { fill: color || '#22d3ee', stroke: false });
+  /* drawn with its box (moves and goes with it); the end on the port stays put */
+  const draw = () => {
+    doc.line(cx, cy, px, py, { color: color || '#22d3ee', w: 0.2, pin: true });
+    doc.circle(px, py, 0.5, { fill: color || '#22d3ee', stroke: false, pin: true });
+  };
+  if (box.id && doc.begin) elecItem(doc, box.id, 'leader', null, draw, true); else draw();
 }
 
-/** Inline connector symbol: two halves, centred on x, top at y. */
-function elecPlug(doc, x, top, w, h, color) {
-  doc.rect(x - w / 2, top - h, w, h, { color: color || '#334155', w: 0.25 });
-  doc.line(x - w / 2, top - h / 2, x + w / 2, top - h / 2, { color: color || '#334155', w: 0.25 });
-  for (const f of [0.25, 0.75]) doc.line(x - w / 2 + 0.6, top - h * f, x + w / 2 - 0.6, top - h * f, { color: '#94a3b8', w: 0.15 });
+/** Inline connector, centred on x, top at y: AYK's P1562 drawing, the same size on every
+    sheet (ELEC_PLUG); two halves in a box when the library has no drawing. Optional label
+    lines are written across its middle on a white ground. */
+function elecPlug(doc, x, top, lines) {
+  const { w, h } = ELEC_PLUG;
+  if (elecInlineView) elecDrawPart(doc, elecInlineView, [x - w / 2, top - h, w, h], { portNames: false, lw: 0.08 });
+  else {
+    doc.rect(x - w / 2, top - h, w, h, { color: '#334155', w: 0.25 });
+    doc.line(x - w / 2, top - h / 2, x + w / 2, top - h / 2, { color: '#334155', w: 0.25 });
+  }
+  (lines || []).forEach((t, i, all) => {
+    const size = 1.15, y = top - h / 2 + (all.length - 1) * 0.8 - i * 1.6 - 0.4;
+    const tw = pdfTextWidth(t, size, true);
+    doc.rect(x - tw / 2 - 0.3, y - 0.3, tw + 0.6, size + 0.5, { fill: '#ffffff', stroke: false });
+    doc.text(t, x, y, { size: size, bold: true, align: 'center', color: ELEC_INK });
+  });
+  return h;
 }
 
 /** Cable break (customer side): a short zigzag in a vertical lead at x around y. */
 function elecBreak(doc, x, y, color, dash) {
-  doc.poly([x, y + 3, x, y + 1.2, x - 1.4, y + 0.4, x + 1.4, y - 0.4, x, y - 1.2, x, y - 3], { color: color, w: 0.35 });
+  doc.poly([x, y + 3, x, y + 1.2, x - 1.4, y + 0.4, x + 1.4, y - 0.4, x, y - 1.2, x, y - 3], { color: color, w: 0.35, dash: dash === undefined ? ELEC_DOT : dash });
 }
 
 /** The end of a lead that leaves the sheet: connector, then its label reading upwards. */
 function elecEnd(doc, x, y, color, text) {
-  const plugH = 7;
-  elecPlug(doc, x, y, 2.4, plugH, '#334155');
-  const w = pdfTextWidth(text, 2, false);
-  doc.text(text, x + 3.2, y - w - 0.5, { size: 2, rot: 90, color: ELEC_INK });
-  return y - Math.max(plugH, w + 0.5);
+  return elecItem(doc, 'end:' + text, 'end', text, t => {
+    const plugH = elecPlug(doc, x, y);
+    const w = pdfTextWidth(t, 2, false);
+    doc.text(t, x + ELEC_PLUG.w / 2 + 1.9, y - w - 0.5, { size: 2, rot: 90, color: ELEC_INK });
+    return y - Math.max(plugH, w + 0.5);
+  });
 }
 
 /** The frame, header, "For Review" and AYK's title block of one sheet. */
@@ -183,8 +314,15 @@ function elecFrame(doc, sheet, info) {
   doc.line(right, t.y + 6, t.x + t.w, t.y + 6, { color: ELEC_INK, w: 0.2 });
   doc.line(t.x + t.w - 9, t.y, t.x + t.w - 9, t.y + 12, { color: ELEC_INK, w: 0.2 });
   doc.line(right + 22, t.y, right + 22, t.y + 6, { color: ELEC_INK, w: 0.2 });
-  doc.text('Shenzhen Anyikong Power', right + rw / 2, t.y + 37.2, { size: 2, align: 'center' });
-  doc.text('Technology Co., Ltd.', right + rw / 2, t.y + 34.4, { size: 2, align: 'center' });
+  /* company cell: AYK logo at the left, the name beside it */
+  let nameX = right + rw / 2;
+  if (info.logo) {
+    const lh = 9.6, lw = lh * info.logo.w / info.logo.h;
+    doc.image(typeof doc.svg === 'function' ? info.logo.src : info.logo.bytes, info.logo.w, info.logo.h, right + 2.5, t.y + 31.2, lw, lh);
+    nameX = right + 2.5 + lw + (rw - 2.5 - lw) / 2;
+  }
+  doc.text('Shenzhen Anyikong Power', nameX, t.y + 37.2, { size: 2, align: 'center' });
+  doc.text('Technology Co., Ltd.', nameX, t.y + 34.4, { size: 2, align: 'center' });
   doc.text('TITLE', right + 1.5, t.y + 27, { size: 1.8 });
   elecWrap(info.title || '', rw - 6, 2.2).slice(0, 3).forEach((l, i) => doc.text(l, right + rw / 2, t.y + 22.8 - i * 2.9, { size: 2.2, align: 'center' }));
   doc.text('Doc No: ' + (info.docNumber || '-'), right + 1.5, t.y + 8, { size: 2 });
@@ -228,12 +366,12 @@ function elecEndsOn(links, sheetOf, part, name, ports, word) {
   }
   return ends;
 }
-const elecDashOf = e => (e.dash ? [1.6, 1.1] : null);
+const elecDashOf = e => (e.dash ? ELEC_DASH : null);
 
 /** Leads straight down from each port to a connector and its label at endY. */
 function elecDropLeads(doc, ends, endY) {
   for (const e of ends) {
-    doc.poly([e.x, e.y - e.r, e.x, endY], { color: e.color, w: 0.35, dash: elecDashOf(e) });
+    doc.poly([e.x, e.y - e.r, e.x, endY], { color: e.color, w: 0.35, dash: elecDashOf(e), id: 'lead:' + e.text, end: 'end:' + e.text });
     elecEnd(doc, e.x, endY, e.color, e.text);
   }
 }
@@ -262,7 +400,7 @@ function elecNestedLeads(doc, ends, side, col0, step, endY, laneGap) {
       /* the lead that crosses over its row-mates runs on the lane farthest from the row */
       const lane = side === 'left' ? e.y - e.r - 1.4 - k * laneGap : e.y + e.r + 1.4 + (row.length - 1 - k) * laneGap;
       const col = side === 'left' ? col0 + i * step : col0 - i * step;
-      doc.poly([e.x, side === 'left' ? e.y - e.r : e.y + e.r, e.x, lane, col, lane, col, endY], { color: e.color, w: 0.35, dash: elecDashOf(e) });
+      doc.poly([e.x, side === 'left' ? e.y - e.r : e.y + e.r, e.x, lane, col, lane, col, endY], { color: e.color, w: 0.35, dash: elecDashOf(e), id: 'lead:' + e.text, end: 'end:' + e.text });
       elecEnd(doc, col, endY, e.color, e.text);
       i++;
     });
@@ -273,16 +411,14 @@ function elecNestedLeads(doc, ends, side, col0, step, endY, laneGap) {
 function elecAcIn(doc, ends, boxTop, setup) {
   const ac = ends.filter(e => /^ac-in/.test(e.cable)).sort((a, b) => a.x - b.x);
   if (!ac.length) return null;
-  const x0 = ac[0].x - 6, x1 = ac[ac.length - 1].x + 6, boxH = 16;
+  const x0 = ac[0].x - 6, x1 = ac[ac.length - 1].x + 6, boxH = ELEC_PLUG.h + 3;
   doc.rect(x0, boxTop - boxH, x1 - x0, boxH, { color: '#e11d1d', w: 0.35 });
   for (const e of ac) {
     doc.poly([e.x, e.y - e.r, e.x, boxTop - 1.5], { color: e.color, w: 0.35 });
-    elecPlug(doc, e.x, boxTop - 1.5, 7.5, boxH - 3, '#64748b');
-    doc.text('ACDP', e.x, boxTop - 5.2, { size: 1.3, align: 'center' });
-    doc.text('POWER ' + e.port.slice(-1), e.x, boxTop - 7.6, { size: 1.3, align: 'center' });
-    doc.poly([e.x, boxTop - boxH + 1.5, e.x, boxTop - boxH - 6], { color: e.color, w: 0.35, dash: [1.6, 1.1] });
+    elecPlug(doc, e.x, boxTop - 1.5, ['ACDP', 'POWER', e.port.slice(-1)]);
+    doc.poly([e.x, boxTop - boxH + 1.5, e.x, boxTop - boxH - 6], { color: e.color, w: 0.35, dash: ELEC_DOT });
     elecBreak(doc, e.x, boxTop - boxH - 9, e.color);
-    doc.line(e.x, boxTop - boxH - 12, e.x, boxTop - boxH - 15, { color: e.color, w: 0.35 });
+    doc.line(e.x, boxTop - boxH - 12, e.x, boxTop - boxH - 15, { color: e.color, w: 0.35, dash: ELEC_DOT });
   }
   const tagTop = boxTop - boxH - 15, mid = (x0 + x1) / 2;
   const tag = elecNoteBox(doc, '230VAC Control Power Inlet For Battery Servicing', mid - 17, tagTop, 34, { fill: ELEC_TAG, size: 2.3, align: 'center' });
@@ -292,10 +428,9 @@ function elecAcIn(doc, ends, boxTop, setup) {
 /** The panel callout: TN0089 note and the rack's signal inter-connection panel. */
 function elecPanelNote(doc, setup, rack, x, top, w) {
   const n = elecNote(setup, 'panel');
-  const b = n.trim() ? elecNoteBox(doc, n, x, top, w, { size: 1.9, align: 'center' }) : { x: x, y: top, w: w, h: 0 };
+  const b = n.trim() ? elecNoteBox(doc, n, x, top, w, { size: 1.9, align: 'center', id: 'note:panel' }) : { x: x, y: top, w: w, h: 0 };
   const name = (rack ? rack + ' ' : '') + 'Signal Inter Connection Panel';
-  const t = elecNoteBox(doc, name, x, b.y, w, { fill: false, size: 1.9, align: 'center' });
-  doc.rect(t.x, t.y, t.w, t.h, { color: '#cbd5e1', w: 0.2 });
+  const t = elecNoteBox(doc, name, x, b.y, w, { fill: false, frame: '#cbd5e1', size: 1.9, align: 'center' });
   return { x: x, y: t.y, w: w, h: top - t.y };
 }
 
@@ -303,12 +438,13 @@ function elecPanelNote(doc, setup, rack, x, top, w) {
 
 /** Sheet 1: the MSM back with AYK's notes pointing at its ports. */
 function elecNotesMsm(doc, setup, view) {
-  const msm = view('msm', 'back');
+  /* the project's MSM: the first bank's model */
+  const msm = view(elecMsmDrawing(setup.banks[0]), 'back') || view('msm', 'back');
   if (!msm) return;
-  elecTag(doc, 'MSM Back', 176, 172, 3.6);
   const d = elecDrawPart(doc, msm, [120, 62, 150, 106], { nameSize: 2 });
+  elecPartTag(doc, 'MSM Back', d.box);
   const P = n => d.ports[n];
-  const note = (id, x, top, w, size) => { const t = elecNote(setup, id); return t.trim() ? elecNoteBox(doc, t, x, top, w, { size: size || 2.2 }) : null; };
+  const note = (id, x, top, w, size) => { const t = elecNote(setup, id); return t.trim() ? elecNoteBox(doc, t, x, top, w, { size: size || 2.2, id: 'note:' + id }) : null; };
   const comm = note('comm', 22, 150, 80);
   if (comm && P('SSC1P')) elecLeader(doc, comm, P('SSC1P').x, P('SSC1P').y);
   const cloud = note('cloud', 30, 205, 70);
@@ -319,82 +455,112 @@ function elecNotesMsm(doc, setup, view) {
   if (dry && P('Dry Contact')) elecLeader(doc, dry, P('Dry Contact').x, P('Dry Contact').y);
   const rem = note('remoteE', 276, 276, 104, 1.9);
   if (rem && P('RemoteE')) elecLeader(doc, rem, P('RemoteE').x, P('RemoteE').y);
-  /* Figure 1: the customer's E-stop loop */
-  const fx = 384, fy = 276;
-  doc.rect(fx, fy - 34, 24, 34, { color: '#22d3ee', w: 0.25 });
-  doc.text('RemoteE', fx + 2, fy - 4, { size: 1.6 });
-  doc.text('Resistor network', fx + 2, fy - 7, { size: 1.6 });
-  doc.line(fx + 4, fy - 12, fx + 4, fy - 28, { color: ELEC_INK, w: 0.25 });
-  doc.line(fx + 20, fy - 12, fx + 20, fy - 28, { color: ELEC_INK, w: 0.25 });
-  doc.line(fx + 4, fy - 12, fx + 9, fy - 12, { color: ELEC_INK, w: 0.25 });
-  doc.poly([fx + 9, fy - 12, fx + 10, fy - 11, fx + 11, fy - 13, fx + 12, fy - 11, fx + 13, fy - 13, fx + 14, fy - 12, fx + 20, fy - 12], { color: ELEC_INK, w: 0.25 });
-  doc.text('1k series', fx + 9, fy - 15, { size: 1.4 });
-  doc.line(fx + 4, fy - 28, fx + 8, fy - 28, { color: ELEC_INK, w: 0.25 });
-  doc.line(fx + 8, fy - 28, fx + 12, fy - 26, { color: ELEC_INK, w: 0.25 });
-  doc.line(fx + 13, fy - 28, fx + 20, fy - 28, { color: ELEC_INK, w: 0.25 });
-  doc.text('NC E-stop', fx + 7, fy - 31, { size: 1.4 });
-  doc.poly([fx + 16, fy - 12, fx + 16, fy - 17, fx + 15, fy - 18, fx + 17, fy - 19, fx + 15, fy - 20, fx + 17, fy - 21, fx + 16, fy - 22, fx + 16, fy - 28], { color: ELEC_INK, w: 0.25 });
-  doc.text('10k', fx + 17.5, fy - 20.5, { size: 1.4 });
-  elecTag(doc, 'Figure 1', fx + 6, fy - 39, 1.8);
+  elecItem(doc, 'figure1', 'figure', null, () => elecFigure1(doc, 292, 118));
+  /* the cable legend, bottom left (the sheet's empty corner) */
+  const lg = elecItem(doc, 'legend', 'legend', null, () => elecLegend(doc, 15, 112, 104));
   const extra = elecNote(setup, 'extra');
-  if (extra.trim()) elecNoteBox(doc, extra, 22, 100, 90, { size: 2.2, fill: '#fef9c3' });
+  if (extra.trim()) elecNoteBox(doc, extra, 15, lg.y - 3, 104, { size: 2.2, fill: '#fef9c3', id: 'note:extra' });
 }
 
-/** Sheet 2: inline connectors, cable legend, wiring instructions. */
-function elecNotesInline(doc, setup) {
-  /* legend, top right */
-  const L = Object.values(ELEC_CABLES);
-  const lx = 300, top = 284, lh = 4.2;
-  doc.rect(lx - 2, top - L.length * lh - 6, 112, L.length * lh + 6, { color: ELEC_INK, w: 0.3 });
-  L.forEach((c, i) => {
-    const y = top - 3 - i * lh;
-    doc.line(lx, y, lx + 8, y, { color: c.color, w: 0.6 });
-    doc.text(c.label, lx + 10, y - 0.8, { size: 1.9 });
+/** The cable legend (DWG2527): colour per cable, then dashed and dotted. Top-left at x, top. */
+function elecLegend(doc, x, top, w) {
+  const L = Object.values(ELEC_CABLES), lh = 4.2;
+  const rows = L.map(c => [c.label, { color: c.color, w: 0.6 }])
+    .concat([['Dashed: between racks, through an inline connector', { color: ELEC_INK, w: 0.4, dash: ELEC_DASH }],
+      ['Dotted: the customer\'s own cable (customer side)', { color: ELEC_INK, w: 0.5, dash: ELEC_DOT }]]);
+  const h = rows.length * lh + 3;
+  doc.rect(x, top - h, w, h, { color: ELEC_INK, w: 0.3 });
+  rows.forEach(([label, st], k) => {
+    const y = top - 3 - k * lh;
+    doc.line(x + 2, y, x + 10, y, st);
+    doc.text(label, x + 12, y - 0.7, { size: 1.9 });
   });
-  const dy = top - 3 - L.length * lh;
-  doc.line(lx, dy, lx + 8, dy, { color: ELEC_INK, w: 0.4, dash: [1.6, 1.1] });
-  doc.text('Dashed: between racks, through an inline connector (customer cable)', lx + 10, dy - 0.8, { size: 1.9 });
-  /* the inline connector groups (DWG2527 sheet 2) */
+  return { x: x, y: top - h, w: w, h: h };
+}
+
+/** Figure 1 (DWG2527 sheet 1): the customer's remote E-stop with AYK's resistor network,
+    1k in series and 10k across. Lower-left corner at fx, fy; about 92 x 52 mm. */
+function elecFigure1(doc, fx, fy) {
+  const ink = { color: ELEC_INK, w: 0.35 };
+  const top = fy + 40, bot = fy + 14, ex = fx + 12, ey = fy + 27;
+  /* the E-stop: yellow housing, red mushroom head */
+  doc.rect(ex - 8, ey - 8, 16, 16, { fill: '#facc15', color: '#a16207', w: 0.3 });
+  doc.circle(ex, ey, 6, { fill: '#dc2626', color: '#7f1d1d', w: 0.3 });
+  doc.circle(ex, ey, 3.6, { color: '#fecaca', w: 0.35 });
+  doc.circle(ex, ey, 1.2, { fill: '#7f1d1d', stroke: false });
+  /* the resistor network */
+  const bx = fx + 44, bw = 44;
+  doc.rect(bx, fy + 8, bw, 38, { fill: '#eef5e4', color: '#64748b', w: 0.3 });
+  /* wires: E-stop to the network, top through 1k, bottom straight */
+  doc.poly([ex, ey + 8, ex, top, bx + 20, top], ink);
+  doc.poly([bx + 20, top, bx + 21, top + 1.4, bx + 23, top - 1.4, bx + 25, top + 1.4, bx + 27, top - 1.4, bx + 29, top + 1.4, bx + 30, top, bx + bw, top], ink);
+  doc.poly([ex, ey - 8, ex, bot, bx + bw, bot], ink);
+  /* 10k across the two */
+  const rx = bx + 9, mid = (top + bot) / 2;
+  doc.poly([rx, top, rx, mid + 5, rx + 1.4, mid + 4, rx - 1.4, mid + 2, rx + 1.4, mid, rx - 1.4, mid - 2, rx + 1.4, mid - 4, rx, mid - 5, rx, bot], ink);
+  doc.circle(rx, top, 0.6, { fill: ELEC_INK, stroke: false });
+  doc.circle(rx, bot, 0.6, { fill: ELEC_INK, stroke: false });
+  doc.text('1K', bx + 25, top + 2.6, { size: 2.6, align: 'center' });
+  doc.text('10K', rx + 3, mid - 1, { size: 2.6 });
+  /* names under, with dashed leaders as the technote */
+  const lead = { color: '#64748b', w: 0.25, dash: [0.8, 0.8] };
+  doc.line(ex, ey - 9, ex - 3, fy + 3, lead);
+  doc.text('RemoteE', ex - 3, fy, { size: 2.6, align: 'center' });
+  doc.line(bx + bw - 6, fy + 8, bx + bw - 10, fy + 3, lead);
+  doc.text('Resistor Network', bx + bw - 10, fy, { size: 2.6, align: 'center' });
+  const tw = pdfTextWidth('Figure 1', 2.4, true) + 4;
+  elecTag(doc, 'Figure 1', fx + 46 - tw / 2, fy - 9, 2.4);
+}
+
+/** Sheet 2: inline connectors and the wiring instructions (the cable legend is on sheet 1). */
+function elecNotesInline(doc, setup, inline) {
+  /* the inline connectors, in the order and groups of AYK's P1562 (Rev.2), each drawn
+     from its part drawing (assets/elec/parts.json "inline") when the library has it */
   const groups = [
-    { frame: '#e11d1d', plugs: [['ACDP', 'POWER', 'P', 'ac-in-P'], ['ACDP', 'POWER', 'B', 'ac-in-B']], tag: 'Inline Connector EW-M25B, 3 pin\nPin1(Red): L\nPin2(Blue): N\nPin3(Yellow): G' },
-    { frame: '#7c3aed', plugs: [['Dry', 'Contact', '', 'dry-contact']], tag: 'Inline Connector EW-M25B, 3 Pins\nPin 1(Red)\nPin 2(Blue)' },
-    { frame: '#7c3aed', plugs: [['Remote', 'Estop', '', 'remote-estop']], tag: 'Inline Connector EW-P25, 4 Pin' },
-    { frame: '#e11d1d', plugs: [['SSC', 'POWER', 'P', 'power-P'], ['SSC', 'POWER', 'B', 'power-B']], tag: 'Inline Connector EW-M25B, 3 pin\nPin1(Red): L\nPin2(Blue): N\nPin3(Yellow): G' },
-    { frame: '#16a34a', plugs: [['SSC', 'Comm', '', 'comm']], tag: 'Inline connector RJ45' },
-    { frame: '#7c3aed', plugs: [['', 'Estop', '', 'estop']], tag: 'Inline Connector EW-P25, 4 Pin' },
+    { cable: 'ac-in-P', plugs: [['ACDP', 'POWER', 'B', 'ac-in-B'], ['ACDP', 'POWER', 'P', 'ac-in-P']], tag: 'Inline Connector\nEW-M25B, 3 Pin\nPin1(Red): L\nPin2(Blue): N\nPin3(Yellow): G' },
+    { cable: 'power-P', plugs: [['SSC', 'POWER', 'B', 'power-B'], ['SSC', 'POWER', 'P', 'power-P']], tag: 'Inline Connector\nEW-M25B, 3 Pin\nPin1(Red): L\nPin2(Blue): N\nPin3(Yellow): G' },
+    { cable: 'comm', plugs: [['SSC', 'Com.P', '', 'comm']], tag: 'Inline Connector\nRJ45' },
+    { cable: 'valve', plugs: [['Master', 'Valve', '', 'valve']], tag: 'Inline Connector\nEW-P25, 5 Pin' },
+    { cable: 'dry-contact', plugs: [['Dry', 'Contact', '', 'dry-contact']], tag: 'Inline Connector\nEW-M25B, 3 Pin\nPin1(Red)\nPin2(Blue)' },
+    { cable: 'remote-estop', plugs: [['Remote', 'Estop', '', 'remote-estop']], tag: 'Inline Connector\nEW-P25, 4 Pin' },
+    { cable: 'estop', plugs: [['', 'Estop', '', 'estop']], tag: 'Inline Connector\nEW-P25, 4 Pin' },
   ];
-  const y0 = 150, h = 34, plugW = 22, gap = 4;
-  let x = 52;
-  groups.forEach((g, gi) => {
+  const y0 = 150, h = 34, plugW = 22, gap = 3, x0 = 40;
+  let x = x0;
+  groups.forEach((g, gi) => elecItem(doc, 'inline:' + g.cable, 'group', null, () => {
     const w = g.plugs.length * plugW + 4;
-    doc.rect(x, y0, w, h, { color: g.frame, w: 0.45 });
+    doc.rect(x, y0, w, h, { color: ELEC_CABLES[g.cable].color, w: 0.45 });
     g.plugs.forEach((p, k) => {
       const cx = x + 2 + plugW / 2 + k * plugW, col = ELEC_CABLES[p[3]].color;
-      doc.rect(cx - 5, y0 + 3, 10, h - 6, { color: '#94a3b8', w: 0.25 });
-      doc.line(cx - 5, y0 + h / 2, cx + 5, y0 + h / 2, { color: '#94a3b8', w: 0.2 });
-      [p[0], p[1], p[2]].filter(Boolean).forEach((t, i) => doc.text(t, cx, y0 + h - 9 - i * 3.6, { size: 2, align: 'center' }));
+      if (inline) elecDrawPart(doc, inline, [cx - 6, y0 + 3, 12, h - 6], { portNames: false, lw: 0.1 });
+      else {
+        doc.rect(cx - 5, y0 + 3, 10, h - 6, { color: '#94a3b8', w: 0.25 });
+        doc.line(cx - 5, y0 + h / 2, cx + 5, y0 + h / 2, { color: '#94a3b8', w: 0.2 });
+      }
+      /* on the drawn connector: two lines between the upper nut and the middle band, the third (B/P) below it */
+      [p[0], p[1], p[2]].filter(Boolean).forEach((t, i) => doc.text(t, cx, inline ? y0 + [21.2, 18.7, 13.8][i] : y0 + h - 9 - i * 3.6, { size: inline ? 1.8 : 2, align: 'center', bold: true }));
       doc.line(cx, y0 + h, cx, y0 + h + 30, { color: col, w: 0.4 });
       doc.line(cx, y0, cx, y0 - 30, { color: col, w: 0.4 });
     });
-    const tag = elecNoteBox(doc, g.tag, x + w / 2 - 17, gi % 2 ? y0 - 37 : y0 + h + 58, 34, { fill: ELEC_TAG, size: 1.9, align: 'center' });
+    const tag = elecNoteBox(doc, g.tag, x + w / 2 - 12, gi % 2 ? y0 - 37 : y0 + h + 58, 24, { fill: ELEC_TAG, size: 1.8, align: 'center' });
     doc.line(x + w / 2, gi % 2 ? tag.top : tag.y, x + w / 2, gi % 2 ? y0 - 31 : y0 + h + 31, { color: '#94a3b8', w: 0.15 });
     x += w + gap;
-  });
-  doc.text('Rack side (AYK harness)', 52, y0 + h + 33, { size: 2, color: '#475569' });
-  doc.text('Customer side (customer makes this cable)', 52, y0 - 34, { size: 2, color: '#475569' });
+  }));
+  doc.text('Rack side (AYK harness)', x0, y0 + h + 33, { size: 2, color: '#475569' });
+  doc.text('Customer side (customer makes this cable)', x0, y0 - 34, { size: 2, color: '#475569' });
   /* the wiring instructions (editable), bottom left */
   const t = elecNote(setup, 'inline');
-  if (t.trim()) {
-    const b = elecNoteBox(doc, t, 15, 92, 178, { size: 1.75, fill: false });
-    doc.rect(b.x, b.y, b.w, b.h, { color: '#22d3ee', w: 0.3 });
-  }
+  if (t.trim()) elecNoteBox(doc, t, 15, 92, 178, { size: 1.75, fill: false, frame: '#22d3ee', id: 'note:inline' });
 }
 
 /** Bank: the MSM back (top) and the bank's first ACDP (bottom left), routed as DWG2527. */
 function elecMsmSheet(doc, setup, b, sh, ctx) {
-  const v = ctx.view('msm', 'back');
-  elecTag(doc, `${b.msm.name} Back`, 196, 250, 3.4);
+  const v = ctx.view(elecMsmDrawing(b), 'back');
   const d = elecDrawPart(doc, v, [150, 166, 126, 82], { nameSize: 1.6 });
+  elecPartTag(doc, `${b.msm.name} Back`, d.box);
+  /* the leads drawn from here on, so a tag can be put where none runs */
+  const drawn = [], poly0 = doc.poly;
+  doc.poly = function (p, o) { drawn.push(Array.isArray(p[0]) ? p.flat() : p); return poly0.call(this, p, o); };
   const ends = elecEndsOn(ctx.links, ctx.sheetOf, 'msm', b.msm.name, d.ports);
   const of = c => ends.filter(e => e.cable === c);
   const msmBox = d.box, right = msmBox[0] + msmBox[2], bottom = msmBox[1];
@@ -405,32 +571,44 @@ function elecMsmSheet(doc, setup, b, sh, ctx) {
   /* dry contact and remote E-stop: under their row, right, through the inline connector */
   const cust = [...of('dry-contact'), ...of('remote-estop')].sort((a, b) => a.x - b.x);
   const custCols = [287, 299];
-  const boxTop = 162, boxH = 20;
+  const boxTop = 162, boxH = ELEC_PLUG.h + 3;
   if (cust.length) doc.rect(custCols[0] - 7, boxTop - boxH, custCols[1] - custCols[0] + 14, boxH, { color: '#7c3aed', w: 0.4 });
   cust.forEach((e, k) => {
     /* the right-hand port takes the upper lane and the outer column, so the two never cross */
     const kk = cust.length - 1 - k;
-    const lane = e.y - e.r - 1.4 - kk * 1.5, col = custCols[k] || custCols[1];
-    doc.poly([e.x, e.y - e.r, e.x, lane, col, lane, col, boxTop - 1.5], { color: e.color, w: 0.35, dash: [1.6, 1.1] });
-    elecPlug(doc, col, boxTop - 1.5, 4.4, boxH - 3, '#64748b');
-    doc.text(e.cable === 'dry-contact' ? 'Dry' : 'Remote', col, boxTop - 8, { size: 1.5, align: 'center' });
-    doc.text(e.cable === 'dry-contact' ? 'Contact' : 'Estop', col, boxTop - 10.5, { size: 1.5, align: 'center' });
+    const col = custCols[k] || custCols[1];
+    /* a port with a valve to its right in its row (the 6-SSC MSM's Dry Contact) leaves over
+       its row, since the valve leads drop straight down beside it */
+    const over = of('valve').some(v => Math.abs(v.y - e.y) < 1 && v.x > e.x);
+    const lane = over ? e.y + e.r + 1.4 + kk * 1.5 : e.y - e.r - 1.4 - kk * 1.5;
+    doc.poly([e.x, over ? e.y + e.r : e.y - e.r, e.x, lane, col, lane, col, boxTop - 1.5], { color: e.color, w: 0.35, dash: ELEC_DASH, id: 'lead:' + e.text });
+    elecPlug(doc, col, boxTop - 1.5, e.cable === 'dry-contact' ? ['Dry', 'Contact'] : ['Remote', 'Estop']);
     const tagTop = k ? 120 : 134;
-    doc.poly([col, boxTop - boxH + 1.5, col, tagTop], { color: e.color, w: 0.35, dash: [1.6, 1.1] });
+    doc.poly([col, boxTop - boxH + 1.5, col, tagTop], { color: e.color, w: 0.35, dash: ELEC_DOT, id: 'customer:' + e.text });
     elecNoteBox(doc, e.cable === 'dry-contact' ? 'Client-side Thermal Runaway Status Signal' : 'Client-side Remote Estop', col - 9, tagTop, 18, { fill: ELEC_TAG, size: 1.9, align: 'center' });
   });
   /* master valves: down through the LP16-7 connectors to the valves */
   for (const e of of('valve')) {
-    doc.poly([e.x, e.y - e.r, e.x, 156], { color: e.color, w: 0.35 });
-    doc.rect(e.x - 5.5, 147, 11, 9, { color: '#64748b', w: 0.25, fill: '#ffffff' });
-    ['LP16-7 Female', 'to', 'LP16-7 Male'].forEach((t, i) => doc.text(t, e.x, 153.6 - i * 2.4, { size: 1.25, align: 'center' }));
-    doc.poly([e.x, 147, e.x, 140], { color: e.color, w: 0.35, dash: [1.6, 1.1] });
+    doc.poly([e.x, e.y - e.r, e.x, 156], { color: e.color, w: 0.35, id: 'lead:' + e.text });
+    elecItem(doc, 'lp16:' + e.port, 'box', null, () => {
+      doc.rect(e.x - 5.5, 147, 11, 9, { color: '#64748b', w: 0.25, fill: '#ffffff' });
+      ['LP16-7 Female', 'to', 'LP16-7 Male'].forEach((t, i) => doc.text(t, e.x, 153.6 - i * 2.4, { size: 1.25, align: 'center' }));
+    });
+    doc.poly([e.x, 147, e.x, 140], { color: e.color, w: 0.35, dash: ELEC_DOT });
     elecNoteBox(doc, e.text.replace(/^To /, '').replace(/ · .*/, '').replace(/Master Valve\s*/, 'Master Valve '), e.x - 5.5, 140, 11, { fill: ELEC_TAG, size: 1.9, align: 'center' });
   }
   /* Ex.FanFB is not in use (DWG2527) */
   const fan = d.ports['Ex.FanFB'];
+  doc.poly = poly0;
   if (fan) {
-    const t = elecNoteBox(doc, 'Not in use', right + 6, 208, 13, { fill: ELEC_TAG, size: 1.9, align: 'center' });
+    /* beside the panel at the port's height, moved up or down until no lead runs under it */
+    const x0 = right + 6, x1 = right + 19, h = 4.9;
+    const hits = top => drawn.some(p => { for (let i = 0; i + 3 < p.length; i += 2) {
+      const ax = Math.min(p[i], p[i + 2]), bx = Math.max(p[i], p[i + 2]), ay = Math.min(p[i + 1], p[i + 3]), by = Math.max(p[i + 1], p[i + 3]);
+      if (bx >= x0 - 0.8 && ax <= x1 + 0.8 && by >= top - h - 0.8 && ay <= top + 0.8) return true; } return false; });
+    let top = fan.y + h / 2;
+    for (let k = 0; k <= 80; k++) { const t = fan.y + h / 2 + (k % 2 ? 1 : -1) * Math.ceil(k / 2) * 0.5; if (!hits(t)) { top = t; break; } }
+    const t = elecNoteBox(doc, 'Not in use', x0, top, x1 - x0, { fill: ELEC_TAG, size: 1.9, align: 'center' });
     elecLeader(doc, t, fan.x, fan.y, '#334155');
   }
   /* the first ACDP, below left; MSM power runs straight to it */
@@ -439,8 +617,8 @@ function elecMsmSheet(doc, setup, b, sh, ctx) {
   let acdpEnds = [];
   if (name && av) {
     const a = elecAcdps(b).find(x => x.name === name) || {};
-    elecTag(doc, `${name} Back`, 30, 118, 3);
     const ad = elecDrawPart(doc, av, [28, 72, 118, 44], { nameSize: 1.5 });
+    elecPartTag(doc, `${name} Back`, ad.box);
     acdpEnds = elecEndsOn(ctx.links, ctx.sheetOf, 'acdp', name, ad.ports);
     /* MSM PowerP/B to ACDP MSMP/MSMB (as DWG2527: P runs on the lower lane) */
     for (const pb of ['B', 'P']) {
@@ -448,13 +626,13 @@ function elecMsmSheet(doc, setup, b, sh, ctx) {
       const q = ad.ports['MSM' + pb];
       if (!m || !q) continue;
       const lane = pb === 'B' ? 163 : 156;
-      doc.poly([m.x, m.y - m.r, m.x, lane, q.x, lane, q.x, q.y + q.r], { color: m.color, w: 0.35, dash: elecDashOf(m) });
+      doc.poly([m.x, m.y - m.r, m.x, lane, q.x, lane, q.x, q.y + q.r], { color: m.color, w: 0.35, dash: elecDashOf(m), id: 'lead:' + m.text });
     }
     elecDropLeads(doc, acdpEnds.filter(e => /^power-/.test(e.cable) && !/^MSM/.test(e.port)), 64);
     const ac = elecAcIn(doc, acdpEnds, 64, setup);
     const acNote = elecNote(setup, 'acPower');
     if (ac && acNote.trim()) {
-      const nb = elecNoteBox(doc, acNote, 150, 102, 82, { size: 2 });
+      const nb = elecNoteBox(doc, acNote, 150, 102, 82, { size: 2, id: 'note:acPower' });
       elecLeader(doc, nb, ac.box[0] + ac.box[2], ac.box[1] + ac.box[3] / 2);
     }
     elecPanelNote(doc, setup, a.rack || '', 30, 30, 56);
@@ -468,14 +646,14 @@ function elecMsmSheet(doc, setup, b, sh, ctx) {
 /** A further ACDP of the bank. */
 function elecAcdpSheet(doc, setup, b, name, ctx) {
   const a = elecAcdps(b).find(x => x.name === name) || {};
-  elecTag(doc, `${name} Back`, 62, 240, 3.4);
   const ad = elecDrawPart(doc, ctx.view('acdp', 'back'), [60, 150, 230, 87], { nameSize: 2.2 });
+  elecPartTag(doc, `${name} Back`, ad.box);
   const ends = elecEndsOn(ctx.links, ctx.sheetOf, 'acdp', name, ad.ports);
   elecDropLeads(doc, ends.filter(e => /^power-/.test(e.cable)), 140);
   const ac = elecAcIn(doc, ends, 140, setup);
   const acNote = elecNote(setup, 'acPower');
   if (ac && acNote.trim()) {
-    const nb = elecNoteBox(doc, acNote, 300, 200, 100, { size: 2.6 });
+    const nb = elecNoteBox(doc, acNote, 300, 200, 100, { size: 2.6, id: 'note:acPower' });
     elecLeader(doc, nb, ac.box[0] + ac.box[2], ac.box[1] + ac.box[3] / 2);
   }
   elecPanelNote(doc, setup, a.rack || '', 80, 98, 60);
@@ -486,17 +664,18 @@ function elecSscSheet(doc, setup, sh, ctx) {
   const v = ctx.view('ssc', 'back');
   sh.items.forEach((name, k) => {
     const c = setup.sscs.find(x => x.name === name) || {};
-    const x0 = 22 + k * 195;
-    elecTag(doc, `${name} Back`, x0 + 18, 238, 3.2);
+    /* two side by side; one alone sits in the middle of the sheet */
+    const x0 = sh.items.length === 1 ? 22 + 195 / 2 : 22 + k * 195;
     const d = elecDrawPart(doc, v, [x0, 118, 140, 122], { nameSize: 1.7 });
+    elecPartTag(doc, `${name} Back`, d.box);
     const ends = elecEndsOn(ctx.links, ctx.sheetOf, 'ssc', name, d.ports, 'From');
     elecDropLeads(doc, ends, 108);
     /* cooling fans: down, along the bottom, up to an LP16-3 inline socket per fan */
     const fp = d.ports['Cooling Fan'], fans = Math.max(0, Math.min(6, +c.fans || 0));
     if (fp && fans) {
       const col = ELEC_CABLES.fan.color, bx = x0 + 150, low = 70, top = 150;
-      doc.poly([fp.x, fp.y - fp.r, fp.x, low, bx, low, bx, top], { color: col, w: 0.35 });
-      for (let f = 0; f < fans; f++) {
+      doc.poly([fp.x, fp.y - fp.r, fp.x, low, bx, low, bx, top], { color: col, w: 0.35, id: 'fan:' + name });
+      for (let f = 0; f < fans; f++) elecItem(doc, `fan:${name} ${f + 1}`, 'box', null, () => {
         const y = top - f * 8;
         doc.line(bx, y, bx + 4, y, { color: col, w: 0.35 });
         doc.rect(bx + 4, y - 3, 7, 6, { color: '#334155', w: 0.25 });
@@ -504,7 +683,7 @@ function elecSscSheet(doc, setup, sh, ctx) {
         doc.line(bx + 11, y, bx + 14, y, { color: col, w: 0.35 });
         doc.rect(bx + 14, y - 2.5, 18, 5, { color: ELEC_INK, w: 0.3 });
         doc.text('Cooling Fan ' + (f + 1), bx + 23, y - 0.9, { size: 2, align: 'center' });
-      }
+      });
     }
     elecPanelNote(doc, setup, c.rack || '', x0 + 4, 66, 64);
   });
@@ -517,29 +696,30 @@ function elecFrontsSheet(doc, setup, sh, b, ctx) {
   const bank = elecBankSscs(setup, b.id).map(c => c.name);
   let jb = null;
   if (jbv) {
-    elecTag(doc, 'Junction Box Front', 132, 100, 3.6);
     jb = elecDrawPart(doc, jbv, [112, 58, 136, 40], { nameSize: 2 });
+    elecPartTag(doc, 'Junction Box Front', jb.box, false, jb.list.map(p => p.x));
     /* the customer's main power cables, both sides */
     const yA = jb.box[1] + jb.box[3] * 0.62, yB = jb.box[1] + jb.box[3] * 0.38;
     for (const [sx, dir] of [[jb.box[0], -1], [jb.box[0] + jb.box[2], 1]]) {
       for (const y of [yA, yB]) {
-        doc.poly([sx, y, sx + dir * 7, y, sx + dir * 8.5, y + 1.6, sx + dir * 10, y - 1.6, sx + dir * 11.5, y, sx + dir * 18, y], { color: ELEC_CABLES.bus.color, w: 0.4 });
+        doc.poly([sx, y, sx + dir * 7, y, sx + dir * 8.5, y + 1.6, sx + dir * 10, y - 1.6, sx + dir * 11.5, y, sx + dir * 18, y], { color: ELEC_CABLES.bus.color, w: 0.4, dash: ELEC_DOT });
       }
       const t = elecNoteBox(doc, 'To Customer', dir < 0 ? sx - 36 : sx + 19, (yA + yB) / 2 + 3, 17, { size: 2.2, align: 'center' });
       void t;
     }
     const note = elecNote(setup, 'junctionBox');
-    if (note.trim()) elecNoteBox(doc, note, 22, 48, 88, { size: 1.9 });
+    if (note.trim()) elecNoteBox(doc, note, 22, 48, 88, { size: 1.9, id: 'note:junctionBox' });
   }
   /* SSC B+ / B- to the junction box: odd SSCs of the bank to the first Bus pair, even to the second */
   const pairs = jb ? (() => { const plus = jb.list.filter(p => p.name === 'Bus+'), minus = jb.list.filter(p => p.name === 'Bus-'); return plus.map((p, i) => ({ plus: p, minus: minus[i] })).filter(p => p.minus); })() : [];
   const mv = ctx.view('module', 'front');
   sh.items.forEach((name, k) => {
-    const x0 = 30 + k * 200;
+    const x0 = sh.items.length === 1 ? 30 + 100 : 30 + k * 200;
     const d = elecDrawPart(doc, v, [x0, 150, 120, 90], { nameSize: 2 });
-    elecTag(doc, `${name} Front`, x0 + 20, 134, 3.4);
+    /* tag under the SSC's left side, where no lead runs (its B+/B- drop to the junction box) */
+    elecTag(doc, `${name} Front`, d.box[0], 134);
     const ref = elecNote(setup, 'sscFront');
-    if (ref.trim()) elecNoteBox(doc, ref, x0 + 18, 131.5, 42, { size: 1.8 });
+    if (ref.trim()) elecNoteBox(doc, ref, d.box[0] - 2, 131.5, 42, { size: 1.8, id: 'note:sscFront' });
     if (mv) elecModuleChain(doc, mv, d, x0 + 108, (setup.sscs.find(c => c.name === name) || {}).modules);
     const pair = pairs.length ? pairs[bank.indexOf(name) % pairs.length] : null;
     if (!pair) return;
@@ -549,7 +729,7 @@ function elecFrontsSheet(doc, setup, sh, b, ctx) {
     /* nested so the two never cross: the port nearer the box takes the higher lane */
     const hi = 118 - k * 2.5, lo = 112 - k * 2.5;
     const near = goRight ? [bm, pair.minus, hi] : [bp, pair.plus, hi], far = goRight ? [bp, pair.plus, lo] : [bm, pair.minus, lo];
-    for (const [p, q, lane] of [near, far]) doc.poly([p.x, p.y - p.r, p.x, lane, q.x, lane, q.x, q.y + q.r], { color: col, w: 0.45 });
+    for (const [p, q, lane] of [near, far]) doc.poly([p.x, p.y - p.r, p.x, lane, q.x, lane, q.x, q.y + q.r], { color: col, w: 0.45, id: `bus:${name} ${p === bp ? 'B+' : 'B-'}` });
   });
 }
 
@@ -606,8 +786,11 @@ function elecModuleChain(doc, mv, d, mx, count) {
   doc.poly([P['S-'].x, out(P['S-']), P['S-'].x, 142.5, col, 142.5, col, m1.y, m1.x + m1.r, m1.y], red);
 }
 
-/** Draws every sheet of a confirmed setup onto doc (a pdfDoc); returns the sheet list. */
-function elecDraw(doc, setup, lib, info) {
+/** Draws every sheet of a confirmed setup onto doc (a pdfDoc, or the editor's SVG target) with
+    the engineer's edits; returns the sheet list. opts.only: draw just that sheet number;
+    opts.interactive: mark the editable items for the editor. */
+function elecDraw(doc0, setup, lib, info, opts) {
+  opts = opts || {};
   const sheets = elecSheets(setup);
   const ctx = {
     links: elecLinks(setup),
@@ -615,17 +798,24 @@ function elecDraw(doc, setup, lib, info) {
     view: (part, v) => { const p = lib.parts.find(x => x.id === part); return p && p.views.find(x => x.id === v); },
   };
   const bankOf = id => setup.banks.find(b => b.id === id);
-  sheets.forEach((sh, i) => {
-    if (i) doc.newPage();
+  elecInlineView = ctx.view('inline', 'side') || null;
+  let first = true;
+  sheets.forEach(sh => {
+    if (opts.only && sh.n !== opts.only) return;
+    if (!first) doc0.newPage();
+    first = false;
+    const ed = setup.edits && setup.edits[elecSheetKey(sh)];
+    const doc = elecEditTarget(doc0, ed, !!opts.interactive);
     const b = sh.bank ? bankOf(sh.bank) : null;
     sh.bankName = b ? b.name : '';
     elecFrame(doc, sh, info);
     if (sh.kind === 'notes' && sh.n === 1) elecNotesMsm(doc, setup, ctx.view);
-    else if (sh.kind === 'notes') elecNotesInline(doc, setup);
+    else if (sh.kind === 'notes') elecNotesInline(doc, setup, ctx.view('inline', 'side'));
     else if (sh.kind === 'msm') elecMsmSheet(doc, setup, b, sh, ctx);
     else if (sh.kind === 'acdp') elecAcdpSheet(doc, setup, b, sh.items[0], ctx);
     else if (sh.kind === 'ssc-back') elecSscSheet(doc, setup, sh, ctx);
     else if (sh.kind === 'fronts') elecFrontsSheet(doc, setup, sh, b, ctx);
+    elecAdded(doc, ed);
   });
   return sheets;
 }
@@ -637,4 +827,4 @@ async function elecPdf(setup, lib, info) {
   return doc.bytes();
 }
 
-if (typeof module !== 'undefined') module.exports = { elecPathPolys, elecDraw, elecPdf, elecWrap, ELEC_CABLES };
+if (typeof module !== 'undefined') module.exports = { elecSheetKey, elecEditTarget, elecPathPolys, elecDraw, elecPdf, elecWrap, ELEC_CABLES };

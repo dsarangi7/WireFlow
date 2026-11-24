@@ -52,8 +52,9 @@ ok(E.elecReady(s), 'complete setup is ready: ' + E.elecIssues(s).map(i => i.text
 /* an MSM serves at most 6 SSCs */
 s.banks[0].msm.model = 3;
 ok(/3-SSC MSM has SSC ports 1 to 3/.test(E.elecIssues(s).map(i => i.text).join()), 'more SSCs than the MSM model serves is an error');
-ok(!E.elecIssues(s).some(i => /no drawing of the/.test(i.text)), 'every MSM model uses MSM.dxf, so none lacks a drawing');
-ok(Object.values(E.ELEC_MSM_MODELS).every(m => m.drawing === 'msm'), 'one MSM drawing for 3, 6 and 9 SSCs');
+ok(!E.elecIssues(s).some(i => /no drawing of the/.test(i.text)), 'every MSM model has its drawing, so none lacks one');
+eq([3, 6, 9].map(n => E.ELEC_MSM_MODELS[n].drawing), ['msm3', 'msm6', 'msm'], 'each MSM model drawn from its own AYK drawing');
+eq(E.elecMsmDrawing(s.banks[0]), 'msm3', 'a bank draws its model\'s MSM');
 s.banks[0].msm.model = 9;
 ok(E.elecReady(s), '6 SSCs on a 9-SSC MSM is fine');
 
@@ -84,7 +85,7 @@ ok(!E.elecPortBlocked('jb', 'Bus+'), 'the junction box front is kept');
 ok(!E.elecPortBlocked('ssc', 'PowerP'), 'other SSC ports are wired');
 ok(E.elecPortBlocked('msm', 'SSC3B') && E.elecPortBlocked('msm', 'SSC9B') && E.elecPortBlocked('ssc', 'CommB'), 'backup comm is not wired');
 ok(!E.elecPortBlocked('msm', 'SSC3P') && !E.elecPortBlocked('ssc', 'CommP'), 'primary comm is wired');
-eq(E.ELEC_PARTS, ['msm', 'ssc', 'jb2', 'jb4', 'acdp', 'module'], 'the part drawings');
+eq(E.ELEC_PARTS, ['msm', 'msm6', 'msm3', 'ssc', 'jb2', 'jb4', 'acdp', 'module', 'inline'], 'the part drawings');
 
 /* confirmed connection: MSM SSCnP -> SSCn CommP, n = position of the SSC in its bank */
 const two2 = E.elecNewSetup();
@@ -160,7 +161,10 @@ ok(!links.some(l => /B$/.test(l.from.port) || l.to.port === 'CommB'), 'backup co
 const lib = JSON.parse(require('fs').readFileSync(require('path').join(__dirname, '../assets/elec/parts.json'), 'utf8'));
 const view = (p, v) => lib.parts.find(x => x.id === p).views.find(x => x.id === v);
 const names = v => v.ports.map(q => q.name);
-eq(lib.parts.map(p => p.id), ['msm', 'ssc', 'jb2', 'jb4', 'acdp', 'module'], 'six parts');
+eq(lib.parts.map(p => p.id), ['msm', 'msm6', 'msm3', 'ssc', 'jb2', 'jb4', 'acdp', 'module', 'inline'], 'nine parts');
+const inl = view('inline', 'side');
+ok(inl.h > inl.w * 2 && inl.w > 10 && inl.w < 12, 'inline connector (P1562): one connector, tall, about 11 x 35');
+eq(names(inl), ['top', 'bottom'], 'inline connector: a cable end at the top and bottom');
 eq(names(view('acdp', 'back')), E.ELEC_ACDP_PORTS, 'ACDP drawing (A2012504): ports in AYK order, left to right');
 eq(lib.parts.find(p => p.id === 'jb2').views.map(v => v.id), ['front'], 'junction box: front only');
 eq(names(view('jb2', 'front')), ['Bus+', 'Bus-'], '2-connector junction box: Bus+, Bus-');

@@ -729,3 +729,15 @@ select.cad-need { border-color: #f59e0b; box-shadow: 0 0 0 2px rgba(245, 158, 11
 .el-note > span { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .el-note textarea { width: 100%; box-sizing: border-box; padding: 8px 10px; border-radius: 8px; border: 1px solid rgba(120,145,185,.3); background: #0d1528; color: #f3f6fc; font-family: inherit; font-size: 12.5px; line-height: 1.45; resize: vertical; }
 .el-table input.el-count { width: 4.5em; }
+
+/* electrical sheet editor (#/elecsheets/<id>) */
+.el-ed .cad-tools select { max-width: 340px; padding: 5px 8px; border-radius: 8px; border: 1px solid rgba(120,145,185,.3); background: #0d1528; color: #f3f6fc; font: inherit; font-size: 13px; }
+.sh-paper .el-item { cursor: move; }
+.sh-paper .el-item:hover { filter: drop-shadow(0 0 0.6px #2563eb); }
+.sh-paper .el-lead, .sh-paper .sh-hit { cursor: grab; pointer-events: stroke; }
+.sh-paper .el-sel { filter: drop-shadow(0 0 0.7px #2563eb) drop-shadow(0 0 0.7px #2563eb); }
+.sh-paper svg.sh-panning { cursor: grabbing; }
+.el-ed #ed-sel textarea { width: 100%; box-sizing: border-box; padding: 8px; border-radius: 8px; border: 1px solid rgba(120,145,185,.3); background: #0d1528; color: #f3f6fc; font: inherit; font-size: 13px; resize: vertical; }
+.el-ed .ed-sel-btns, .el-ed .ed-add { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+.el-ed .ed-hidden { list-style: none; margin: 0 0 10px; padding: 0; display: grid; gap: 4px; }
+.el-ed .ed-hidden li { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 12px; }
