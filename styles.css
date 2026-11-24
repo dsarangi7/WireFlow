@@ -741,3 +741,10 @@ select.cad-need { border-color: #f59e0b; box-shadow: 0 0 0 2px rgba(245, 158, 11
 .el-ed .ed-sel-btns, .el-ed .ed-add { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
 .el-ed .ed-hidden { list-style: none; margin: 0 0 10px; padding: 0; display: grid; gap: 4px; }
 .el-ed .ed-hidden li { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 12px; }
+
+/* delete buttons: project (top bar) and diagram cards */
+.d-card-btns { position: absolute; top: 14px; right: 14px; display: flex; gap: 6px; }
+.d-card-btns .d-card-edit { position: static; }
+.d-card-wrap:has(.d-card-btns) .d-card-title { padding-right: 170px; }
+.d-card-del:hover, .d-card-del:focus-visible { border-color: rgba(239,68,68,.7); color: #fecaca; }
+.btn-site-danger:hover, .btn-site-danger:focus-visible { border-color: rgba(239,68,68,.7) !important; color: #fecaca !important; }

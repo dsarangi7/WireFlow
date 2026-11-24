@@ -181,7 +181,16 @@ for (let i = 1; i <= 9; i++) ok(names(msm).includes('SSC' + i + 'P') && names(ms
 ok(msm.ports.every(q => q.sure), 'every MSM port name is confirmed');
 eq(names(msm).slice(4, 10), ['SSC1P', 'SSC1B', 'SSC2P', 'SSC2B', 'SSC3P', 'SSC3B'], 'SSC jacks row by row, P then B');
 eq(names(msm).filter(x => /^(Estop|RemoteE)/.test(x)).slice(-2), ['Estop9', 'RemoteE'], 'RemoteE after Estop9');
-eq(msm.ports.find(q => q.name === 'Dry Contact').pins, 2, 'Dry Contact has 2 pins');
+/* Dry Contact and Ex.FanFB as AYK's labelled pictures (24 Nov 2026) */
+const at = (v, n) => v.ports.find(q => q.name === n);
+const row9 = ['Estop9', 'Ex.FanFB', 'Dry Contact', 'RemoteE'].map(n => at(msm, n));
+ok(row9.every(p => Math.abs(p.y - row9[0].y) < 0.01) && row9.every((p, i) => !i || p.x > row9[i - 1].x), 'MSM 9: Estop9, Ex.FanFB, Dry Contact, RemoteE left to right');
+const m6 = view('msm6', 'back'), dc6 = at(m6, 'Dry Contact'), fan6 = at(m6, 'Ex.FanFB');
+ok(Math.abs(dc6.y - at(m6, 'RemoteE').y) < 0.01 && dc6.x < at(m6, 'RemoteE').x && dc6.x > at(m6, 'Estop6').x, 'MSM 6: Dry Contact between Estop6 and RemoteE');
+ok(Math.abs(fan6.y - at(m6, 'PowerB').y) < 0.01 && fan6.x > at(m6, 'PowerB').x && fan6.x < at(m6, 'Valve 1').x, 'MSM 6: Ex.FanFB between PowerB and Valve 1');
+const m3 = view('msm3', 'back'), row3 = ['Estop3', 'Ex.FanFB', 'Dry Contact', 'RemoteE'].map(n => at(m3, n));
+ok(row3.every(p => Math.abs(p.y - row3[0].y) < 0.01) && row3.every((p, i) => !i || p.x > row3[i - 1].x), 'MSM 3: Estop3, Ex.FanFB, Dry Contact, RemoteE left to right');
+ok([msm, m6, m3].every(v => v.ports.every(q => q.sure)), 'MSM 9, 6 and 3: every port name confirmed');
 eq(msm.ports.filter(q => q.name.startsWith('Valve')).map(q => q.pins), [7, 7], 'valves have 7 pins');
 eq(names(view('ssc', 'back')), ['PowerP', 'PowerB', 'CommP', 'CommB', 'Ext-HVIL', 'Cooling Fan', 'Estop', '19-pin connector'], 'SSC back in DWG2527 order');
 eq(names(view('ssc', 'front')), ['S', 'N', 'S+', 'B+', 'B-', 'S-'], 'SSC front in AYK order');

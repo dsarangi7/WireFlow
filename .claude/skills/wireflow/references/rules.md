@@ -79,7 +79,7 @@ the engineer confirms every SSC/ACDP/MSM name and each SSC's module count.
   (1-9, the same panel as the earlier MSM.dxf), parts `msm3`, `msm6`, `msm`; the builder finds
   them by their "1-3 ", "1-6 ", "1-9 " file name prefix. On the 6 and the 3, the Dry Contact and
   Ex.FanFB names come from pin counts and disagree with AYK's pictures: unconfirmed (`sure:false`)
-  until AYK confirms. For reference, the 3-SSC MSM (AYK picture): Cloud, EMS, PCS / SSC1P–3P /
+  until AYK confirms (superseded 24 Nov 2026: the user's labelled pictures place Dry Contact and Ex.FanFB on all three; see make-elec-parts.js msmPorts). For reference, the 3-SSC MSM (AYK picture): Cloud, EMS, PCS / SSC1P–3P /
   SSC1B–3B / Spare; round Estop1–2 / Estop3, Ex.FanFB, Dry Contact, RemoteE / PowerP, PowerB,
   Valve 1, Valve 2. The 6-SSC MSM is DWG2527 sheet 1 (P and B alternate along each row).
 - The junction box front IS kept on the electrical diagram (AYK, 20 Nov 2026, reversing the

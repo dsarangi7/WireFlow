@@ -55,6 +55,11 @@ async function localProjects() {
 }
 async function localProject(id) { return localStore('projects', 'readonly', store => store.get(Number(id))); }
 async function localPutProject(project) { return localStore('projects', 'readwrite', store => store.put(project)); }
+/** Deletes a project and its stored drawing for good. */
+async function localDeleteProject(id) {
+  await localStore('projects', 'readwrite', store => store.delete(Number(id)));
+  try { await localStore('underlays', 'readwrite', store => store.delete(Number(id))); } catch (e) {}
+}
 async function localAddProject(project) { return localStore('projects', 'readwrite', store => store.add(project)); }
 async function localPutUnderlay(projectId, blob, kind) {
   return localStore('underlays', 'readwrite', store => store.put({ projectId: Number(projectId), blob, kind }));
@@ -547,7 +552,7 @@ async function renderElecDashboard(folderId) {
         <div class="d-card-title"><b>${esc(p.name)}</b><small>Updated ${esc(when(p))}</small></div></div>
       <div class="d-stats"><span><b>${sum.banks}</b> bank${sum.banks === 1 ? '' : 's'}</span><span><b>${sum.sscs}</b> SSC${sum.sscs === 1 ? '' : 's'}</span></div>
       <div class="d-status d-status-${status[1]}"><span class="d-dot"></span>${status[0]}</div>
-    </a><button type="button" class="d-card-edit" data-edit="${p.id}" aria-label="Rename or move ${esc(p.name)}">Rename / move</button></div>`;
+    </a><div class="d-card-btns"><button type="button" class="d-card-edit" data-edit="${p.id}" aria-label="Rename or move ${esc(p.name)}">Rename / move</button><button type="button" class="d-card-edit d-card-del" data-del="${p.id}" title="Delete this electrical diagram" aria-label="Delete ${esc(p.name)}">Delete</button></div></div>`;
   };
   const nextElecName = list => list.length ? 'Electrical diagram ' + (list.length + 1) : 'Electrical diagram';
   const dialog = (title, ok, extra) => rackDialog(Object.assign({ title: title, ok: ok, noun: 'Diagram', nextName: nextElecName,
@@ -566,7 +571,7 @@ async function renderElecDashboard(folderId) {
             : 'The same project folders as the wiring diagram. Open a project, or create one with its number.'}</p>
         </div>
         <div class="dash-actions">
-          ${folder ? '<button class="btn-site btn-site-ghost" id="el-edit-folder">Rename project</button>' : '<button class="btn-site btn-site-ghost" id="el-new-folder">New project</button>'}
+          ${folder ? '<button class="btn-site btn-site-ghost" id="el-edit-folder">Rename project</button><button class="btn-site btn-site-ghost btn-site-danger" id="el-del-folder">Delete project</button>' : '<button class="btn-site btn-site-ghost" id="el-new-folder">New project</button>'}
           ${folder ? `<a class="btn-site btn-site-ghost" href="#/folder/${esc(folder.id)}">Racks (${racksIn(folder.id).length})</a>` : ''}
           <button class="btn-site btn-site-primary" id="el-new">New electrical diagram${folder ? ' in this project' : ''}</button>
         </div>
@@ -614,6 +619,28 @@ async function renderElecDashboard(folderId) {
     project.id = await localAddProject(project);
     location.hash = '#/elec/' + project.id;
   };
+  /* delete a project: its electrical diagrams go; its racks stay in the wiring diagram, outside any project */
+  const delFolder = document.getElementById('el-del-folder');
+  if (delFolder) delFolder.onclick = async () => {
+    const d = elecIn(folder.id), r = racksIn(folder.id);
+    const msg = `Delete project ${folder.number}?\n\n` +
+      (d.length ? `Its ${d.length} electrical diagram${d.length === 1 ? '' : 's'} (${d.map(p => p.name).join(', ')}) will be deleted for good.\n` : 'It has no electrical diagram.\n') +
+      (r.length ? `Its ${r.length} rack${r.length === 1 ? '' : 's'} in the wiring diagram are kept, outside any project.` : '');
+    if (!confirm(msg)) return;
+    try {
+      for (const p of d) await localDeleteProject(p.id);
+      for (const p of r) { delete p.folder; p.updated_at = new Date().toISOString(); await localPutProject(p); }
+      foldersSave(foldersLoad().filter(x => x.id !== folder.id));
+      toast(`Deleted project ${folder.number}.`);
+      location.hash = '#/electrical';
+    } catch (e) { toast('Could not delete: ' + e.message, 'error'); }
+  };
+  document.querySelectorAll('[data-del]').forEach(b => b.onclick = async () => {
+    const p = shown.find(x => x.id === +b.dataset.del);
+    if (!p || !confirm(`Delete the electrical diagram "${p.name}"? Its setup and sheet edits are deleted for good.`)) return;
+    try { await localDeleteProject(p.id); toast(`Deleted "${p.name}".`); renderElecDashboard(folderId); }
+    catch (e) { toast('Could not delete: ' + e.message, 'error'); }
+  });
   document.querySelectorAll('[data-edit]').forEach(b => b.onclick = async () => {
     const p = shown.find(x => x.id === +b.dataset.edit);
     if (!p) return;

@@ -186,8 +186,8 @@ const port = (name, at, kind, size, sure, extra) => Object.assign({ name: name, 
  * Round connectors: the pin count tells the type. 3-pin PowerP, PowerB and 7-pin Valve 1, 2
  * left to right; 4-pin Estop1… in reading order and RemoteE the last 4-pin. On the 9 a 2-pin is
  * Dry Contact and a 5-pin Ex.FanFB (confirmed). The 6 has no 5-pin and the 3 no 2-pin: the one
- * 4-pin left between the E-stops and RemoteE takes the missing name. Those two names on the 3
- * and 6 differ from AYK's pictures, so they stay unconfirmed until AYK confirms them. */
+ * 4-pin left between the E-stops and RemoteE takes the missing name. The two are then placed as
+ * AYK's labelled pictures (below), confirmed for all three models. */
 function msmPorts(v, sscs) {
   const k = v.w > 100 ? 10 : 1, ports = [];
   const rjSize = 2.16 * k, rSize = 1.28 * k;
@@ -223,6 +223,15 @@ function msmPorts(v, sscs) {
     const name = i < sscs ? 'Estop' + (i + 1) : i === four.length - 1 ? 'RemoteE' : (two.length ? 'Ex.FanFB' : 'Dry Contact');
     ports.push(port(name, r.at, 'round', rSize, i < sscs || i === four.length - 1, { pins: 4 }));
   });
+  /* AYK's labelled pictures (user, 24 Nov 2026) put Dry Contact and Ex.FanFB the other way round
+     from the pin-count reading on every model: the 9's Estop9 row is Estop9, Ex.FanFB, Dry
+     Contact, RemoteE; the 6's Dry Contact is beside RemoteE and Ex.FanFB beside PowerB; the 3's
+     middle row is Estop3, Ex.FanFB, Dry Contact, RemoteE. */
+  {
+    const dc = ports.find(p => p.name === 'Dry Contact'), fan = ports.find(p => p.name === 'Ex.FanFB');
+    if (!dc || !fan) throw new Error(`MSM (${sscs} SSCs): Dry Contact or Ex.FanFB not found. Check the drawing.`);
+    dc.name = 'Ex.FanFB'; fan.name = 'Dry Contact'; dc.sure = fan.sure = true;
+  }
   const big = ringsOf(v, 3.3 * k, 0.01 * k)[0];
   if (big) ports.push(port('19-pin connector', big, 'round', 6.6 * k, true, { unused: true }));
   return ports;
