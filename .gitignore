@@ -15,3 +15,6 @@ __pycache__/
 # local env / credentials (never commit secrets)
 .env
 *.local
+
+# AYK technotes and part drawings: kept on this PC only (confidential). The site uses assets/elec/parts.json.
+/Electrical Diagram/
