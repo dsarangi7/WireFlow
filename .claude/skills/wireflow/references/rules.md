@@ -111,14 +111,26 @@ the engineer confirms every SSC/ACDP/MSM name and each SSC's module count.
     The first ACDP also feeds the MSM; every ACDP takes the customer's AC in.
   - The backup comm link (MSM SSCnB → SSCn CommB) is NOT wired (AYK, 20 Nov 2026); those ports
     stay unconnected (`ELEC_NOT_WIRED`).
-- Sheets are numbered 1, 2, 3 … n in this order (`elecSheets`, order confirmed by AYK 23 Nov 2026): two notes sheets, then bank by
-  bank: MSM back, SSC backs (three per sheet), one sheet per ACDP back, junction box and SSC
-  fronts (three SSCs per sheet).
+- Sheets follow DWG2527-00 S10195 (`Electrical Diagram/` in the repo), numbered 1, 2, 3 … n
+  (`elecSheets`): sheet 1 notes (MSM back with AYK's callouts), sheet 2 notes (inline connectors,
+  cable legend, wiring instructions), then bank by bank: MSM back with the first ACDP on the same
+  sheet, the SSC backs that ACDP feeds, each further ACDP followed by its SSC backs, then the
+  junction box with the SSC fronts. At most two SSCs on one sheet (AYK, 24 Nov 2026).
+- MSM sheet routing as DWG2527: comm leaves left and drops to labels; MSM-SSC E-stops rise over
+  their row, run right and drop; nested lanes/columns so no leads cross. MSM PowerP/B run straight
+  to ACDP1 MSMP/MSMB (the one crossing DWG2527 also has). Valves via LP16-7 boxes to Master Valve n;
+  Dry Contact and RemoteE via an inline connector to the client-side tags; Ex.FanFB "Not in use".
+- SSC backs: leads down to "From <MSM/ACDP> <port> · Sheet n"; Cooling Fan to one LP16-3 inline
+  socket per fan. Fronts: SSC B+/B- to the junction box Bus pair (odd SSCs of the bank to pair 1,
+  even to pair 2, as DWG2527); "To Customer" main power both sides.
+- Notes are editable per project (`ELEC_NOTES`, `setup.notes`, `elecNote`): they start as AYK's
+  DWG2527 text; an empty note is left off; editing notes keeps the setup confirmed. The title
+  block also takes Checked by, State and Note.
 - Same rack = AYK harness (solid); different racks = inline connector + customer cable (dashed).
 - Never guess fan counts (1 to 6 per SSC), port maps or bank splits: the engineer answers them
   on the setup page and confirms it.
 - Export: the setup page's "Export PDF" (enabled once the setup is confirmed) writes every sheet
   as one A3 PDF (`elecPdf` in `js/elecsheet.js`). Each connected port gets a lead in its cable's
   colour, dashed between racks, labelled "To <part> <port> · Sheet n". Blocked ports never get a
-  lead. The ACDP is a labelled schematic until AYK supplies its drawing. Title block fields
+  lead. The ACDP is drawn from A2012504 AC_Breaker_Panel_12.DXF (10 connectors left to right in the ELEC_ACDP_PORTS order). Title block fields
   (document no., rev, drawn by) are kept with the setup and do not un-confirm it.

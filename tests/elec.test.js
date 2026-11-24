@@ -78,7 +78,7 @@ ok(!E.elecPortBlocked('jb', 'Bus+'), 'the junction box front is kept');
 ok(!E.elecPortBlocked('ssc', 'PowerP'), 'other SSC ports are wired');
 ok(E.elecPortBlocked('msm', 'SSC3B') && E.elecPortBlocked('msm', 'SSC9B') && E.elecPortBlocked('ssc', 'CommB'), 'backup comm is not wired');
 ok(!E.elecPortBlocked('msm', 'SSC3P') && !E.elecPortBlocked('ssc', 'CommP'), 'primary comm is wired');
-eq(E.ELEC_PARTS, ['msm', 'ssc', 'jb2', 'jb4', 'module'], 'the part drawings');
+eq(E.ELEC_PARTS, ['msm', 'ssc', 'jb2', 'jb4', 'acdp', 'module'], 'the part drawings');
 
 /* confirmed connection: MSM SSCnP -> SSCn CommP, n = position of the SSC in its bank */
 const two2 = E.elecNewSetup();
@@ -128,21 +128,34 @@ eq(E.elecLinks(six).filter(l => l.rule === 'ac-in').map(l => l.to.name + '.' + l
 eq(E.elecAcdpsNeeded(six, six.banks[0]), 2, 'six SSCs need two ACDPs');
 ok(!E.elecLinks(six).some(l => /B$/.test(l.from.port) && l.from.part === 'msm' && /^SSC/.test(l.from.port)), 'no MSM SSCnB link');
 
-/* sheets 1..n: notes, then per bank MSM, SSC backs by three, ACDPs, fronts by three */
+/* sheets 1..n as DWG2527-00: notes x2, then per bank the MSM with ACDP1, the SSC backs ACDP1 feeds,
+   ACDP2 and its SSC backs, then the fronts; never more than two SSCs on one sheet (AYK, 24 Nov 2026) */
 const sh = E.elecSheets(six);
-eq(sh.map(s => s.n), [1, 2, 3, 4, 5, 6, 7, 8, 9], 'sheets numbered 1 to n');
-eq(sh.map(s => s.kind), ['notes', 'notes', 'msm', 'ssc-back', 'ssc-back', 'acdp', 'acdp', 'fronts', 'fronts'], 'DWG2527 order');
-eq(sh[3].items, ['SSC1', 'SSC2', 'SSC3'], 'three SSC backs per sheet');
-ok(sh.every(s => s.of === 9), 'every sheet knows the total');
+eq(sh.map(s => s.n), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11], 'sheets numbered 1 to n');
+eq(sh.map(s => s.kind), ['notes', 'notes', 'msm', 'ssc-back', 'ssc-back', 'acdp', 'ssc-back', 'ssc-back', 'fronts', 'fronts', 'fronts'], 'DWG2527 order');
+eq(sh[2].acdp, 'ACDP1', 'the first ACDP is drawn on the MSM sheet');
+eq(sh.filter(s => s.kind === 'ssc-back').map(s => s.items.join('+')), ['SSC1+SSC2', 'SSC3', 'SSC4+SSC5', 'SSC6'], 'SSC backs by two, grouped by the ACDP that feeds them');
+eq(sh[5].items, ['ACDP2'], 'ACDP2 before the SSCs it feeds');
+ok(sh.every(s => s.items.length <= 2), 'at most two SSCs on a sheet');
+ok(sh.every(s => s.of === 11), 'every sheet knows the total');
 const sh2 = E.elecSheets(two2);
-eq(sh2.filter(s => s.kind === 'msm').map(s => s.n), [3, 7], 'banks follow each other');
+eq(sh2.filter(s => s.kind === 'msm').map(s => s.n), [3, 8], 'banks follow each other');
+/* sheet notes: AYK's text until the engineer edits it */
+ok(/primary ports/.test(E.elecNote(six, 'comm')), 'notes start as AYK text');
+six.notes = { comm: 'Our own note' };
+eq(E.elecNote(six, 'comm'), 'Our own note', 'an edited note is used');
+six.notes = { comm: '' };
+eq(E.elecNote(six, 'comm'), '', 'an emptied note stays empty');
+delete six.notes;
+ok(E.ELEC_NOTES.filter(n => n.sheet === 1).length >= 5, 'sheet 1 notes are editable');
 ok(!links.some(l => /B$/.test(l.from.port) || l.to.port === 'CommB'), 'backup comm ports are not linked by this rule');
 
 /* the part library: ports found on AYK's drawings */
 const lib = JSON.parse(require('fs').readFileSync(require('path').join(__dirname, '../assets/elec/parts.json'), 'utf8'));
 const view = (p, v) => lib.parts.find(x => x.id === p).views.find(x => x.id === v);
 const names = v => v.ports.map(q => q.name);
-eq(lib.parts.map(p => p.id), ['msm', 'ssc', 'jb2', 'jb4', 'module'], 'five parts');
+eq(lib.parts.map(p => p.id), ['msm', 'ssc', 'jb2', 'jb4', 'acdp', 'module'], 'six parts');
+eq(names(view('acdp', 'back')), E.ELEC_ACDP_PORTS, 'ACDP drawing (A2012504): ports in AYK order, left to right');
 eq(lib.parts.find(p => p.id === 'jb2').views.map(v => v.id), ['front'], 'junction box: front only');
 eq(names(view('jb2', 'front')), ['Bus+', 'Bus-'], '2-connector junction box: Bus+, Bus-');
 eq(names(view('jb4', 'front')), ['Bus+', 'Bus-', 'Bus+', 'Bus-'], '4-connector junction box: Bus+, Bus-, Bus+, Bus-');

@@ -791,10 +791,25 @@ async function renderElecPage(id) {
             <label>Document no.<input data-sf="docNumber" value="${esc(sheetInfo().docNumber)}" placeholder="DWG2527"></label>
             <label>Rev<input data-sf="rev" value="${esc(sheetInfo().rev)}" placeholder="0"></label>
             <label>Drawn by<input data-sf="drawnBy" value="${esc(sheetInfo().drawnBy)}" placeholder="Name"></label>
+            <label>Checked by<input data-sf="checkedBy" value="${esc(sheetInfo().checkedBy)}" placeholder="Name"></label>
+            <label>State<input data-sf="state" value="${esc(sheetInfo().state)}" placeholder="Issued for Review"></label>
+            <label>Note<input data-sf="note" value="${esc(sheetInfo().note)}" placeholder="Initial Released"></label>
           </div>
           <button class="btn btn-primary" id="el-export" ${setup.confirmed ? '' : 'disabled'}>Export PDF</button>
         </div>
         <p class="muted small">${setup.confirmed ? `Exports every sheet above as one A3 PDF in AYK's DWG2527 format, titled "${esc(sheetInfo().title)}".` : 'Confirm the setup to export the PDF.'}</p>
+        <details class="el-notes-edit">
+          <summary>Notes on the sheets <span class="muted small">(start as AYK's DWG2527 text; edit them for this project)</span></summary>
+          ${[[1, 'Sheet 1: MSM back notes'], [2, 'Sheet 2: inline connectors'], ['bank', 'Bank sheets (every MSM, ACDP, SSC and junction box sheet)']].map(([sh, head]) => `
+            <h3>${head}</h3>
+            ${ELEC_NOTES.filter(n => n.sheet === sh).map(n => {
+              const own = setup.notes && typeof setup.notes[n.id] === 'string';
+              return `<label class="el-note" data-note-row="${n.id}"><span><b>${esc(n.label)}</b>${own ? ' <em class="muted small">edited</em>' : ''}
+                ${own ? `<button type="button" class="btn btn-ghost btn-xs" data-note-reset="${n.id}">Back to AYK's text</button>` : ''}</span>
+                <textarea data-note="${n.id}" rows="${Math.min(14, Math.max(2, Math.ceil(elecNote(setup, n.id).length / 110) + (elecNote(setup, n.id).match(/\n/g) || []).length))}" placeholder="${n.text ? '' : 'Leave empty to print nothing'}">${esc(elecNote(setup, n.id))}</textarea></label>`;
+            }).join('')}`).join('')}
+          <p class="muted small">An empty note is left off the sheets. Editing notes keeps the setup confirmed.</p>
+        </details>
       </section>
 
       <section class="el-card">
@@ -808,7 +823,7 @@ async function renderElecPage(id) {
 
   /* title block of the exported sheets (kept with the setup) */
   function sheetInfo() {
-    const i = setup.sheetInfo = Object.assign({ docNumber: '', rev: '0', drawnBy: '' }, setup.sheetInfo || {});
+    const i = setup.sheetInfo = Object.assign({ docNumber: '', rev: '0', drawnBy: '', checkedBy: '', state: 'Issued for Review', note: 'Initial Released' }, setup.sheetInfo || {});
     const d = new Date();
     return Object.assign({}, i, {
       title: `${folder ? folder.number + ' ' : ''}Battery System Electrical Connection Diagram`,
@@ -867,6 +882,29 @@ async function renderElecPage(id) {
       sheetInfo();
       setup.sheetInfo[inp.dataset.sf] = inp.value.trim();
       save();                                   /* title block only: the setup stays confirmed */
+    });
+    /* sheet notes: kept with the setup; the setup stays confirmed */
+    body.querySelectorAll('[data-note]').forEach(ta => ta.onchange = () => {
+      const n = ELEC_NOTES.find(x => x.id === ta.dataset.note);
+      setup.notes = setup.notes || {};
+      if (ta.value === n.text) delete setup.notes[n.id]; else setup.notes[n.id] = ta.value;
+      save();
+      const open = body.querySelector('.el-notes-edit');
+      const y = window.scrollY;
+      draw();
+      const again = body.querySelector('.el-notes-edit');
+      if (open && again) again.open = true;
+      window.scrollTo(0, y);
+    });
+    body.querySelectorAll('[data-note-reset]').forEach(btn => btn.onclick = ev => {
+      ev.preventDefault();
+      if (setup.notes) delete setup.notes[btn.dataset.noteReset];
+      save();
+      const y = window.scrollY;
+      draw();
+      const again = body.querySelector('.el-notes-edit');
+      if (again) again.open = true;
+      window.scrollTo(0, y);
     });
     document.getElementById('el-export').onclick = async ev => {
       const btn = ev.currentTarget;

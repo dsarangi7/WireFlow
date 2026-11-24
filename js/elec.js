@@ -37,7 +37,7 @@ const ELEC_MSM_MODELS = {
 
 /* The part drawings every project uses (assets/elec/parts.json, from AYK's CADS folder).
    The junction box front is kept (AYK, 20 Nov 2026); only its HVIL wire to the SSC is gone. */
-const ELEC_PARTS = ['msm', 'ssc', 'jb2', 'jb4', 'module'];
+const ELEC_PARTS = ['msm', 'ssc', 'jb2', 'jb4', 'acdp', 'module'];
 
 /* Ports that are never wired on new diagrams, with AYK's reason. Released projects are
    not changed. */
@@ -68,6 +68,40 @@ const ELEC_OPTIONS = [
   { id: 'servicing', label: '230 VAC control power inlet for battery servicing', note: 'At the ACDP' },
 ];
 
+/* Notes printed on the sheets. The text starts as AYK's wording on DWG2527-00 (S10195); the
+   engineer can edit every note for a project (setup.notes[id]) and go back to AYK's text.
+   sheet: 1 or 2 = that notes sheet; 'bank' = repeated on the bank sheets. */
+const ELEC_NOTES = [
+  { id: 'comm', sheet: 1, label: 'Communication line (points at SSC1P)',
+    text: 'This is the communication line between SSCs and MSM, we only need to connect to the primary ports. If primary fails, SSC1B, SSC2B, SSC3B etc. on MSM and CommB on SSC are for backup.' },
+  { id: 'cloud', sheet: 1, label: 'Cloud port',
+    text: 'Secure Remote access connected to the Cloud Port with Ethernet cable supplied by the customer. Refer to DOC2225 AYK BMS Network Configuration for description.' },
+  { id: 'access', sheet: 1, label: 'EMS and PCS ports',
+    text: 'Customer access to BMS through EMS or PCS port. Water-proof plugs (LP-16-C/RJ45/015/PE-43-001) provided by AYK for the connections at the back of the MSM. Ethernet cable supply and termination is done by the customer. Follow T-568B standard. Recommended Cable: Cat6 Ethernet cable or higher grade. OD 8-9mm.\nPlease refer to DOC2225 AYK BMS Network Configuration for Remote connection requirements.' },
+  { id: 'dryContact', sheet: 1, label: 'Dry contact',
+    text: 'This is dry contact. AYK will provide a dry contact from MSM to control some equipment on customer side. This can be used to control a 12V/24V relay or as PLC input in case of thermal runaway. The circuit can handle a DC voltage of 25V max and DC max current of 200mA. For operation detail please refer to TN0080.' },
+  { id: 'remoteE', sheet: 1, label: 'Remote E-stop (RemoteE)',
+    text: 'RemoteE is for customer Remote E-stop and MSM E-stop feedback signal from AYK. AYK will supply one LP16-4 to Inline connector cable. The customer needs to make their own cable to connect to the inline connector. Pin specification: pin to pin. Recommend Cable size: 20AWG (4 x 0.518 mm²), OD 5-9 mm.\nPin1 and pin2 connect to the Remote E-stop on customer side. The customer needs to connect an NC switch or NC relay having a series and parallel resistor network (as shown in Fig 1) to these pins to ensure correct function. The Customer Estop loop must be equipped with resistors to enable cable monitoring and correct functions. Resistors are 1k in series and 10k in parallel. The customer is responsible for providing and installing these resistors to the E-stop (or close to it) or else the MSM will not be able to connect the Bank.\nPin 3 and pin 4 are for Remote E-stop hardware feedback. There is an optical relay which can handle an electrical load of max 24VDC and continuous DC current of 200mA.\n1- When MSM Local Estop or Remote Estop at customer side is normal the relay at pin3 & pin4 is in closed state.\n2- When MSM Local Estop or Remote Estop at customer side is pressed the relay at pin3 & pin4 is in opened state.\nExtraction fan failure signal (Optional). The extraction fan failure signal can also be series connected with the Remote Estop, but customers must be aware that such a fault will trip the battery instantly. Customers can add the extraction fan failure signal to this Remote Estop port pin1 and pin2 in series with, switch must be NC.\nNote! A fault on extraction fan will trip the bank instantly. Routing the fault signal via EMS could be a better controlled option for this fault signal.' },
+  { id: 'extra', sheet: 1, label: 'Extra note on sheet 1 (optional)', text: '' },
+  { id: 'inline', sheet: 2, label: 'Inline connector wiring instructions',
+    text: 'Inline Connector Wiring Instructions\n1. Complete Harness Configuration for Same Rack\n   When ACDP, MSM, and SSC are located within the same rack, AYK will provide complete harnesses between any two of them, requiring no additional wiring from customer.\n2. Inline Connector Harness Configuration for Different Racks\n   When anyone of ACDP, MSM, or SSC is located in a different rack:\n   - AYK will provide cables with inline connectors in one end for inter-rack connections.\n   - The cables between different racks must be fabricated by the customer and connected via the inline connectors.\n3. Pin Mapping and cable Specifications\n   - The dashed lines shown in this diagram represent the wiring connections between different racks. Customers must fabricate and complete the inter-rack wiring based on the wiring standards illustrated in the diagram.\n   - ACDP PowerInP: Pin 1 (L), Pin 2 (N), Pin 3 (G), cable specification: 14AWG (3 x 2.5 mm²). OD: 9-12mm.\n   - ACDP PowerInB: Pin 1 (L), Pin 2 (N), Pin 3 (G), cable specification: 14AWG (3 x 2.5 mm²). OD: 9-12mm.\n   - SSC/MSM Power Primary: Pin 1 (L), Pin 2 (N), Pin 3 (G), cable specification: 16AWG (3 x 1.5 mm²). OD: 9-12mm.\n   - SSC/MSM Power Backup: Pin 1 (L), Pin 2 (N), Pin 3 (G), cable specification: 16AWG (3 x 1.5 mm²). OD: 9-12mm.\n   - Rack_Estop_MSM_SSC: Pin to Pin, cable specification: 20 AWG (4 x 0.518 mm²). OD: 5-9mm.\n   - Rack_Comm_MSM_SSC: Cat6 Ethernet or higher grade, cable specification: 23AWG (8 x 0.258 mm²). OD: 8-9mm.\n   - Rack_MSM_Remote_Estop: Pin to Pin, cable specification: 20 AWG (4 x 0.518 mm²). OD: 5-9mm.\n   - Customer side thermal run away signal: Pin 1, Pin 2, cable specification: 20AWG (2 x 0.518 mm²). OD: 5-9mm.\n   - Rack_SSC_Cooling_Fan_Power: L to L, N to N, and Fb to Fb, cable specification: 18AWG (3 x 0.823 mm²), OD: 5-9mm.\n   - Master Valve: Pin to Pin, cable specification: 20 AWG (5 x 0.3 mm²). OD: 5-9mm.' },
+  { id: 'acPower', sheet: 'bank', label: 'ACDP AC power in (on every ACDP)',
+    text: 'These two are the AC power supply lines to AYK system. The input power supply requires peak 4.5A, continuous 4A, and 220VAC. Inline connector ACDP Power P is supplied by normal power and Inline connector ACDP Power B by backup UPS. AYK will provide two power lines having inline connectors at one end. The customers need to make their own cables to connect inside the Inline connector terminals. Recommend cable size: 3x2.5mm², OD 9-12 mm' },
+  { id: 'panel', sheet: 'bank', label: 'Signal inter-connection panel',
+    text: 'Refer to TN0089 Signal Inter-Connection Panel Installation and Wiring Instructions for Details' },
+  { id: 'junctionBox', sheet: 'bank', label: 'Junction box (fronts sheets)',
+    text: 'This is the junction box on the top of the rack. AYK will provide two cables, one with AC connectors and one with BD connectors. Cable with AC connectors is for Bus positive pole and cable with BD is for Bus negative pole. The customer needs to make their own cables to connect inside the junction box terminals. Power cable rated: 0.6/1kV. Cable size: 95mm². Please refer to TN0088 Junction Box Installation and Wiring Instructions.' },
+  { id: 'sscFront', sheet: 'bank', label: 'SSC front to batteries',
+    text: 'Refer to DWG2587 Wiring Diagram for SSC Connecting to Batteries' },
+];
+/** A note's text for this project: the engineer's edit, else AYK's text. */
+function elecNote(setup, id) {
+  const own = setup && setup.notes && setup.notes[id];
+  if (typeof own === 'string') return own;
+  const n = ELEC_NOTES.find(x => x.id === id);
+  return n ? n.text : '';
+}
+
 function elecNewSetup() {
   return {
     version: 1,
@@ -76,6 +110,7 @@ function elecNewSetup() {
     options: Object.fromEntries(ELEC_OPTIONS.map(o => [o.id, o.always ? true : null])),  // null = not answered yet
     valves: null,           // master valves (fire fighting) on this system: 0, 1 or 2
     jbModel: null,          // junction box front drawn: 2 or 4 Bus connectors (JUNCTION BOX2/4.dxf)
+    notes: {},              // the engineer's edits of the sheet notes (ELEC_NOTES ids); missing = AYK's text
     confirmed: false,
     source: null,           // how it was filled: { racks: [names], at }
   };
@@ -124,23 +159,27 @@ function elecAcdps(b) {
 function elecAcdpsNeeded(setup, b) { return Math.max(1, Math.ceil(elecBankSscs(setup, b.id).length / ELEC_ACDP_SSCS)); }
 
 /* ---------- sheets ----------
- * Numbered 1, 2, 3 … n in this order (AYK, 20 Nov 2026), as DWG2527 lays them out:
- * the two notes sheets, then bank by bank: MSM back, SSC backs (three per sheet),
- * ACDP backs, junction box and SSC fronts (three SSCs per sheet). */
-const ELEC_SSCS_PER_SHEET = 3;
+ * Numbered 1, 2, 3 … n, laid out as DWG2527-00 (S10195) does: two notes sheets, then bank by
+ * bank: the MSM back with the first ACDP's back on the same sheet, the SSC backs that ACDP
+ * feeds, then each further ACDP followed by its SSC backs, then the junction box with the SSC
+ * fronts. At most two SSCs on one sheet (AYK, 24 Nov 2026). */
+const ELEC_SSCS_PER_SHEET = 2;
 function elecSheets(setup) {
   const sheets = [];
-  const add = (kind, title, bank, items) => sheets.push({ n: sheets.length + 1, kind: kind, title: title, bank: bank || null, items: items || [] });
+  const add = (kind, title, bank, items, extra) => sheets.push(Object.assign({ n: sheets.length + 1, kind: kind, title: title, bank: bank || null, items: items || [] }, extra || {}));
+  const pairs = list => { const g = []; for (let i = 0; i < list.length; i += ELEC_SSCS_PER_SHEET) g.push(list.slice(i, i + ELEC_SSCS_PER_SHEET)); return g; };
   add('notes', 'Notes: MSM back and customer connections');
   add('notes', 'Notes: inline connectors, pin mapping and cables');
   for (const b of setup.banks) {
     const sscs = elecBankSscs(setup, b.id).map(c => c.name);
-    const groups = [];
-    for (let i = 0; i < sscs.length; i += ELEC_SSCS_PER_SHEET) groups.push(sscs.slice(i, i + ELEC_SSCS_PER_SHEET));
-    add('msm', `${b.name}: ${b.msm.name || 'MSM'} back`, b.id, [b.msm.name]);
-    groups.forEach(g => add('ssc-back', `${b.name}: ${g.join(', ')} back`, b.id, g));
-    elecAcdps(b).slice(0, elecAcdpsNeeded(setup, b)).forEach(a => add('acdp', `${b.name}: ${a.name || 'ACDP'} back`, b.id, [a.name]));
-    groups.forEach(g => add('fronts', `${b.name}: junction box and ${g.join(', ')} front`, b.id, g));
+    const acdps = elecAcdps(b).slice(0, elecAcdpsNeeded(setup, b));
+    const first = acdps[0] && acdps[0].name;
+    add('msm', `${b.name}: ${b.msm.name || 'MSM'} back${first ? ' and ' + first + ' back' : ''}`, b.id, [b.msm.name], { acdp: first || null });
+    for (let k = 0; k * ELEC_ACDP_SSCS < Math.max(sscs.length, 1); k++) {
+      if (k > 0 && acdps[k]) add('acdp', `${b.name}: ${acdps[k].name || 'ACDP'} back`, b.id, [acdps[k].name]);
+      pairs(sscs.slice(k * ELEC_ACDP_SSCS, (k + 1) * ELEC_ACDP_SSCS)).forEach(g => add('ssc-back', `${b.name}: ${g.join(', ')} back`, b.id, g));
+    }
+    pairs(sscs).forEach(g => add('fronts', `${b.name}: junction box and ${g.join(', ')} front`, b.id, g));
   }
   const total = sheets.length;
   sheets.forEach(s => { s.of = total; });
@@ -313,4 +352,4 @@ function elecLinks(setup) {
   return out.filter(l => !elecPortBlocked(l.from.part, l.from.port) && !elecPortBlocked(l.to.part, l.to.port));
 }
 
-if (typeof module !== 'undefined') module.exports = { elecSheets, ELEC_SSCS_PER_SHEET, elecPortBlockedWhy, elecAcdps, elecAcdpsNeeded, ELEC_FAN_CHOICES, ELEC_ACDP_PORTS, ELEC_ACDP_SSCS, ELEC_MSM_MODELS, ELEC_FAN_PINS, ELEC_RULES, elecLinks, ELEC_PARTS, ELEC_NOT_WIRED, elecPortBlocked, ELEC_MSM_SSC_PORTS, ELEC_OPTIONS, elecNewSetup, elecFromRacks, elecBankSscs, elecIssues, elecReady, elecLinkKind, elecSummary, elecCompare };
+if (typeof module !== 'undefined') module.exports = { elecSheets, ELEC_NOTES, elecNote, ELEC_SSCS_PER_SHEET, elecPortBlockedWhy, elecAcdps, elecAcdpsNeeded, ELEC_FAN_CHOICES, ELEC_ACDP_PORTS, ELEC_ACDP_SSCS, ELEC_MSM_MODELS, ELEC_FAN_PINS, ELEC_RULES, elecLinks, ELEC_PARTS, ELEC_NOT_WIRED, elecPortBlocked, ELEC_MSM_SSC_PORTS, ELEC_OPTIONS, elecNewSetup, elecFromRacks, elecBankSscs, elecIssues, elecReady, elecLinkKind, elecSummary, elecCompare };

@@ -6,27 +6,28 @@
  *   MODULE.dxf  module front (upper view); its back (lower view) is not used
  *   JUNCTION BOX2.dxf junction box with 2 Bus connectors: front (left view); back not used
  *   JUNCTION BOX4.dxf junction box with 4 Bus connectors: front only
+ *   A2012504 AC_Breaker_Panel_12.DXF  ACDP panel (one view, AYK 24 Nov 2026)
  *
  * Only layer "0" (the part itself) is kept: the frame, title block and notes are
  * dropped. Views are separated by the empty space between them. Coordinates stay in
  * drawing units, Y up; every view is moved so its lower-left corner is 0,0.
  *
- * Run from the repo root (folder defaults to AYK's CADS folder):
- *   node tools/make-elec-parts.js "G:\WiringTool\Electrical Interactive tool\Electrical Diagram\CADS"
+ * Run from the repo root (the drawings are in this repo's "Electrical Diagram/CADS" folder):
+ *   node tools/make-elec-parts.js
  */
 'use strict';
 const fs = require('fs');
 const path = require('path');
 const ROOT = path.resolve(__dirname, '..');
 const C = new Function(fs.readFileSync(path.join(ROOT, 'js', 'cad.js'), 'utf8') + '\nreturn { cadParseDxf, cadFlatten };')();
-const DIR = process.argv[2] || 'G:\\WiringTool\\Electrical Interactive tool\\Electrical Diagram\\CADS';
-
+const DIR = process.argv[2] || path.join(ROOT, 'Electrical Diagram', 'CADS');
 /* which view is which: by position on AYK's drawings */
 const PARTS = [
   { id: 'msm', file: 'MSM.dxf', label: 'MSM', views: [{ id: 'back', label: 'MSM back' }] },
   { id: 'ssc', file: 'SSC.dxf', label: 'SSC', order: 'x', views: [{ id: 'front', label: 'SSC front' }, { id: 'back', label: 'SSC back' }] },
   { id: 'jb2', file: 'JUNCTION BOX2.dxf', label: 'Junction box, 2 connectors', order: 'x', views: [{ id: 'front', label: 'Junction box front (2 connectors)' }, { id: 'back', label: 'Junction box back', drop: true }] },
   { id: 'jb4', file: 'JUNCTION BOX4.dxf', label: 'Junction box, 4 connectors', views: [{ id: 'front', label: 'Junction box front (4 connectors)' }] },
+  { id: 'acdp', file: 'A2012504 AC_Breaker_Panel_12.DXF', label: 'ACDP (AC breaker panel)', views: [{ id: 'back', label: 'ACDP back' }] },
   { id: 'module', file: 'MODULE.dxf', label: 'Battery module', order: '-y', views: [{ id: 'front', label: 'Module front' }, { id: 'back', label: 'Module back', drop: true }] },
 ];
 
@@ -143,6 +144,17 @@ function msmPorts(v) {
   if (big) ports.push(port('19-pin connector', big, 'round', 6.6, true, { unused: true }));
   return ports;
 }
+/* ACDP panel: one row of 10 connectors, 8 small then 2 larger (AC in), named left to right
+ * in the order AYK gave: SSC3B, SSC3P, SSC2B, SSC2P, SSC1B, SSC1P, MSMB, MSMP, ACPowerInB, ACPowerInP */
+function acdpPorts(v) {
+  const small = expect(ringsOf(v, 6.4, 0.06), 8, 'ACDP small connectors');
+  const big = expect(ringsOf(v, 10.1, 0.06), 2, 'ACDP AC-in connectors');
+  const row = small.concat(big).sort((a, b) => a[0] - b[0]);
+  if (Math.max(...row.map(p => p[1])) - Math.min(...row.map(p => p[1])) > 1) throw new Error('ACDP connectors are not in one row. Check the drawing.');
+  if (row.slice(8).some(p => !big.includes(p))) throw new Error('ACDP AC-in connectors are not at the right end. Check the drawing.');
+  const names = ['SSC3B', 'SSC3P', 'SSC2B', 'SSC2P', 'SSC1B', 'SSC1P', 'MSMB', 'MSMP', 'ACPowerInB', 'ACPowerInP'];
+  return row.map((p, i) => port(names[i], p, 'round', i < 8 ? 12.8 : 20.2, true));
+}
 /* junction box front: Bus+, Bus-, Bus+, Bus- left to right (confirmed by AYK, 20 Nov 2026) */
 function jbPorts(v, n, ring) {
   const row = ringsOf(v, ring, 0.06).sort((a, b) => a[0] - b[0]);
@@ -165,6 +177,7 @@ function sscPorts(v, side) {
 for (const p of out.parts) for (const v of p.views) {
   if (p.id === 'msm') v.ports = msmPorts(v);
   else if (p.id === 'ssc') v.ports = sscPorts(v, v.id);
+  else if (p.id === 'acdp') v.ports = acdpPorts(v);
   else if (p.id === 'jb2') v.ports = jbPorts(v, 2, 14.8);
   else if (p.id === 'jb4') v.ports = jbPorts(v, 4, 12.5);
   else v.ports = [];
