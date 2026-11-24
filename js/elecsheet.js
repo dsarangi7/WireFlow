@@ -278,13 +278,15 @@ function elecBreak(doc, x, y, color, dash) {
   doc.poly([x, y + 3, x, y + 1.2, x - 1.4, y + 0.4, x + 1.4, y - 0.4, x, y - 1.2, x, y - 3], { color: color, w: 0.35, dash: dash === undefined ? ELEC_DOT : dash });
 }
 
-/** The end of a lead that leaves the sheet: connector, then its label reading upwards. */
+/** The end of a lead that leaves the sheet: its inline connector, and under it the label (reading upwards). */
 function elecEnd(doc, x, y, color, text) {
-  return elecItem(doc, 'end:' + text, 'end', text, t => {
-    const plugH = elecPlug(doc, x, y);
-    const w = pdfTextWidth(t, 2, false);
-    doc.text(t, x + ELEC_PLUG.w / 2 + 1.9, y - w - 0.5, { size: 2, rot: 90, color: ELEC_INK });
-    return y - Math.max(plugH, w + 0.5);
+  /* the connector and its words are two items, so the engineer can move the words alone */
+  const plugH = elecItem(doc, 'end:' + text, 'end', null, () => elecPlug(doc, x, y));
+  return elecItem(doc, 'label:' + text, 'label', text, t => {
+    /* under the connector, reading upwards, centred on the lead (DWG2527) */
+    const w = pdfTextWidth(t, 2, false), top = y - plugH - 1;
+    doc.text(t, x + 0.7, top - w, { size: 2, rot: 90, color: ELEC_INK });
+    return top - w;
   });
 }
 
@@ -629,7 +631,8 @@ function elecMsmSheet(doc, setup, b, sh, ctx) {
   if (name && av) {
     const a = elecAcdps(b).find(x => x.name === name) || {};
     const ad = elecDrawPart(doc, av, [28, 72, 118, 44], { nameSize: 1.5 });
-    elecPartTag(doc, `${name} Back`, ad.box);
+    /* clear of the comm labels that hang down at the left (24, 32, … mm) */
+    elecPartTag(doc, `${name} Back`, ad.box, false, of('comm').map((e, i) => 24 + i * 8));
     acdpEnds = elecEndsOn(ctx.links, ctx.sheetOf, 'acdp', name, ad.ports);
     /* MSM PowerP/B to ACDP MSMP/MSMB (as DWG2527: P runs on the lower lane) */
     for (const pb of ['B', 'P']) {
@@ -684,7 +687,7 @@ function elecSscSheet(doc, setup, sh, ctx) {
     /* cooling fans: down, along the bottom, up to an LP16-3 inline socket per fan */
     const fp = d.ports['Cooling Fan'], fans = Math.max(0, Math.min(6, +c.fans || 0));
     if (fp && fans) {
-      const col = ELEC_CABLES.fan.color, bx = x0 + 150, low = 70, top = 150;
+      const col = ELEC_CABLES.fan.color, bx = x0 + 150, low = 62, top = 150;   /* low: under the labels hanging from the connectors */
       doc.poly([fp.x, fp.y - fp.r, fp.x, low, bx, low, bx, top], { color: col, w: 0.35, id: 'fan:' + name });
       for (let f = 0; f < fans; f++) elecItem(doc, `fan:${name} ${f + 1}`, 'box', null, () => {
         const y = top - f * 8;

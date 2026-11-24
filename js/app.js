@@ -655,7 +655,8 @@ async function renderElecDashboard(folderId) {
 /* The part library (assets/elec/parts.json, built by tools/make-elec-parts.js). */
 let elecPartsCache = null;
 function elecPartsLoad() {
-  if (!elecPartsCache) elecPartsCache = fetch('assets/elec/parts.json').then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+  /* no-cache: always check for newer part drawings (port names get corrected) */
+  if (!elecPartsCache) elecPartsCache = fetch('assets/elec/parts.json', { cache: 'no-cache' }).then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
     .catch(e => { elecPartsCache = null; throw e; });
   return elecPartsCache;
 }
@@ -847,7 +848,7 @@ async function renderElecSheetsPage(id) {
     $('sh-g').querySelectorAll('.el-sel').forEach(e => e.classList.remove('el-sel'));
     if (sel) $('sh-g').querySelectorAll(`[data-id="${cssId(sel.id)}"]`).forEach(e => e.classList.add('el-sel'));
   }
-  const KIND = { 'added-box': 'Your box', 'added-line': 'Your line', tag: 'Tag', note: 'AYK note', box: 'Label', end: 'Lead label', lead: 'Lead', figure: 'Figure 1', legend: 'Cable legend', group: 'Inline connector', 'added-note': 'Your note', 'added-tag': 'Your tag', 'added-text': 'Your text' };
+  const KIND = { 'added-box': 'Your box', 'added-line': 'Your line', tag: 'Tag', note: 'AYK note', box: 'Label', end: 'Inline connector (lead end)', label: 'Lead label', lead: 'Lead', figure: 'Figure 1', legend: 'Cable legend', group: 'Inline connector', 'added-note': 'Your note', 'added-tag': 'Your tag', 'added-text': 'Your text' };
   const added = id => (ed(false).add || []).find(a => a.id === id);
   const shiftAdded = (a, dx, dy) => { if (a.pts) for (let i = 0; i < a.pts.length; i += 2) { a.pts[i] += dx; a.pts[i + 1] += dy; } else { a.x += dx; a.y += dy; } };
   const r2 = v => Math.round(v * 100) / 100;
@@ -869,7 +870,7 @@ async function renderElecSheetsPage(id) {
     const noteId = /^note:/.test(sel.id) ? sel.id.slice(5) : null;
     const text = a ? a.text : noteId ? elecNote(setup, noteId) : sel.text;
     const shape = a && (a.kind === 'box' || a.kind === 'line');
-    const wordy = (a && !shape) || noteId || ['tag', 'box', 'end'].includes(sel.kind);
+    const wordy = (a && !shape) || noteId || ['tag', 'box', 'label'].includes(sel.kind);
     const moved = (e.move && e.move[sel.id]) || (e.path && e.path[sel.id]) || (e.text && Object.prototype.hasOwnProperty.call(e.text, sel.id));
     box.innerHTML = `<p class="small"><b>${esc(KIND[sel.kind] || sel.kind)}</b>${noteId ? ' <span class="muted">(changes this note on every sheet)</span>' : ''}</p>
       ${shape ? `<div class="ed-shape">
@@ -920,14 +921,14 @@ async function renderElecSheetsPage(id) {
       h[sel.id] = true;
       /* a lead goes with the label at its end */
       const end = sel.kind === 'lead' && $('sh-g').querySelector(`[data-id="${cssId(sel.id)}"][data-end]`);
-      if (end && end.dataset.end) h[end.dataset.end] = true;
+      if (end && end.dataset.end) { h[end.dataset.end] = true; h[end.dataset.end.replace(/^end:/, 'label:')] = true; }
     }
     tidy(); sel = null; save(); render(); showSel();
   }
   /* deleted items on this sheet, each can come back */
   function listHidden() {
     const h = Object.keys(ed(false).hide || {});
-    const name = id => id.replace(/^(tag|box|end|note|lead|customer|fan|bus|lp16|inline):/, '').replace(/#\d+$/, '');
+    const name = id => id.replace(/^(tag|box|end|label|note|lead|customer|fan|bus|lp16|inline):/, '').replace(/#\d+$/, '');
     $('ed-hidden').innerHTML = h.length ? `<p class="small">${h.length} deleted:</p><ul class="ed-hidden">${h.map(id => `<li><span>${esc(name(id)).slice(0, 60)}</span><button class="btn btn-ghost btn-xs" data-unhide="${esc(id)}">Bring back</button></li>`).join('')}</ul>` : '<p class="muted small">Nothing deleted on this sheet.</p>';
     $('ed-hidden').querySelectorAll('[data-unhide]').forEach(b => b.onclick = () => { remember(); delete ed(false).hide[b.dataset.unhide]; tidy(); save(); render(); });
   }

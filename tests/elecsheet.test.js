@@ -138,7 +138,7 @@ const ok = (c, m) => { assert.ok(c, m); n++; };
   drawSheet({});
   const base = calls.find(c => c[0] === 'poly' && c[2] && c[2].id === leadId)[3].slice();
   drawSheet({ [key]: {
-    hide: { 'end:To SSC2 CommP · Sheet 4': true, 'lead:To SSC2 CommP · Sheet 4': true },
+    hide: { 'end:To SSC2 CommP · Sheet 4': true, 'label:To SSC2 CommP · Sheet 4': true, 'lead:To SSC2 CommP · Sheet 4': true },
     text: { 'tag:MSM-1 Back': 'MSM-1 Back (Rack 1)' },
     path: { [leadId]: [base[0], base[1], base[2], base[3] - 5, base[4], base[5] - 5, base[6], base[7]] },
     move: { 'end:To SSC3 CommP · Sheet 5': [0, -4] },
@@ -167,7 +167,7 @@ const ok = (c, m) => { assert.ok(c, m); n++; };
   const groups = [];
   const withGroups = Object.assign({}, rec, { pages: 1, newPage() { this.pages++; return this; }, group(open, o) { if (open) groups.push(o.data); return this; } });
   s.edits = {}; L.elecDraw(withGroups, s, lib, { title: 'x' }, { only: msmSheet.n, interactive: true });
-  ok(groups.some(g => g.id === 'tag:MSM-1 Back') && groups.some(g => g.id === 'note:panel' || /^box:/.test(g.id)) && groups.some(g => /^end:To SSC1 CommP/.test(g.id)), 'the editor sees tags, notes and lead labels as items');
+  ok(groups.some(g => g.id === 'tag:MSM-1 Back') && groups.some(g => g.id === 'note:panel' || /^box:/.test(g.id)) && groups.some(g => /^end:To SSC1 CommP/.test(g.id)) && groups.some(g => /^label:To SSC1 CommP/.test(g.id)), 'the editor sees tags, notes, connectors and their labels as separate items');
   delete s.edits;
 
   /* the real PDF */
