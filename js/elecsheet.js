@@ -172,12 +172,16 @@ function elecDrawPart(doc, view, box, o) {
   for (const c of view.circles) doc.circle(X(c[0]), Y(c[1]), c[2] * s, { color: '#1f2937', w: lw });
   const ports = {}, list = [];
   for (const p of view.ports || []) {
-    const q = { x: X(p.x), y: Y(p.y), r: p.size / 2 * s, name: p.name, unused: !!p.unused };
+    const q = { x: X(p.x), y: Y(p.y), r: p.size / 2 * s, top: Y(p.top != null ? p.top : p.y + p.size / 2), name: p.name, unused: !!p.unused };
     list.push(q);
     if (!ports[p.name]) ports[p.name] = q;      /* a junction box repeats Bus+ / Bus- */
   }
   if (o.portNames !== false) for (const p of list) {
-    doc.text(p.name, p.x, p.y + p.r + 1.2, { size: o.nameSize || 1.8, align: 'center', color: p.unused ? '#94a3b8' : ELEC_INK });
+    /* above the connector's housing (its flange), not across it, on a white ground so lines
+       of the part behind it (a jack's tail from the row above) never run through the words */
+    const size = o.nameSize || 1.8, tw = pdfTextWidth(p.name, size, false);
+    doc.rect(p.x - tw / 2 - 0.3, p.top + 0.4, tw + 0.6, size * 0.95, { fill: '#ffffff', stroke: false });
+    doc.text(p.name, p.x, p.top + 0.7, { size: size, align: 'center', color: p.unused ? '#94a3b8' : ELEC_INK });
   }
   return { ports: ports, list: list, box: [ox, oy, view.w * s, view.h * s], scale: s };
 }

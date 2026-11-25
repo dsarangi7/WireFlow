@@ -283,6 +283,31 @@ function sscPorts(v, side) {
   if (side === 'back') { const big = ringsOf(v, 33, 0.1)[0]; if (big) ports.push(port('19-pin connector', big, 'round', 66, true, { unused: true })); }
   return ports;
 }
+/* the top of each connector's housing (the square flange round the MSM's RJ45 jacks, say), so
+   the sheet writes the port's name above the connector, not across it: the highest line of
+   the drawing that lies wholly within the connector's own patch round the port */
+function housingTops(v) {
+  const polys = [];
+  for (const m of v.d.matchAll(/M([^M]*)/g)) {
+    const n = m[1].replace(/[LZ]/g, ' ').trim().split(/\s+/).map(Number);
+    if (n.length >= 4) polys.push(n);
+  }
+  for (const p of v.ports) {
+    if (p.kind === 'end') continue;
+    /* a round connector's latch stands further out from its ring than a jack's flange */
+    const half = p.size * (p.kind === 'round' && /^msm/.test(v.partId) ? 1.4 : 1.05);
+    let top = p.y + p.size / 2;
+    for (const n of polys) {
+      let inside = true, hi = -Infinity;
+      for (let i = 0; i < n.length; i += 2) {
+        if (Math.abs(n[i] - p.x) > half || Math.abs(n[i + 1] - p.y) > half) { inside = false; break; }
+        hi = Math.max(hi, n[i + 1]);
+      }
+      if (inside) top = Math.max(top, hi);
+    }
+    p.top = +top.toFixed(3);
+  }
+}
 for (const p of out.parts) for (const v of p.views) {
   if (/^msm/.test(p.id)) v.ports = msmPorts(v, p.sscs || 9);
   else if (p.id === 'ssc') v.ports = sscPorts(v, v.id);
@@ -292,6 +317,7 @@ for (const p of out.parts) for (const v of p.views) {
   else if (p.id === 'module') v.ports = modulePorts(v);
   else if (p.id === 'inline') v.ports = inlinePorts(v);
   else v.ports = [];
+  v.partId = p.id; housingTops(v); delete v.partId;
   console.log(v.label, 'ports:', v.ports.map(q => q.name + (q.sure ? '' : '?')).join(', ') || '(none needed)');
 }
 
