@@ -307,7 +307,7 @@ async function renderDashboard(folderId) {
         <div class="d-card-title"><b>${esc(p.name)}</b><small>${p.cad_file && p.cad_file.replace(/\.dxf$/i, '') !== p.name ? esc(p.cad_file) + ' · ' : ''}Updated ${esc(when(p))}</small></div></div>
       <div class="d-stats">${stats.length ? stats.map(x => `<span><b>${x[1]}</b> ${x[0]}</span>`).join('') : '<span class="muted">Open the drawing and teach one module to start.</span>'}</div>
       <div class="d-status d-status-${status[1]}"><span class="d-dot"></span>${status[0]}</div>
-    </a><button type="button" class="d-card-edit" data-edit="${p.id}" title="Rename this rack or move it to another project" aria-label="Rename or move ${esc(p.name)}">Rename / move</button></div>`;
+    </a><div class="d-card-btns"><button type="button" class="d-card-edit" data-edit="${p.id}" title="Rename this rack or move it to another project" aria-label="Rename or move ${esc(p.name)}">Rename / move</button><button type="button" class="d-card-edit d-card-del" data-del-rack="${p.id}" title="Delete this rack" aria-label="Delete ${esc(p.name)}">Delete</button></div></div>`;
   };
   const folderCard = f => {
     const racks = racksIn(f.id);
@@ -339,7 +339,7 @@ async function renderDashboard(folderId) {
           <p>${folder ? (folder.name ? esc(folder.name) + ' · ' : '') + `${shown.length} rack${shown.length === 1 ? '' : 's'}. New racks imported here use the parts already taught on this project's racks.` : 'Racks imported before projects existed. Use Rename / move on a rack to put it in a project.'}</p>
         </div>
         <div class="dash-actions">
-          ${folder ? '<button class="btn-site btn-site-ghost" id="dash-edit-folder">Rename project</button>' : ''}
+          ${folder ? '<button class="btn-site btn-site-ghost" id="dash-edit-folder">Rename project</button><button class="btn-site btn-site-ghost btn-site-danger" id="dash-del-folder">Delete project</button>' : ''}
           ${folder ? `<a class="btn-site btn-site-ghost" href="#/efolder/${esc(folder.id)}">Electrical diagrams (${elecIn(folder.id).length})</a>` : ''}
           <button class="btn-site btn-site-primary" id="studio-import-button">Import DXF${folder ? ' into this project' : ''}</button>
         </div>`;
@@ -405,6 +405,29 @@ async function renderDashboard(folderId) {
     if (!foldersLoad().some(x => x.id === folder.id)) location.hash = '#/wiring';
     else renderDashboard(folderId);
   };
+  /* delete a project: its racks go; its electrical diagrams stay, outside any project */
+  const delFolderBtn = document.getElementById('dash-del-folder');
+  if (delFolderBtn) delFolderBtn.onclick = async () => {
+    const r = racksIn(folder.id), d = elecIn(folder.id);
+    const msg = `Delete project ${folder.number}?\n\n` +
+      (r.length ? `Its ${r.length} rack${r.length === 1 ? '' : 's'} (${r.map(p => p.name).join(', ')}) will be deleted for good: drawings, taught parts, numbering, wiring and sheets.\n` : 'It has no rack.\n') +
+      (d.length ? `Its ${d.length} electrical diagram${d.length === 1 ? '' : 's'} are kept, outside any project.` : '');
+    if (!confirm(msg)) return;
+    try {
+      for (const p of r) await localDeleteProject(p.id);
+      for (const p of d) { delete p.folder; p.updated_at = new Date().toISOString(); await localPutProject(p); }
+      foldersSave(foldersLoad().filter(x => x.id !== folder.id));
+      toast(`Deleted project ${folder.number}.`);
+      location.hash = '#/wiring';
+    } catch (e) { toast('Could not delete: ' + e.message, 'error'); }
+  };
+  /* delete one rack */
+  document.querySelectorAll('[data-del-rack]').forEach(b => b.onclick = async () => {
+    const p = cadProjects.find(x => x.id === +b.dataset.delRack);
+    if (!p || !confirm(`Delete the rack "${p.name}"? Its drawing, taught parts, numbering, wiring and sheets are deleted for good.`)) return;
+    try { await localDeleteProject(p.id); toast(`Deleted "${p.name}".`); renderDashboard(folderId); }
+    catch (e) { toast('Could not delete: ' + e.message, 'error'); }
+  });
   /* rename a rack or move it to another project */
   document.querySelectorAll('[data-edit]').forEach(b => b.onclick = async () => {
     const p = cadProjects.find(x => x.id === +b.dataset.edit);
