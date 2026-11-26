@@ -2762,6 +2762,7 @@ async function renderSheetPage(id) {
         <h1>${esc(project.name)} · wiring sheet</h1>
         <span class="chip">A3 · PDF</span>
         <div class="cad-tools">
+          <span id="sh-page-nav"></span>
           <button class="btn btn-ghost btn-sm" id="sh-zoom-out" title="Zoom out">−</button>
           <button class="btn btn-ghost btn-sm" id="sh-zoom-fit" title="Fit the whole sheet (key 0). The mouse wheel zooms at the pointer (or + / -); drag the paper to move around.">Fit</button>
           <button class="btn btn-ghost btn-sm" id="sh-zoom-in" title="Zoom in">+</button>
@@ -2781,6 +2782,11 @@ async function renderSheetPage(id) {
             <p class="small" id="sh-cross" role="status"></p>
             <ul class="sh-xlist" id="sh-xlist"></ul>
             <button class="btn btn-ghost btn-sm" id="sh-reset">Undo all moves</button>
+          </section>
+          <section>
+            <h3>Sheets</h3>
+            <p class="muted small">A large rack can go over several sheets, as AYK's DWG2586: every sheet draws the whole rack and the wiring of the strings you put on it; strings wired on another sheet are fenced in purple with "Please see sheet N, SSC…, for wiring connections." The title block's Sheet field ("1 OF 14") numbers the first; the next count on.</p>
+            <div id="sh-pages"></div>
           </section>
           <section>
             <h3>Title block</h3>
@@ -2803,10 +2809,10 @@ async function renderSheetPage(id) {
      the crossing check and cable lengths all work in real millimetres */
   const unit = sheetUnit(cad.components);
   CADW_K = unit;
-  const model = () => ({ flat: flat, bounds: flat.bounds, jbs: jbs, parts: parts, wiring: wiring, settings: st, logo: logo, unit: unit });
+  const model = () => ({ flat: flat, bounds: flat.bounds, jbs: jbs, parts: parts, wiring: wiring, settings: st, logo: logo, unit: unit, components: cad.components || [] });
   let zoom = 1, P = null, rackKey = '';
   const save = async () => {
-    cad.sheet = { fields: Object.assign({}, F, { scaleText: undefined }), plugs: st.plugs, edits: st.edits };
+    cad.sheet = { fields: Object.assign({}, F, { scaleText: undefined, sheetText: undefined }), plugs: st.plugs, edits: st.edits, pages: st.pages };
     project.updated_at = new Date().toISOString();
     try { await localPutProject(project); } catch (e) { say('Could not save: ' + e.message, 'warn'); }
   };
@@ -2853,12 +2859,57 @@ async function renderSheetPage(id) {
       ctx.stroke(rackPath);
     });
   }
+  let page = 1;
   function render() {
     const svg = sheetSvgTarget();
-    P = sheetDraw(svg, Object.assign(model(), { rack: false, interactive: true, logo: logo ? { src: logo.src, w: logo.w, h: logo.h } : null }));
+    page = Math.min(page, sheetPagesOf(st, wiring).count);
+    P = sheetDraw(svg, Object.assign(model(), { rack: false, interactive: true, page: page, logo: logo ? { src: logo.src, w: logo.w, h: logo.h } : null }));
     $('sh-g').innerHTML = svg.svg();
     paintRack();
     markCrossings();
+    drawPages();
+  }
+  /* ---- sheets of this rack: switch, add, delete, which strings each wires, the fence notes ---- */
+  function drawPages() {
+    const pg = sheetPagesOf(st, wiring), n = pg.count;
+    const num = k => sheetNumber(F, k, n).n;
+    $('sh-page-nav').innerHTML = n > 1 ? `<button class="btn btn-ghost btn-sm" data-page-go="${page - 1}" ${page <= 1 ? 'disabled' : ''} title="Previous sheet">‹</button>
+      <select id="sh-page" aria-label="Sheet">${Array.from({ length: n }, (_, i) => `<option value="${i + 1}" ${i + 1 === page ? 'selected' : ''}>Sheet ${num(i + 1)}</option>`).join('')}</select>
+      <button class="btn btn-ghost btn-sm" data-page-go="${page + 1}" ${page >= n ? 'disabled' : ''} title="Next sheet">›</button>` : '';
+    const away = [];
+    for (let k = 1; k <= n; k++) if (k !== page) {
+      const names = wiring.strings.filter(s => pg.of[s.name] === k).map(s => s.name).sort((x, y) => String(x).localeCompare(String(y), undefined, { numeric: true }));
+      if (names.length) away.push({ k: k, key: page + ':' + k, names: names });
+    }
+    $('sh-pages').innerHTML = `
+      <div class="sh-page-tabs">${Array.from({ length: n }, (_, i) => `<button class="btn btn-sm ${i + 1 === page ? 'btn-primary' : 'btn-ghost'}" data-page-go="${i + 1}">Sheet ${num(i + 1)}</button>`).join('')}
+        <button class="btn btn-ghost btn-sm" id="sh-page-add" title="Add a sheet: the rack is copied onto it; then choose the strings it wires">+ Add sheet</button></div>
+      ${n > 1 ? `<table class="sh-page-table"><thead><tr><th>String</th><th>Wired on</th></tr></thead><tbody>${wiring.strings.map(s => `<tr><td>${esc(s.name)}</td><td><select data-page-of="${esc(s.name)}">${Array.from({ length: n }, (_, i) => `<option value="${i + 1}" ${pg.of[s.name] === i + 1 ? 'selected' : ''}>Sheet ${num(i + 1)}</option>`).join('')}</select></td></tr>`).join('')}</tbody></table>
+        ${away.length ? `<h4>Notes on sheet ${num(page)}</h4>${away.map(w => `<label class="sh-field sh-see"><span>${esc(w.names.join(', '))} (sheet ${num(w.k)})</span><textarea rows="2" data-see="${w.key}" placeholder="Please see sheet ${num(w.k)}, ${esc(w.names.join(' & '))}, for wiring connections.">${esc((st.pages.notes || {})[w.key] || '')}</textarea></label>`).join('')}<p class="muted small">Leave a note empty for AYK's wording. Drag a note on the sheet to move it.</p>` : ''}
+        <button class="btn btn-ghost btn-sm" id="sh-page-del">Delete sheet ${num(page)}</button>`
+      : '<p class="muted small">One sheet: every string is wired on it. Add a sheet to split the wiring.</p>'}`;
+    document.querySelectorAll('[data-page-go]').forEach(b => b.onclick = () => { const k = +b.dataset.pageGo; if (k >= 1 && k <= n) { page = k; render(); } });
+    if ($('sh-page')) $('sh-page').onchange = e => { page = +e.target.value; render(); };
+    $('sh-page-add').onclick = () => {
+      st.pages.count = n + 1; page = n + 1;
+      save(); render();
+      say(`Sheet ${num(page)} added: the rack is copied onto it. Choose the strings it wires in the table.`);
+    };
+    if ($('sh-page-del')) $('sh-page-del').onclick = () => {
+      const mine = wiring.strings.filter(s => pg.of[s.name] === page).map(s => s.name);
+      if (!confirm(`Delete sheet ${num(page)}?${mine.length ? ` ${mine.join(', ')} will be wired on sheet ${num(page === 1 ? 1 : page - 1)} instead.` : ''}`)) return;
+      const back = page === 1 ? 1 : page - 1;
+      const of = {};
+      for (const s of wiring.strings) { const k = pg.of[s.name]; of[s.name] = k === page ? back : k > page ? k - 1 : k; }
+      st.pages.of = of; st.pages.count = n - 1; st.pages.notes = {};
+      page = back; save(); render();
+    };
+    document.querySelectorAll('[data-page-of]').forEach(sel => sel.onchange = () => { st.pages.of = Object.assign({}, st.pages.of, { [sel.dataset.pageOf]: +sel.value }); save(); render(); });
+    document.querySelectorAll('[data-see]').forEach(ta => ta.onchange = () => {
+      st.pages.notes = Object.assign({}, st.pages.notes);
+      if (ta.value.trim()) st.pages.notes[ta.dataset.see] = ta.value.trim(); else delete st.pages.notes[ta.dataset.see];
+      save(); render();
+    });
   }
   /* power cables crossing each other with the edits applied: outlined, and counted */
   const planned = (wiring.crossings || []).length;
@@ -3087,7 +3138,8 @@ async function renderSheetPage(id) {
     const cEl = ev.target.closest('.sh-cable, .sh-hit');
     if (dEl) {
       const kind = dEl.dataset.drag;
-      const lab = kind === 'label' ? wiring.strings.flatMap(s => s.labels).concat(parts).find(l => l.id === dEl.dataset.id) : null;
+      const lab = kind === 'label' ? (wiring.strings.flatMap(s => s.labels).concat(parts).find(l => l.id === dEl.dataset.id) || (dEl.dataset.x ? { x: +dEl.dataset.x, y: +dEl.dataset.y } : null)) : null;
+      if (kind === 'label' && !lab) return;
       drag = { kind: kind, start: s0, el: dEl, id: dEl.dataset.id,
         orig: kind === 'label' ? (st.edits.labels[dEl.dataset.id] || [lab.x, lab.y]).slice()
           : kind === 'plug' ? (st.edits.plugLabel || [-30, -2]).slice() : (st.edits.ground || [0, 0]).slice() };

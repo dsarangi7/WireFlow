@@ -6,6 +6,10 @@
  * A3 landscape page, origin bottom-left, Y up.
  * Only the title-block fields are editable; everything else in
  * the format is fixed.
+ * A rack can take several sheets (AYK DWG2586): every sheet draws the
+ * whole rack, the wiring of the SSC strings given to it, and a purple
+ * outline round the strings wired on another sheet ("Please see
+ * sheet 3, SSC6 & SSC7, for wiring connections.").
  * ============================================================ */
 
 const A3_W = 420, A3_H = 297;
@@ -41,7 +45,74 @@ function sheetSettings(saved, name) {
   const s = saved || {};
   const f = Object.assign(sheetDefaults(name), s.fields || {});
   if (!Array.isArray(f.revs) || !f.revs.length) f.revs = sheetDefaults(name).revs;
-  return { fields: f, plugs: s.plugs !== false, edits: Object.assign({ cables: {}, labels: {}, kinds: {}, ground: null, plugLabel: null }, s.edits || {}) };
+  return { fields: f, plugs: s.plugs !== false, edits: Object.assign({ cables: {}, labels: {}, kinds: {}, ground: null, plugLabel: null }, s.edits || {}),
+    pages: Object.assign({ count: 1, of: {}, notes: {} }, s.pages || {}) };
+}
+
+/* ---------------- sheets of one rack ---------------- */
+/** How many sheets, and which sheet each SSC string is wired on (1 unless given). */
+function sheetPagesOf(st, W) {
+  const pg = st.pages || { count: 1, of: {} };
+  const count = Math.max(1, Math.round(+pg.count || 1));
+  const of = {};
+  for (const s of (W && W.strings) || []) { const n = Math.round(+((pg.of || {})[s.name])) || 1; of[s.name] = Math.min(count, Math.max(1, n)); }
+  return { count: count, of: of };
+}
+/** One outline round a set of rectangles [x0, y0, x1, y1] (drawing units), each padded by
+    padX / padY so neighbours across a cable tray join into one area: the area's boundary as
+    merged straight segments. */
+function sheetFence(rects, padX, padY) {
+  const R = rects.map(r => [r[0] - padX, r[1] - padY, r[2] + padX, r[3] + padY]);
+  if (!R.length) return [];
+  const xs = Array.from(new Set(R.flatMap(r => [r[0], r[2]]))).sort((a, b) => a - b);
+  const ys = Array.from(new Set(R.flatMap(r => [r[1], r[3]]))).sort((a, b) => a - b);
+  const inside = (i, j) => {
+    if (i < 0 || j < 0 || i >= xs.length - 1 || j >= ys.length - 1) return false;
+    const cx = (xs[i] + xs[i + 1]) / 2, cy = (ys[j] + ys[j + 1]) / 2;
+    return R.some(r => cx > r[0] && cx < r[2] && cy > r[1] && cy < r[3]);
+  };
+  const segs = [];
+  for (let i = 0; i < xs.length - 1; i++) for (let j = 0; j < ys.length - 1; j++) {
+    if (!inside(i, j)) continue;
+    if (!inside(i, j - 1)) segs.push([[xs[i], ys[j]], [xs[i + 1], ys[j]]]);
+    if (!inside(i, j + 1)) segs.push([[xs[i], ys[j + 1]], [xs[i + 1], ys[j + 1]]]);
+    if (!inside(i - 1, j)) segs.push([[xs[i], ys[j]], [xs[i], ys[j + 1]]]);
+    if (!inside(i + 1, j)) segs.push([[xs[i + 1], ys[j]], [xs[i + 1], ys[j + 1]]]);
+  }
+  const merged = [];
+  for (const horiz of [true, false]) {
+    const list = segs.filter(g => (g[0][1] === g[1][1]) === horiz).sort((a, b) => horiz ? (a[0][1] - b[0][1] || a[0][0] - b[0][0]) : (a[0][0] - b[0][0] || a[0][1] - b[0][1]));
+    for (const g of list) {
+      const m = merged[merged.length - 1];
+      if (m && horiz && m[0][1] === g[0][1] && m[1][1] === g[0][1] && m[1][0] === g[0][0]) { m[1] = g[1]; continue; }
+      if (m && !horiz && m[0][0] === g[0][0] && m[1][0] === g[0][0] && m[1][1] === g[0][1]) { m[1] = g[1]; continue; }
+      merged.push([g[0].slice(), g[1].slice()]);
+    }
+  }
+  return merged;
+}
+/** The rectangles a string covers: its modules and SSC from the drawing's parts when given,
+    else the boxes of its saved dotted outline. */
+function sheetStringRects(W, s, comps) {
+  const outline = (W.outline || []).find(o => o.ssc === s.name);
+  const box = segs => { const xs = segs.flatMap(g => [g[0][0], g[1][0]]), ys = segs.flatMap(g => [g[0][1], g[1][1]]); return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)]; };
+  if (comps && comps.length) {
+    const byId = new Map(comps.map(c => [c.id, c]));
+    const rects = (s.modules || []).map(id => byId.get(id)).filter(Boolean).map(c => [c.x0, c.y0, c.x1, c.y1]);
+    if (outline && outline.segs.length) {
+      const b = box(outline.segs);
+      for (const c of comps) if (c.kind === 'ssc' && c.x0 >= b[0] && c.x1 <= b[2] && c.y0 >= b[1] && c.y1 <= b[3]) rects.push([c.x0, c.y0, c.x1, c.y1]);
+    }
+    if (rects.length) return rects;
+  }
+  return outline && outline.segs.length ? [box(outline.segs)] : [];
+}
+/** The SHEET field of sheet k (1-based): the title block's "1 OF 14" is the first sheet;
+    the next sheets count on from it. */
+function sheetNumber(F, k, count) {
+  const m = String(F.sheet || '').match(/(\d+)\s*OF\s*(\d+)/i);
+  const first = m ? +m[1] : 1, total = Math.max(m ? +m[2] : 1, first + count - 1);
+  return { n: first + k - 1, text: `${first + k - 1} OF ${total}` };
 }
 
 /* ---------------- geometry: drawing mm -> sheet mm ---------------- */
@@ -212,7 +283,7 @@ function sheetFrame(doc, st, nStrings, logo) {
   doc.text('Rack Weight:', 324.5, 24.2, { size: 6 * SHEET_PT });
   doc.text(F.bankWeight || '', 339, 20.2, { size: 2.3, align: 'center' });
   doc.text('SCALE: ' + (F.scaleText || ''), 292.5, 13, { size: 2.3 });
-  doc.text('SHEET ' + (F.sheet || ''), 324.5, 13, { size: 2.3 });
+  doc.text('SHEET ' + (F.sheetText || F.sheet || ''), 324.5, 13, { size: 2.3 });
   /* company block (fixed logo + name) and document fields */
   doc.line(355, 45, 410, 45, thin).line(355, 37, 410, 37, thin).line(355, 29, 410, 29, thin).line(355, 21, 410, 21, thin);
   /* logo kept in proportion, as tall as the company cell allows */
@@ -247,7 +318,9 @@ function sheetFrame(doc, st, nStrings, logo) {
 /**
  * Draws the whole sheet onto `doc` (pdfDoc or sheetSvgTarget).
  * model: {flat, bounds, jbs, wiring, settings, logo, rack:boolean, interactive:boolean,
- *         unit: drawing units per real mm (1 for mm drawings, ~0.0225 for a 1:44 rack)}
+ *         unit: drawing units per real mm (1 for mm drawings, ~0.0225 for a 1:44 rack),
+ *         page: which sheet of the rack (1 when not given),
+ *         components: the drawing's parts (so a fence follows the modules exactly)}
  * Returns the placement (scale, transform) used.
  */
 function sheetDraw(doc, model) {
@@ -259,7 +332,12 @@ function sheetDraw(doc, model) {
   const W = model.wiring;
   const E = st.edits;
   const ia = !!model.interactive;
+  /* this sheet of the rack: its strings are wired here, the others are fenced */
+  const pages = sheetPagesOf(st, W), page = Math.min(pages.count, Math.max(1, model.page || 1));
+  const here = name => (pages.of[name] || 1) === page;
+  st.fields.sheetText = sheetNumber(st.fields, page, pages.count).text;
   sheetFrame(doc, st, W ? W.strings.length : 0, model.logo);
+  delete st.fields.sheetText;
 
   /* rack linework (PDF only; the editor paints it on a canvas underneath) */
   if (model.rack && model.flat) {
@@ -277,7 +355,7 @@ function sheetDraw(doc, model) {
 
   /* dotted box around each string */
   if (ia) doc.group(true, { cls: 'sh-outline' });
-  for (const o of W.outline || []) for (const sg of o.segs) doc.line(P.X(sg[0][0]), P.Y(sg[0][1]), P.X(sg[1][0]), P.Y(sg[1][1]), { w: 0.5, dash: [0.01, 1.3] });
+  for (const o of W.outline || []) if (here(o.ssc)) for (const sg of o.segs) doc.line(P.X(sg[0][0]), P.Y(sg[0][1]), P.X(sg[1][0]), P.Y(sg[1][1]), { w: 0.5, dash: [0.01, 1.3] });
   if (ia) doc.group(false);
 
   /* customer power plugs (Note 2) */
@@ -313,16 +391,39 @@ function sheetDraw(doc, model) {
   /* cables: communication under power */
   for (const kind of ['comm', 'power']) {
     for (const c of W.cables) {
-      if (c.kind !== kind) continue;
+      if (c.kind !== kind || (c.ssc && !here(c.ssc))) continue;
       const pts = (E.cables && E.cables[c.id]) || c.pts;
       doc.poly(pts.map(P.pt), { w: kind === 'power' ? 0.32 : 0.26, color: SHEET_COLORS[kind], id: ia ? c.id : null, cls: ia ? 'sh-cable' : null, hit: ia });
     }
   }
 
   /* module labels S1-M1 … */
-  for (const s of W.strings) for (const l of s.labels) {
+  for (const s of W.strings) if (here(s.name)) for (const l of s.labels) {
     const p = (E.labels && E.labels[l.id]) || [l.x, l.y];
     doc.text(l.text, P.X(p[0]), P.Y(p[1]) - 0.9, { size: 2.6, bold: true, color: SHEET_COLORS.label, align: 'center', cls: ia ? 'sh-drag' : null, data: ia ? { drag: 'label', id: l.id } : null });
+  }
+
+  /* the strings wired on other sheets: one purple outline per sheet they are on, and the note
+     "Please see sheet N, SSC6 & SSC7, for wiring connections." over it (DWG2586) */
+  if (pages.count > 1) {
+    for (let other = 1; other <= pages.count; other++) {
+      if (other === page) continue;
+      const away = W.strings.filter(s => (pages.of[s.name] || 1) === other)
+        .sort((x, y) => String(x.name).localeCompare(String(y.name), undefined, { numeric: true }));
+      if (!away.length) continue;
+      /* padded 60 mm sideways (bridges the 100 mm cable tray between module columns) and 12 mm up and down */
+      const segs = sheetFence(away.flatMap(s => sheetStringRects(W, s, model.components)), 60 * u, 12 * u);
+      if (!segs.length) continue;
+      if (ia) doc.group(true, { cls: 'sh-away' });
+      for (const sg of segs) doc.line(P.X(sg[0][0]), P.Y(sg[0][1]), P.X(sg[1][0]), P.Y(sg[1][1]), { w: 0.35, color: SHEET_COLORS.label });
+      if (ia) doc.group(false);
+      const top = Math.max(...segs.map(sg => Math.max(sg[0][1], sg[1][1]))), xs = segs.flatMap(sg => [sg[0][0], sg[1][0]]);
+      const key = page + ':' + other, id = 'see:' + key;
+      const note = (st.pages.notes || {})[key] ||
+        `Please see sheet ${sheetNumber(st.fields, other, pages.count).n}, ${away.map(s => s.name).join(' & ')}, for wiring connections.`;
+      const at = (E.labels && E.labels[id]) || [(Math.min(...xs) + Math.max(...xs)) / 2, top];
+      doc.text(note, P.X(at[0]), P.Y(at[1]) + 2.2, { size: 2.6, bold: true, align: 'center', cls: ia ? 'sh-drag' : null, data: ia ? { drag: 'label', id: id, see: key, x: at[0], y: at[1] } : null });
+    }
   }
 
   /* SSC / MSM names on their parts (SSC1 …, MSM1), as on the drawing */
@@ -351,7 +452,11 @@ function sheetDraw(doc, model) {
  */
 async function sheetPdf(model) {
   const doc = pdfDoc({ w: A3_W, h: A3_H, title: (model.settings.fields.docNumber || 'Wiring Diagram') + ' ' + (model.settings.fields.designName || '') });
-  sheetDraw(doc, Object.assign({}, model, { rack: true, interactive: false }));
+  const n = sheetPagesOf(model.settings, model.wiring).count;
+  for (let k = 1; k <= n; k++) {
+    if (k > 1) doc.newPage();
+    sheetDraw(doc, Object.assign({}, model, { rack: true, interactive: false, page: k }));
+  }
   return doc.bytes();
 }
 

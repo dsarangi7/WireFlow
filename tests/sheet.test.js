@@ -107,6 +107,27 @@ function checkPdf(bytes) {
   ok('sheet PDF: logo embedded as the real JPEG (313 x 400 px)', im && +im[1] === jpg.length && raw.charCodeAt(im.index + im[0].length) === 0xFF && raw.charCodeAt(im.index + im[0].length + 1) === 0xD8);
   const draw = checkPdf(withLogo).content.match(/q ([\d.]+) 0 0 ([\d.]+) [\d.]+ [\d.]+ cm \/Im1 Do Q/);
   ok('sheet PDF: logo keeps its proportions and fits the 10 mm company cell', draw && Math.abs(draw[1] / draw[2] - 313 / 400) < 0.01 && +draw[2] <= 9.5, draw && draw.slice(1).join(' x '));
+
+  /* several sheets of one rack (AYK DWG2586): each wires its own strings, the rest are fenced */
+  const names = wiring.strings.map(s => s.name).sort((x, y) => x.localeCompare(y, undefined, { numeric: true }));
+  const multi = L.sheetSettings({ fields: { sheet: '3 OF 14' }, pages: { count: 3, of: { [names[3]]: 2, [names[4]]: 3 } } }, 'x');
+  const sheetSvg = page => { const t = L.sheetSvgTarget(); L.sheetDraw(t, { bounds: bounds, jbs: jbs, parts: parts, wiring: wiring, settings: multi, interactive: true, page: page }); return t.svg(); };
+  const s1 = sheetSvg(1), s2 = sheetSvg(2), s3 = sheetSvg(3);
+  const cablesOf = name => wiring.cables.filter(c => c.ssc === name).length;
+  const count = o => (o.match(/class="sh-cable"/g) || []).length;
+  ok('sheets: each sheet draws only the cables of its own strings', count(s1) === cablesOf(names[0]) + cablesOf(names[1]) + cablesOf(names[2]) && count(s2) === cablesOf(names[3]) && count(s3) === cablesOf(names[4]), [count(s1), count(s2), count(s3)].join(' / '));
+  ok('sheets: module labels only for the strings wired there', (s2.match(/>S\d-M\d+</g) || []).length === wiring.strings[3].labels.length);
+  ok('sheets: numbered on from the title block (3, 4, 5 OF 14)', s1.includes('SHEET 3 OF 14') && s2.includes('SHEET 4 OF 14') && s3.includes('SHEET 5 OF 14'));
+  ok('sheets: strings wired elsewhere are fenced with "Please see sheet N"', s1.includes(`Please see sheet 4, ${names[3]}, for wiring connections.`) && s1.includes(`Please see sheet 5, ${names[4]}, for wiring connections.`) &&
+    s2.includes(`Please see sheet 3, ${names[0]} &amp; ${names[1]} &amp; ${names[2]}, for wiring connections.`));
+  ok('sheets: the fence is purple', /class="sh-away"><polyline[^>]*stroke="#7c3aed"/.test(s1));
+  ok('sheets: one sheet only = no fence and no "see sheet" note', !/Please see sheet/.test(svg.svg()) && !/sh-away/.test(svg.svg()));
+  const multiNote = L.sheetSettings({ pages: { count: 2, of: { [names[4]]: 2 }, notes: { '1:2': 'SSC5: see the next sheet' } } }, 'x');
+  const tn = L.sheetSvgTarget(); L.sheetDraw(tn, { bounds: bounds, jbs: jbs, wiring: wiring, settings: multiNote, page: 1 });
+  ok('sheets: the engineer can change the note\'s words', tn.svg().includes('SSC5: see the next sheet') && !tn.svg().includes('Please see sheet'));
+  const pdf3 = await L.sheetPdf({ bounds: bounds, jbs: jbs, wiring: wiring, settings: multi, flat: { polylines: [], circles: [], texts: [] } });
+  const raw3 = Buffer.from(pdf3).toString('latin1');
+  ok('sheets: the PDF has one page per sheet', /\/Count 3 /.test(raw3) && (raw3.match(/\/Type \/Page /g) || []).length === 3);
   fs.mkdirSync(path.join(ROOT, 'prototype-output'), { recursive: true });
   fs.writeFileSync(path.join(ROOT, 'prototype-output', 'sheet-test.pdf'), pdf);
 

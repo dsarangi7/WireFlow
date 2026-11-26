@@ -752,3 +752,13 @@ select.cad-need { border-color: #f59e0b; box-shadow: 0 0 0 2px rgba(245, 158, 11
 .el-ed .ed-shape { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 6px; }
 .el-ed .ed-shape label { display: grid; gap: 3px; font-size: 12px; color: #9aabc6; }
 .el-ed .ed-shape select, .el-ed .ed-shape input { padding: 5px 7px; border-radius: 8px; border: 1px solid rgba(120,145,185,.3); background: #0d1528; color: #f3f6fc; font: inherit; font-size: 13px; }
+
+/* wiring sheet: sheets of one rack */
+.sh-page-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 10px; }
+.sh-page-table { width: 100%; border-collapse: collapse; font-size: 13px; margin-bottom: 10px; }
+.sh-page-table th { text-align: left; font-weight: 600; opacity: .75; padding: 4px 6px; }
+.sh-page-table td { padding: 3px 6px; border-top: 1px solid rgba(120,145,185,.18); }
+.sh-page-table select, #sh-page { padding: 4px 7px; border-radius: 8px; border: 1px solid rgba(120,145,185,.3); background: #0d1528; color: #f3f6fc; font: inherit; font-size: 13px; }
+.sh-see textarea { width: 100%; box-sizing: border-box; padding: 6px 8px; border-radius: 8px; border: 1px solid rgba(120,145,185,.3); background: #0d1528; color: #f3f6fc; font: inherit; font-size: 12px; resize: vertical; }
+.sh-see { display: grid; gap: 4px; }
+.sh-paper .sh-away { pointer-events: none; }
