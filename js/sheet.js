@@ -46,7 +46,63 @@ function sheetSettings(saved, name) {
   const f = Object.assign(sheetDefaults(name), s.fields || {});
   if (!Array.isArray(f.revs) || !f.revs.length) f.revs = sheetDefaults(name).revs;
   return { fields: f, plugs: s.plugs !== false, edits: Object.assign({ cables: {}, labels: {}, kinds: {}, ground: null, plugLabel: null }, s.edits || {}),
-    pages: Object.assign({ count: 1, of: {}, notes: {} }, s.pages || {}) };
+    pages: Object.assign({ count: 1, of: {}, notes: {} }, s.pages || {}),
+    racks: Array.isArray(s.racks) ? s.racks.slice() : [] };
+}
+
+/* ---------------- several racks on one sheet ---------------- */
+/**
+ * Racks of one project drawn side by side on one sheet (AYK DWG2586 sheet 2: Rack 2 and Rack 3).
+ * racks: [{ key, name, flat, wiring, components, parts, jbs, unit }], the sheet's own rack first.
+ * Every further rack is scaled to the first rack's drawing units and set gapMm (real mm) to the
+ * right of the one before, bottoms level; its ids get the rack's key, so its edits stay its own,
+ * and an SSC name another rack already has is given the rack's name ("Rack 3 SSC1").
+ * Returns one model: { flat, jbs, parts, wiring, components, ground0, grounds, racks }.
+ */
+function sheetMergeRacks(racks, gapMm) {
+  const u0 = racks[0].unit > 0 ? racks[0].unit : 1;
+  const out = { flat: { polylines: [], circles: [], texts: [], bounds: null }, jbs: [], parts: [], components: [], grounds: [], racks: [],
+    wiring: { cables: [], strings: [], outline: [], crossings: [], portHits: [], warnings: [] } };
+  const names = new Set();
+  let right = null, floor = null, anyWiring = false;
+  racks.forEach((r, i) => {
+    const B = r.flat.bounds, k = u0 / (r.unit > 0 ? r.unit : 1);
+    const dx = i ? right + gapMm * u0 - B.minX * k : 0, dy = i ? floor - B.minY * k : 0;
+    const X = x => x * (i ? k : 1) + dx, Y = y => y * (i ? k : 1) + dy, sc = i ? k : 1;
+    const pt = p => [X(p[0]), Y(p[1])];
+    const pre = i ? r.key + ':' : '';
+    const box = c => Object.assign({}, c, { id: pre + c.id, x0: X(c.x0), y0: Y(c.y0), x1: X(c.x1), y1: Y(c.y1) });
+    for (const p of r.flat.polylines) { const a = p.pts, q = new Array(a.length); for (let j = 0; j < a.length; j += 2) { q[j] = X(a[j]); q[j + 1] = Y(a[j + 1]); } out.flat.polylines.push(Object.assign({}, p, { pts: q })); }
+    for (const c of r.flat.circles) out.flat.circles.push(Object.assign({}, c, { cx: X(c.cx), cy: Y(c.cy), r: c.r * sc }));
+    for (const t of r.flat.texts || []) out.flat.texts.push(Object.assign({}, t, { x: X(t.x), y: Y(t.y), h: (t.h || 0) * sc }));
+    const b = { minX: X(B.minX), minY: Y(B.minY), maxX: X(B.maxX), maxY: Y(B.maxY) };
+    const ob = out.flat.bounds;
+    out.flat.bounds = ob ? { minX: Math.min(ob.minX, b.minX), minY: Math.min(ob.minY, b.minY), maxX: Math.max(ob.maxX, b.maxX), maxY: Math.max(ob.maxY, b.maxY) } : b;
+    if (i === 0) floor = b.minY;
+    right = b.maxX;
+    out.racks.push({ key: r.key, name: r.name, bounds: b });
+    for (const j of r.jbs || []) out.jbs.push(box(j));
+    for (const c of r.components || []) out.components.push(box(c));
+    for (const p of r.parts || []) out.parts.push(Object.assign({}, p, { id: pre + p.id, x: X(p.x), y: Y(p.y) }));
+    /* every rack's own grounding point (the sheet's rack keeps the draggable one) */
+    const g = sheetGroundPoint(r.flat, B, r.unit), gp = { x: X(g.x), y: Y(g.y), r: g.r * sc };
+    if (i) out.grounds.push(gp); else out.ground0 = gp;
+    const W = r.wiring;
+    if (!W) return;
+    anyWiring = true;
+    const rename = new Map();
+    for (const st of W.strings) { let n = st.name; if (names.has(n)) n = (r.name || r.key) + ' ' + n; names.add(n); rename.set(st.name, n); }
+    const nm = n => rename.get(n) || n;
+    for (const c of W.cables) out.wiring.cables.push(Object.assign({}, c, { id: pre + c.id, ssc: nm(c.ssc), pts: c.pts.map(pt),
+      ways: c.ways ? c.ways.map(w => Object.assign({}, w, { pts: w.pts.map(pt) })) : undefined }));
+    for (const st of W.strings) out.wiring.strings.push(Object.assign({}, st, { name: nm(st.name), modules: (st.modules || []).map(m => pre + m),
+      labels: st.labels.map(l => Object.assign({}, l, { id: pre + l.id, x: X(l.x), y: Y(l.y) })) }));
+    for (const o of W.outline || []) out.wiring.outline.push({ ssc: nm(o.ssc), segs: o.segs.map(g => g.map(pt)) });
+    for (const x of W.crossings || []) out.wiring.crossings.push(Object.assign({}, x, x.a ? { a: pre + x.a, b: pre + x.b } : {}));
+    if (i === 0) Object.assign(out.wiring, { key: W.key, pair: W.pair, custom: W.custom, generated: W.generated });
+  });
+  if (!anyWiring) out.wiring = null;
+  return out;
 }
 
 /* ---------------- sheets of one rack ---------------- */
@@ -320,7 +376,8 @@ function sheetFrame(doc, st, nStrings, logo) {
  * model: {flat, bounds, jbs, wiring, settings, logo, rack:boolean, interactive:boolean,
  *         unit: drawing units per real mm (1 for mm drawings, ~0.0225 for a 1:44 rack),
  *         page: which sheet of the rack (1 when not given),
- *         components: the drawing's parts (so a fence follows the modules exactly)}
+ *         components: the drawing's parts (so a fence follows the modules exactly),
+ *         ground0 / grounds: the sheet's rack's grounding point and the further racks' (sheetMergeRacks)}
  * Returns the placement (scale, transform) used.
  */
 function sheetDraw(doc, model) {
@@ -429,11 +486,11 @@ function sheetDraw(doc, model) {
   /* SSC / MSM names on their parts (SSC1 …, MSM1), as on the drawing */
   for (const l of model.parts || []) {
     const p = (E.labels && E.labels[l.id]) || [l.x, l.y];
-    doc.text(l.text, P.X(p[0]), P.Y(p[1]) - 1.2, { size: 3.4, bold: true, color: SHEET_COLORS.label, align: 'center', cls: ia ? 'sh-drag' : null, data: ia ? { drag: 'label', id: l.id } : null });
+    doc.text(l.text, P.X(p[0]), P.Y(p[1]) - 1.2, { size: l.size || 3.4, bold: l.bold !== false, color: l.color || SHEET_COLORS.label, align: 'center', cls: ia ? 'sh-drag' : null, data: ia ? { drag: 'label', id: l.id } : null });
   }
 
   /* grounding point (Note 1): arrow up to the bolt hole on the rack's bottom-right upright */
-  const gp = sheetGroundPoint(model.flat, model.bounds, u);
+  const gp = model.ground0 || sheetGroundPoint(model.flat, model.bounds, u);
   const tip = P.pt([gp.x, gp.y - gp.r]);
   const goff = E.ground || [0, 0];
   const base = [tip[0] + goff[0], tip[1] - 19 + goff[1]];
@@ -443,6 +500,14 @@ function sheetDraw(doc, model) {
   doc.text('Grounding Point', base[0], base[1] - 4.6, { size: 3.4, align: 'center' });
   doc.text('(Note1)', base[0] + pdfTextWidth('Grounding Point', 3.4) / 2 - 0.5, base[1] - 1.6, { size: 1.8 });
   if (ia) doc.group(false);
+  /* the other racks on this sheet each have their own grounding point */
+  for (const g of model.grounds || []) {
+    const t2 = P.pt([g.x, g.y - g.r]), b2 = [t2[0], t2[1] - 19];
+    doc.line(b2[0], b2[1], t2[0], t2[1] - 2.4, { w: 0.6, color: '#111' });
+    doc.poly([[t2[0], t2[1]], [t2[0] - 1.1, t2[1] - 2.8], [t2[0] + 1.1, t2[1] - 2.8]], { close: true, fill: '#111', stroke: false });
+    doc.text('Grounding Point', b2[0], b2[1] - 4.6, { size: 3.4, align: 'center' });
+    doc.text('(Note1)', b2[0] + pdfTextWidth('Grounding Point', 3.4) / 2 - 0.5, b2[1] - 1.6, { size: 1.8 });
+  }
   return P;
 }
 

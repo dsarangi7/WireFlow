@@ -8,7 +8,7 @@ const zlib = require('zlib');
 const ROOT = path.resolve(__dirname, '..');
 const src = f => fs.readFileSync(path.join(ROOT, 'js', f), 'utf8');
 const L = new Function(src('pdf.js') + src('sheet.js') + src('cadwire.js') + src('cad.js') +
-  '\nreturn { sheetUnit, pdfDoc, pdfTextWidth, sheetSettings, sheetDraw, sheetPdf, sheetSvgTarget, sheetPlace, sheetGroundPoint, cadWirePlan, cadWireSave, cadParseDxf, cadFlatten };')();
+  '\nreturn { sheetMergeRacks, sheetUnit, pdfDoc, pdfTextWidth, sheetSettings, sheetDraw, sheetPdf, sheetSvgTarget, sheetPlace, sheetGroundPoint, cadWirePlan, cadWireSave, cadParseDxf, cadFlatten };')();
 
 let passed = 0; const failed = [];
 function ok(name, cond, info) { if (cond) passed++; else failed.push(name + (info ? '  [' + info + ']' : '')); console.log((cond ? 'PASS  ' : 'FAIL  ') + name + (info ? '  [' + info + ']' : '')); }
@@ -128,6 +128,25 @@ function checkPdf(bytes) {
   const pdf3 = await L.sheetPdf({ bounds: bounds, jbs: jbs, wiring: wiring, settings: multi, flat: { polylines: [], circles: [], texts: [] } });
   const raw3 = Buffer.from(pdf3).toString('latin1');
   ok('sheets: the PDF has one page per sheet', /\/Count 3 /.test(raw3) && (raw3.match(/\/Type \/Page /g) || []).length === 3);
+
+  /* two racks of one project on one sheet (DWG2586 sheet 2): the second sits to the right */
+  const flatA = { polylines: [{ pts: [bounds.minX, bounds.minY, bounds.maxX, bounds.minY, bounds.maxX, bounds.maxY, bounds.minX, bounds.maxY], closed: true, layer: '0' }], circles: [], texts: [], bounds: bounds };
+  const rackOf = (key, name, unit) => ({ key: key, name: name, flat: flatA, wiring: wiring, components: comps, parts: parts, jbs: jbs, unit: unit });
+  const M = L.sheetMergeRacks([rackOf('r1', 'Rack 2', 1), rackOf('r2', 'Rack 3', 1)], 600);
+  ok('two racks: both racks\' cables, the second\'s with its own ids', M.wiring.cables.length === 2 * wiring.cables.length && M.wiring.cables.filter(c => c.id.startsWith('r2:')).length === wiring.cables.length);
+  ok('two racks: side by side, 600 mm apart, bottoms level', Math.abs(M.racks[1].bounds.minX - (bounds.maxX + 600)) < 1e-6 && Math.abs(M.racks[1].bounds.minY - bounds.minY) < 1e-6 && M.flat.bounds.maxX > bounds.maxX * 1.5);
+  ok('two racks: an SSC name both have gets the rack\'s name', M.wiring.strings.some(st => st.name === 'Rack 3 SSC1') && new Set(M.wiring.strings.map(st => st.name)).size === 10);
+  ok('two racks: each rack keeps its own grounding point', M.grounds.length === 1 && M.ground0.x < bounds.maxX && M.grounds[0].x > bounds.maxX + 600);
+  const half = L.sheetMergeRacks([rackOf('r1', 'Rack 2', 1), rackOf('r2', 'Rack 3', 0.5)], 600);
+  ok('two racks: a rack drawn at another scale is brought to the first rack\'s units', Math.abs((half.racks[1].bounds.maxX - half.racks[1].bounds.minX) - 2 * (bounds.maxX - bounds.minX)) < 1e-6);
+  const svgM = L.sheetSvgTarget();
+  L.sheetDraw(svgM, { bounds: M.flat.bounds, jbs: M.jbs, parts: M.parts, wiring: M.wiring, settings: L.sheetSettings({}, 'x'), components: M.components, grounds: M.grounds, ground0: M.ground0, interactive: true });
+  const outM = svgM.svg();
+  ok('two racks: drawn on one sheet, every cable, two grounding points', (outM.match(/class="sh-cable"/g) || []).length === 280 && (outM.match(/>Grounding Point</g) || []).length === 2);
+  const stM = L.sheetSettings({ pages: { count: 2, of: Object.fromEntries(M.wiring.strings.filter(st => /^Rack 3/.test(st.name)).map(st => [st.name, 2])) } }, 'x');
+  const svgM2 = L.sheetSvgTarget();
+  L.sheetDraw(svgM2, { bounds: M.flat.bounds, jbs: M.jbs, parts: M.parts, wiring: M.wiring, settings: stM, components: M.components, grounds: M.grounds, page: 1 });
+  ok('two racks over two sheets: the second rack fenced on sheet 1', (svgM2.svg().match(/class="sh-cable"/g) || []).length === 0 && /Please see sheet 2, Rack 3 SSC1 &amp;/.test(svgM2.svg()));
   fs.mkdirSync(path.join(ROOT, 'prototype-output'), { recursive: true });
   fs.writeFileSync(path.join(ROOT, 'prototype-output', 'sheet-test.pdf'), pdf);
 

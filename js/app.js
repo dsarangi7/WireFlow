@@ -2739,15 +2739,38 @@ async function renderSheetPage(id) {
   const back = `<a class="btn btn-primary" href="#/cad/${id}">Back to the drawing</a>`;
   if (!project || !record || !record.blob) { shell(`<div class="empty"><h3>Drawing not found</h3>${back}</div>`, 'dash'); return; }
   const cad = (project.config && project.config.cad) || {};
-  const wiring = cad.wiring && cad.wiring.plan;
+  let wiring = cad.wiring && cad.wiring.plan;
   if (!wiring) { shell(`<div class="empty"><h3>No wiring yet</h3><p>Number the modules on the drawing first (Wiring card: Number modules by clicking).</p>${back}</div>`, 'dash'); return; }
   let flat;
   try { flat = cadFlatten(cadParseDxf(await record.blob.text())); } catch (e) { shell(`<div class="empty"><h3>Could not read the drawing</h3><p>${esc(e.message)}</p>${back}</div>`, 'dash'); return; }
-  const jbs = (cad.components || []).filter(c => c.kind === 'jb');
+  let jbs = (cad.components || []).filter(c => c.kind === 'jb');
   /* SSC and MSM names for the sheet, centred on each part */
-  const parts = (cad.components || []).filter(c => c.kind === 'ssc' || c.kind === 'msm').map(c => ({
-    id: 'part:' + cadCompKey(c), text: cadCompLabel(c, cad.labels || {}), x: (c.x0 + c.x1) / 2, y: c.y0 + (c.y1 - c.y0) * 0.62 }));
+  const partsOf = c2 => (c2.components || []).filter(c => c.kind === 'ssc' || c.kind === 'msm').map(c => ({
+    id: 'part:' + cadCompKey(c), text: cadCompLabel(c, c2.labels || {}), x: (c.x0 + c.x1) / 2, y: c.y0 + (c.y1 - c.y0) * 0.62 }));
+  let parts = partsOf(cad);
   const st = sheetSettings(cad.sheet, project.name);
+  /* other racks of the same project drawn beside this one (AYK DWG2586 sheet 2: Rack 2 and Rack 3) */
+  const projectRacks = project.folder ? (await localProjects()).filter(p => p.underlay_kind === 'cad' && p.folder === project.folder && p.id !== project.id)
+    .sort((x, y) => String(x.name).localeCompare(String(y.name), undefined, { numeric: true })) : [];
+  st.racks = st.racks.filter(rid => projectRacks.some(p => p.id === rid));
+  let sheetComps = cad.components || [], grounds = [], ground0 = null, rackSkipped = [];
+  if (st.racks.length) {
+    const list = [{ key: 'r' + project.id, name: project.name, flat: flat, wiring: wiring, components: cad.components || [], parts: parts, jbs: jbs, unit: sheetUnit(cad.components) }];
+    for (const rid of st.racks) {
+      const p = projectRacks.find(x => x.id === rid), c2 = (p.config && p.config.cad) || {};
+      let f = null;
+      try { const rec = await localGetUnderlay(rid); f = rec && rec.blob ? cadFlatten(cadParseDxf(await rec.blob.text())) : null; } catch (e) { f = null; }
+      if (!f) { rackSkipped.push(p.name); continue; }
+      list.push({ key: 'r' + rid, name: p.name, flat: f, wiring: (c2.wiring && c2.wiring.plan) || null, components: c2.components || [], parts: partsOf(c2), jbs: (c2.components || []).filter(c => c.kind === 'jb'), unit: sheetUnit(c2.components) });
+    }
+    if (list.length > 1) {
+      const M = sheetMergeRacks(list, 600);
+      flat = M.flat; wiring = M.wiring; jbs = M.jbs; sheetComps = M.components; grounds = M.grounds; ground0 = M.ground0;
+      /* each rack's name above it, as DWG2586 */
+      const u0 = list[0].unit;
+      parts = M.parts.concat(M.racks.map(r => ({ id: 'rack:' + r.key, text: r.name, x: (r.bounds.minX + r.bounds.maxX) / 2, y: r.bounds.maxY + 150 * u0, size: 4.5, color: '#111827', bold: false })));
+    }
+  }
   const logo = await sheetLogo().catch(() => null);
   const F = st.fields;
   const fieldRow = (key, label) => `<label class="sh-field"><span>${label}</span><input type="text" data-f="${key}" value="${esc(F[key] || '')}" maxlength="60"></label>`;
@@ -2784,6 +2807,14 @@ async function renderSheetPage(id) {
             <button class="btn btn-ghost btn-sm" id="sh-reset">Undo all moves</button>
           </section>
           <section>
+            <h3>Racks on this sheet</h3>
+            ${projectRacks.length ? `<p class="muted small">Draw other racks of this project beside ${esc(project.name)}, each with its own wiring (as AYK's DWG2586: Rack 2 and Rack 3 on one sheet). Each rack is still taught, numbered and wired on its own drawing.</p>
+              <ul class="sh-racks">${projectRacks.map(p => { const w = !!(p.config && p.config.cad && p.config.cad.wiring && p.config.cad.wiring.plan);
+                return `<li><label><input type="checkbox" data-rack="${p.id}" ${st.racks.includes(p.id) ? 'checked' : ''}> ${esc(p.name)}</label>${w ? '' : ' <span class="muted small">(not wired yet: drawn without wiring)</span>'}</li>`; }).join('')}</ul>
+              ${rackSkipped.length ? `<p class="small warn">Could not read the drawing of ${esc(rackSkipped.join(', '))}.</p>` : ''}`
+              : '<p class="muted small">Put this rack in a project with its other racks to draw several racks on one sheet.</p>'}
+          </section>
+          <section>
             <h3>Sheets</h3>
             <p class="muted small">A large rack can go over several sheets, as AYK's DWG2586: every sheet draws the whole rack and the wiring of the strings you put on it; strings wired on another sheet are fenced in purple with "Please see sheet N, SSC…, for wiring connections." The title block's Sheet field ("1 OF 14") numbers the first; the next count on.</p>
             <div id="sh-pages"></div>
@@ -2809,10 +2840,10 @@ async function renderSheetPage(id) {
      the crossing check and cable lengths all work in real millimetres */
   const unit = sheetUnit(cad.components);
   CADW_K = unit;
-  const model = () => ({ flat: flat, bounds: flat.bounds, jbs: jbs, parts: parts, wiring: wiring, settings: st, logo: logo, unit: unit, components: cad.components || [] });
+  const model = () => ({ flat: flat, bounds: flat.bounds, jbs: jbs, parts: parts, wiring: wiring, settings: st, logo: logo, unit: unit, components: sheetComps, grounds: grounds, ground0: ground0 });
   let zoom = 1, P = null, rackKey = '';
   const save = async () => {
-    cad.sheet = { fields: Object.assign({}, F, { scaleText: undefined, sheetText: undefined }), plugs: st.plugs, edits: st.edits, pages: st.pages };
+    cad.sheet = { fields: Object.assign({}, F, { scaleText: undefined, sheetText: undefined }), plugs: st.plugs, edits: st.edits, pages: st.pages, racks: st.racks };
     project.updated_at = new Date().toISOString();
     try { await localPutProject(project); } catch (e) { say('Could not save: ' + e.message, 'warn'); }
   };
@@ -2870,6 +2901,12 @@ async function renderSheetPage(id) {
     drawPages();
   }
   /* ---- sheets of this rack: switch, add, delete, which strings each wires, the fence notes ---- */
+  document.querySelectorAll('[data-rack]').forEach(cb => cb.onchange = async () => {
+    const rid = +cb.dataset.rack;
+    st.racks = cb.checked ? st.racks.concat([rid]) : st.racks.filter(x => x !== rid);
+    await save();
+    renderSheetPage(id);
+  });
   function drawPages() {
     const pg = sheetPagesOf(st, wiring), n = pg.count;
     const num = k => sheetNumber(F, k, n).n;
