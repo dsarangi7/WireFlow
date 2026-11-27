@@ -19,7 +19,7 @@
    than this on one MSM is only pointed out, never blocked. */
 const ELEC_MSM_SSC_PORTS = 6;
 /* cooling fans per SSC: 1 to 6 (the Cooling Fan port has pins 1 to 6) */
-const ELEC_FAN_CHOICES = [1, 2, 3, 4, 5, 6];
+const ELEC_FAN_CHOICES = [0, 1, 2, 3, 4, 5, 6];   /* 0: no cooling fan (AYK feedback, 27 Nov 2026) */
 
 /* MSM models, by how many SSCs they serve (each bank's model is the engineer's choice).
    Each model is drawn from its own AYK drawing (24 Nov 2026): A2008305 (3 SSCs), A2012104 (6),
@@ -159,6 +159,34 @@ function elecAcdps(b) {
 }
 /** How many ACDPs a bank needs: one per three SSCs, at least one. */
 function elecAcdpsNeeded(setup, b) { return Math.max(1, Math.ceil(elecBankSscs(setup, b.id).length / ELEC_ACDP_SSCS)); }
+/**
+ * Which SSCs (and the MSM) each ACDP of a bank powers. By default ACDP k feeds SSCs 3k+1 to
+ * 3k+3 and the first ACDP feeds the MSM; the engineer can change it per project (AYK feedback,
+ * 27 Nov 2026): an ACDP with its own `sscs` (SSC ids) list switches the bank to the engineer's
+ * choice, and `b.msmAcdp` says which ACDP feeds the MSM.
+ * Returns [{ k, acdp, sscs: [SSC objects, name order], msm, used }] with one entry per ACDP field.
+ */
+function elecAcdpFeeds(setup, b) {
+  const sscs = elecBankSscs(setup, b.id), list = elecAcdps(b);
+  const custom = list.some(a => a && Array.isArray(a.sscs));
+  const n = Math.max(elecAcdpsNeeded(setup, b), list.length, Number.isInteger(b.msmAcdp) ? b.msmAcdp + 1 : 0);
+  const msmK = Number.isInteger(b.msmAcdp) ? b.msmAcdp : 0;
+  return Array.from({ length: n }, (_, k) => {
+    const a = list[k] || {};
+    const fed = custom ? sscs.filter(c => (a.sscs || []).includes(c.id)) : sscs.slice(k * ELEC_ACDP_SSCS, (k + 1) * ELEC_ACDP_SSCS);
+    return { k: k, acdp: a, sscs: fed, msm: k === msmK, used: fed.length > 0 || k === msmK };
+  });
+}
+/** SSCs of a bank that no ACDP powers. */
+function elecUnpoweredSscs(setup, b) {
+  const fed = new Set(elecAcdpFeeds(setup, b).flatMap(f => f.sscs.map(c => c.id)));
+  return elecBankSscs(setup, b.id).filter(c => !fed.has(c.id));
+}
+/** Short text of what one ACDP feeds, e.g. "SSC1, SSC2, SSC3 + MSM". */
+function elecFeedText(f) {
+  const s = f.sscs.map(c => c.name || 'SSC').join(', ');
+  return (s || (f.msm ? '' : 'nothing')) + (f.msm ? (s ? ' + ' : '') + 'MSM' : '');
+}
 
 /* ---------- sheets ----------
  * Numbered 1, 2, 3 … n, laid out as DWG2527-00 (S10195) does: two notes sheets, then bank by
@@ -174,13 +202,17 @@ function elecSheets(setup) {
   add('notes', 'Notes: inline connectors, pin mapping and cables');
   for (const b of setup.banks) {
     const sscs = elecBankSscs(setup, b.id).map(c => c.name);
-    const acdps = elecAcdps(b).slice(0, elecAcdpsNeeded(setup, b));
-    const first = acdps[0] && acdps[0].name;
+    /* the ACDP that feeds the MSM is drawn with it; the others follow, each before its SSCs */
+    const feeds = elecAcdpFeeds(setup, b).filter(f => f.used);
+    const mf = feeds.find(f => f.msm);
+    const first = mf && mf.acdp.name;
     add('msm', `${b.name}: ${b.msm.name || 'MSM'} back${first ? ' and ' + first + ' back' : ''}`, b.id, [b.msm.name], { acdp: first || null });
-    for (let k = 0; k * ELEC_ACDP_SSCS < Math.max(sscs.length, 1); k++) {
-      if (k > 0 && acdps[k]) add('acdp', `${b.name}: ${acdps[k].name || 'ACDP'} back`, b.id, [acdps[k].name]);
-      pairs(sscs.slice(k * ELEC_ACDP_SSCS, (k + 1) * ELEC_ACDP_SSCS)).forEach(g => add('ssc-back', `${b.name}: ${g.join(', ')} back`, b.id, g));
+    const backs = list => pairs(list).forEach(g => add('ssc-back', `${b.name}: ${g.join(', ')} back`, b.id, g));
+    for (const f of (mf ? [mf] : []).concat(feeds.filter(f => f !== mf))) {
+      if (f !== mf && f.acdp.name) add('acdp', `${b.name}: ${f.acdp.name} back`, b.id, [f.acdp.name]);
+      backs(f.sscs.map(c => c.name));
     }
+    backs(elecUnpoweredSscs(setup, b).map(c => c.name));
     pairs(sscs).forEach(g => add('fronts', `${b.name}: junction box and ${g.join(', ')} front`, b.id, g));
   }
   const total = sheets.length;
@@ -217,13 +249,16 @@ function elecIssues(setup) {
     const model = ELEC_MSM_MODELS[b.msm.model];
     if (!model) err(`${n}: which MSM model (3, 6 or 9 SSCs)?`);
     /* one ACDP per three SSCs (AYK, 20 Nov 2026) */
-    const acdps = elecAcdps(b), need = elecAcdpsNeeded(setup, b);
-    for (let k = 0; k < need; k++) {
-      const a = acdps[k] || {}, feeds = `SSC ${k * ELEC_ACDP_SSCS + 1}–${k * ELEC_ACDP_SSCS + ELEC_ACDP_SSCS}`;
-      if (!String(a.name || '').trim()) err(`${n}: enter the ACDP for ${feeds}${k ? '' : ' (it also feeds the MSM)'}.`);
+    const acdps = elecAcdps(b);
+    for (const f of elecAcdpFeeds(setup, b)) {
+      const a = f.acdp;
+      if (!f.used) { if (String(a.name || '').trim()) note(`${n}: ${a.name} feeds no SSC.`); continue; }
+      if (!String(a.name || '').trim()) err(`${n}: enter the ACDP for ${elecFeedText(f)}.`);
       else if (!String(a.rack || '').trim()) err(`${n}: which rack is ${a.name} in?`);
+      if (f.sscs.length > ELEC_ACDP_SSCS) err(`${n}: ${a.name || 'an ACDP'} has SSC ports 1 to ${ELEC_ACDP_SSCS}, but feeds ${f.sscs.length} SSCs.`);
     }
-    acdps.slice(need).filter(a => String(a.name || '').trim()).forEach(a => note(`${n}: ${a.name} feeds no SSC (${need} ACDP${need === 1 ? ' is' : 's are'} enough for its SSCs).`));
+    const dark = elecUnpoweredSscs(setup, b);
+    if (dark.length) err(`${n}: choose the ACDP that powers ${dark.map(c => c.name || 'an SSC').join(', ')}.`);
     seen('a bank', b.name); seen('an MSM', b.msm.name); acdps.forEach(a => seen('an ACDP', a.name));
     const sscs = elecBankSscs(setup, b.id);
     if (!sscs.length) err(`${n} has no SSCs.`);
@@ -235,7 +270,7 @@ function elecIssues(setup) {
     seen('an SSC', c.name);
     if (!c.bank || !setup.banks.some(b => b.id === c.bank)) err(`${c.name}: choose its bank.`);
     if (!String(c.rack).trim()) err(`${c.name}: which rack is it in?`);
-    if (!ELEC_FAN_CHOICES.includes(c.fans)) err(`${c.name}: how many cooling fans (1 to 6)?`);
+    if (!ELEC_FAN_CHOICES.includes(c.fans)) err(`${c.name}: how many cooling fans (0 to 6)?`);
     if (!(c.modules >= 1)) note(`${c.name}: how many battery modules? Until you enter it, its front sheet names the last one "Module n".`);
   }
   for (const o of ELEC_OPTIONS) if (o.always) setup.options[o.id] = true;   /* older setups asked them */
@@ -319,19 +354,22 @@ function elecLinks(setup) {
   /* power: ACDP k feeds SSCs 3k+1 to 3k+3 from its SSC1-3 ports; the first ACDP also feeds
      the MSM (as on AYK's ACDP1 picture); every ACDP takes the customer's AC in */
   for (const b of setup.banks) {
-    const acdps = elecAcdps(b);
     const named = a => a && String(a.name || '').trim();
-    elecBankSscs(setup, b.id).forEach((c, i) => {
-      const a = acdps[Math.floor(i / ELEC_ACDP_SSCS)];
-      if (!named(a)) return;
-      for (const pb of ['P', 'B']) out.push({ rule: 'ssc-power', cable: 'power-' + pb, bank: b.id,
-        from: { part: 'acdp', name: a.name, port: 'SSC' + (i % ELEC_ACDP_SSCS + 1) + pb },
-        to: { part: 'ssc', name: c.name, port: 'Power' + pb }, link: elecLinkKind(a.rack, c.rack) });
-    });
-    if (named(acdps[0])) for (const pb of ['P', 'B']) out.push({ rule: 'msm-power', cable: 'power-' + pb, bank: b.id,
-      from: { part: 'acdp', name: acdps[0].name, port: 'MSM' + pb },
-      to: { part: 'msm', name: b.msm.name, port: 'Power' + pb }, link: elecLinkKind(acdps[0].rack, b.msm.rack) });
-    acdps.slice(0, elecAcdpsNeeded(setup, b)).filter(named).forEach(a => {
+    const feeds = elecAcdpFeeds(setup, b);
+    /* an ACDP's SSCs use its SSC1, SSC2, SSC3 ports in name order */
+    for (const f of feeds) {
+      const a = f.acdp;
+      if (!named(a)) continue;
+      f.sscs.slice(0, ELEC_ACDP_SSCS).forEach((c, i) => {
+        for (const pb of ['P', 'B']) out.push({ rule: 'ssc-power', cable: 'power-' + pb, bank: b.id,
+          from: { part: 'acdp', name: a.name, port: 'SSC' + (i + 1) + pb },
+          to: { part: 'ssc', name: c.name, port: 'Power' + pb }, link: elecLinkKind(a.rack, c.rack) });
+      });
+      if (f.msm) for (const pb of ['P', 'B']) out.push({ rule: 'msm-power', cable: 'power-' + pb, bank: b.id,
+        from: { part: 'acdp', name: a.name, port: 'MSM' + pb },
+        to: { part: 'msm', name: b.msm.name, port: 'Power' + pb }, link: elecLinkKind(a.rack, b.msm.rack) });
+    }
+    feeds.filter(f => f.used).map(f => f.acdp).filter(named).forEach(a => {
       for (const pb of ['P', 'B']) out.push({ rule: 'ac-in', cable: 'ac-in-' + pb, bank: b.id,
         from: { part: 'customer', name: pb === 'P' ? 'Normal power' : 'Backup UPS', port: 'L/N/G' },
         to: { part: 'acdp', name: a.name, port: 'ACPowerIn' + pb }, link: 'inline' });
@@ -355,4 +393,4 @@ function elecLinks(setup) {
   return out.filter(l => !elecPortBlocked(l.from.part, l.from.port) && !elecPortBlocked(l.to.part, l.to.port));
 }
 
-if (typeof module !== 'undefined') module.exports = { elecMsmDrawing, elecSheets, ELEC_NOTES, elecNote, ELEC_SSCS_PER_SHEET, elecPortBlockedWhy, elecAcdps, elecAcdpsNeeded, ELEC_FAN_CHOICES, ELEC_ACDP_PORTS, ELEC_ACDP_SSCS, ELEC_MSM_MODELS, ELEC_FAN_PINS, ELEC_RULES, elecLinks, ELEC_PARTS, ELEC_NOT_WIRED, elecPortBlocked, ELEC_MSM_SSC_PORTS, ELEC_OPTIONS, elecNewSetup, elecFromRacks, elecBankSscs, elecIssues, elecReady, elecLinkKind, elecSummary, elecCompare };
+if (typeof module !== 'undefined') module.exports = { elecMsmDrawing, elecSheets, elecAcdpFeeds, elecUnpoweredSscs, elecFeedText, ELEC_NOTES, elecNote, ELEC_SSCS_PER_SHEET, elecPortBlockedWhy, elecAcdps, elecAcdpsNeeded, ELEC_FAN_CHOICES, ELEC_ACDP_PORTS, ELEC_ACDP_SSCS, ELEC_MSM_MODELS, ELEC_FAN_PINS, ELEC_RULES, elecLinks, ELEC_PARTS, ELEC_NOT_WIRED, elecPortBlocked, ELEC_MSM_SSC_PORTS, ELEC_OPTIONS, elecNewSetup, elecFromRacks, elecBankSscs, elecIssues, elecReady, elecLinkKind, elecSummary, elecCompare };

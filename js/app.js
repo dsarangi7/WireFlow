@@ -1490,9 +1490,12 @@ async function renderElecPage(id) {
   const folder = rackFolder(project);
   const racks = folder ? (await localProjects()).filter(p => p.underlay_kind === 'cad' && p.folder === folder.id) : [];
   /* one ACDP per three SSCs: a field for each the bank needs, plus any extra already named */
-  const acdpRows = b => {
-    const list = elecAcdps(b), n = Math.max(elecAcdpsNeeded(setup, b), list.length);
-    return Array.from({ length: n }, (_, k) => ({ k: k, a: list[k] || {}, feeds: `SSC ${k * ELEC_ACDP_SSCS + 1}–${k * ELEC_ACDP_SSCS + ELEC_ACDP_SSCS}${k ? '' : ' + MSM'}` }));
+  /* the SSCs each ACDP powers are the engineer's choice (default three each, MSM on the first) */
+  const acdpRows = b => elecAcdpFeeds(setup, b).map(f => ({ k: f.k, a: f.acdp, f: f, feeds: elecFeedText(f) }));
+  const feedChips = b => {
+    const all = elecBankSscs(setup, b.id);
+    return r => `<span class="el-feeds" role="group" aria-label="What ${esc(r.a.name || 'this ACDP')} powers">${all.map(c =>
+      `<button type="button" class="el-chip${r.f.sscs.includes(c) ? ' on' : ''}" data-feed="${r.k}" data-ssc-id="${esc(c.id)}" title="${r.f.sscs.includes(c) ? 'Powered by this ACDP (click to take off)' : 'Click to power from this ACDP'}">${esc(c.name || 'SSC')}</button>`).join('')}<button type="button" class="el-chip el-chip-msm${r.f.msm ? ' on' : ''}" data-feed-msm="${r.k}" title="The ACDP that powers the MSM">MSM</button></span>`;
   };
   const rackNames = () => Array.from(new Set(racks.map(r => r.name).concat(setup.banks.flatMap(b => [b.msm.rack].concat(elecAcdps(b).map(a => a.rack))), setup.sscs.map(c => c.rack)).filter(Boolean)))
     .sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true }));
@@ -1535,17 +1538,17 @@ async function renderElecPage(id) {
     body.innerHTML = `
       <section class="el-card">
         <div class="el-card-head"><h2>Banks</h2><button class="btn btn-ghost btn-sm" id="el-add-bank">Add bank</button></div>
-        <p class="muted small">One bank per MSM; its model (3, 6 or 9 SSCs) sets the ports it has. Same rack = AYK supplies the whole harness; different racks = inline connector and a cable the customer makes (dashed on the sheet).</p>
+        <p class="muted small">One bank per MSM; its model (3, 6 or 9 SSCs) sets the ports it has. Same rack = AYK supplies the whole harness; different racks = inline connector, with AYK's side drawn solid and the cable the customer makes dashed.</p>
         ${src}
         ${setup.banks.length ? `<div class="el-table-wrap"><table class="el-table">
-          <thead><tr><th>Bank</th><th>MSM</th><th>MSM model</th><th>MSM rack</th><th>ACDPs (one per 3 SSCs)</th><th>ACDP rack</th><th>SSCs</th><th></th></tr></thead>
+          <thead><tr><th>Bank</th><th>MSM</th><th>MSM model</th><th>MSM rack</th><th>ACDPs and their racks <span class="muted">(click what each powers, up to 3 SSCs)</span></th><th>SSCs</th><th></th></tr></thead>
           <tbody>${setup.banks.map(b => `<tr data-bank="${esc(b.id)}">
             <td><input data-f="name" value="${esc(b.name)}" aria-label="Bank name"></td>
             <td><input data-f="msm.name" value="${esc(b.msm.name)}" placeholder="MSM-1" aria-label="MSM name"></td>
             <td><select data-f="msm.model" aria-label="MSM model"><option value="" ${ELEC_MSM_MODELS[b.msm.model] ? '' : 'selected'}>Choose…</option>${Object.keys(ELEC_MSM_MODELS).map(k => `<option value="${k}" ${String(b.msm.model) === k ? 'selected' : ''}>${k} SSCs</option>`).join('')}</select></td>
             <td><input data-f="msm.rack" value="${esc(b.msm.rack)}" list="el-racks" placeholder="Rack 1" aria-label="MSM rack"></td>
-            <td><div class="el-acdps">${acdpRows(b).map(r => `<label class="el-acdp"><small>${r.feeds}</small><input data-acdp="${r.k}" data-af="name" value="${esc(r.a.name || '')}" placeholder="ACDP${r.k + 1}" aria-label="ACDP for ${r.feeds}"></label>`).join('')}</div></td>
-            <td><div class="el-acdps">${acdpRows(b).map(r => `<label class="el-acdp"><small>&nbsp;</small><input data-acdp="${r.k}" data-af="rack" value="${esc(r.a.rack || '')}" list="el-racks" placeholder="Rack 1" aria-label="Rack of the ACDP for ${r.feeds}"></label>`).join('')}</div></td>
+            <td><div class="el-acdps">${acdpRows(b).map(r => `<div class="el-acdp">${feedChips(b)(r)}<span class="el-acdp-row"><input data-acdp="${r.k}" data-af="name" value="${esc(r.a.name || '')}" placeholder="ACDP${r.k + 1}" aria-label="ACDP for ${esc(r.feeds)}"><input data-acdp="${r.k}" data-af="rack" value="${esc(r.a.rack || '')}" list="el-racks" placeholder="Rack 1" aria-label="Rack of the ACDP for ${esc(r.feeds)}"></span></div>`).join('')}
+              <span class="el-acdp-acts"><button type="button" class="btn btn-ghost btn-xs" data-acdp-add="1">+ ACDP</button>${elecAcdps(b).some(a => Array.isArray(a.sscs)) || Number.isInteger(b.msmAcdp) ? '<button type="button" class="btn btn-ghost btn-xs" data-acdp-reset="1" title="Back to three SSCs per ACDP, MSM on the first">Reset</button>' : ''}</span></div></td>
             <td class="el-num">${elecBankSscs(setup, b.id).length}${ELEC_MSM_MODELS[b.msm.model] ? ' / ' + ELEC_MSM_MODELS[b.msm.model].sscs : ''}</td>
             <td><button class="btn btn-ghost btn-xs" data-del-bank="${esc(b.id)}" title="Remove this bank">×</button></td></tr>`).join('')}</tbody></table></div>`
           : '<div class="d-empty"><b>No banks yet</b><span>Add one bank for each MSM.</span></div>'}
@@ -1562,7 +1565,7 @@ async function renderElecPage(id) {
             <td><input data-f="name" value="${esc(c.name)}" placeholder="SSC1" aria-label="SSC name"></td>
             <td><input data-f="rack" value="${esc(c.rack)}" list="el-racks" placeholder="Rack 1" aria-label="SSC rack"></td>
             <td><select data-f="bank" aria-label="Bank">${bankOpts(c.bank)}</select></td>
-            <td><select data-f="fans" aria-label="Cooling fans"><option value="" ${c.fans ? '' : 'selected'}>Choose…</option>${ELEC_FAN_CHOICES.map(k => `<option value="${k}" ${c.fans === k ? 'selected' : ''}>${k}</option>`).join('')}</select></td>
+            <td><select data-f="fans" aria-label="Cooling fans"><option value="" ${ELEC_FAN_CHOICES.includes(c.fans) ? '' : 'selected'}>Choose…</option>${ELEC_FAN_CHOICES.map(k => `<option value="${k}" ${c.fans === k ? 'selected' : ''}>${k}</option>`).join('')}</select></td>
             <td><input data-f="modules" type="number" min="1" max="99" step="1" class="el-count" value="${c.modules || ''}" placeholder="n" aria-label="Battery modules on this SSC" title="Battery modules on this SSC (the last one drawn on its front sheet)"></td>
             <td><span class="el-link el-link-${k}">${k === 'harness' ? 'AYK harness' : k === 'inline' ? 'Inline connector' : '—'}</span></td>
             <td><button class="btn btn-ghost btn-xs" data-del-ssc="${esc(c.id)}" title="Remove this SSC">×</button></td></tr>`;
@@ -1633,7 +1636,30 @@ async function renderElecPage(id) {
       const list = elecAcdps(b), k = +inp.dataset.acdp;
       while (list.length <= k) list.push({ name: '', rack: '' });
       list[k][inp.dataset.af] = inp.value.trim();
-      while (list.length && !list[list.length - 1].name && !list[list.length - 1].rack) list.pop();
+      while (list.length && !list[list.length - 1].name && !list[list.length - 1].rack && !Array.isArray(list[list.length - 1].sscs)) list.pop();
+      changed();
+    });
+    /* what each ACDP powers: the first click turns the default (three each) into the engineer's own list */
+    const bankOf = el => setup.banks.find(x => x.id === el.closest('[data-bank]').dataset.bank);
+    const ownFeeds = b => {
+      const feeds = elecAcdpFeeds(setup, b), list = elecAcdps(b);
+      while (list.length < feeds.length) list.push({ name: '', rack: '' });
+      feeds.forEach(f => { list[f.k].sscs = f.sscs.map(c => c.id); });
+      return list;
+    };
+    body.querySelectorAll('[data-bank] [data-feed]').forEach(btn => btn.onclick = () => {
+      const b = bankOf(btn), list = ownFeeds(b), k = +btn.dataset.feed, id = btn.dataset.sscId;
+      const had = list[k].sscs.includes(id);
+      list.forEach(a => { a.sscs = a.sscs.filter(x => x !== id); });
+      if (!had) list[k].sscs.push(id);
+      changed();
+    });
+    body.querySelectorAll('[data-bank] [data-feed-msm]').forEach(btn => btn.onclick = () => { bankOf(btn).msmAcdp = +btn.dataset.feedMsm; changed(); });
+    body.querySelectorAll('[data-bank] [data-acdp-add]').forEach(btn => btn.onclick = () => { ownFeeds(bankOf(btn)).push({ name: '', rack: '', sscs: [] }); changed(); });
+    body.querySelectorAll('[data-bank] [data-acdp-reset]').forEach(btn => btn.onclick = () => {
+      const b = bankOf(btn); delete b.msmAcdp;
+      elecAcdps(b).forEach(a => delete a.sscs);
+      while (b.acdps.length && !b.acdps[b.acdps.length - 1].name && !b.acdps[b.acdps.length - 1].rack) b.acdps.pop();
       changed();
     });
     body.querySelectorAll('[data-bank] [data-f]').forEach(inp => inp.onchange = () => {

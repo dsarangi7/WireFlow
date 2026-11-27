@@ -40,10 +40,10 @@ s.valves = 2;
 ok(/Which junction box: 2 or 4/.test(E.elecIssues(s).map(i => i.text).join()), 'junction box asked');
 s.jbModel = 4;
 /* six SSCs: two ACDPs (one per three SSCs) */
-ok(/enter the ACDP for SSC 4–6/.test(E.elecIssues(s).map(i => i.text).join()), 'six SSCs need a second ACDP');
+ok(/enter the ACDP for SSC4, SSC5, SSC10/.test(E.elecIssues(s).map(i => i.text).join()), 'six SSCs need a second ACDP');
 const keepAcdps = s.banks[0].acdps;
 s.banks[0].acdps = [];
-ok(/enter the ACDP for SSC 1–3 \(it also feeds the MSM\)/.test(E.elecIssues(s).map(i => i.text).join()), 'the first ACDP is asked for');
+ok(/enter the ACDP for SSC1, SSC2, SSC3 \+ MSM/.test(E.elecIssues(s).map(i => i.text).join()), 'the first ACDP is asked for');
 s.banks[0].acdps = [{ name: 'ACDP2', rack: 'Rack 1' }, { name: 'ACDP3', rack: '' }];
 ok(!E.elecReady(s) && /which rack is ACDP3 in/.test(E.elecIssues(s).map(i => i.text).join()), 'a named ACDP needs its rack');
 s.banks[0].acdps = keepAcdps.concat({ name: 'ACDP3', rack: 'Rack 2' });
@@ -112,7 +112,7 @@ eq(cust, ['RemoteE>Client-side remote E-stop', 'Dry Contact>Client-side thermal 
 const old = E.elecNewSetup(); old.options.remoteEstop = null; old.options.dryContact = null;
 ok(!/Customer remote E-stop|Dry contact/.test(E.elecIssues(old).map(i => i.text).join()), 'never asked, even on an older setup');
 eq(E.ELEC_FAN_PINS, 6, 'Cooling Fan port has pins 1 to 6');
-eq(E.ELEC_FAN_CHOICES, [1, 2, 3, 4, 5, 6], 'cooling fans: 1 to 6');
+eq(E.ELEC_FAN_CHOICES, [0, 1, 2, 3, 4, 5, 6], 'cooling fans: 0 to 6');
 
 /* power from the ACDP (AYK picture of ACDP1 back) */
 two2.banks[0].acdps = [{ name: 'ACDP1', rack: 'Rack 1' }];
@@ -143,6 +143,24 @@ eq(sh.map(s => s.kind), ['notes', 'notes', 'msm', 'ssc-back', 'ssc-back', 'acdp'
 eq(sh[2].acdp, 'ACDP1', 'the first ACDP is drawn on the MSM sheet');
 eq(sh.filter(s => s.kind === 'ssc-back').map(s => s.items.join('+')), ['SSC1+SSC2', 'SSC3', 'SSC4+SSC5', 'SSC6'], 'SSC backs by two, grouped by the ACDP that feeds them');
 eq(sh[5].items, ['ACDP2'], 'ACDP2 before the SSCs it feeds');
+
+/* the engineer chooses which SSCs each ACDP powers (AYK feedback, 27 Nov 2026) */
+const own = JSON.parse(JSON.stringify(six));
+own.banks[0].acdps[0].sscs = ['x1', 'x2'];
+own.banks[0].acdps[1].sscs = ['x3', 'x4', 'x5', 'x6'];
+ok(/ACDP2 has SSC ports 1 to 3, but feeds 4 SSCs/.test(E.elecIssues(own).map(i => i.text).join()), 'an ACDP feeds at most three SSCs');
+own.banks[0].acdps[1].sscs = ['x3', 'x4', 'x5'];
+ok(/choose the ACDP that powers SSC6/.test(E.elecIssues(own).map(i => i.text).join()), 'an SSC without power is asked for');
+own.banks[0].acdps.push({ name: 'ACDP3', rack: 'R2', sscs: ['x6'] });
+own.banks[0].msmAcdp = 1;
+eq(E.elecLinks(own).filter(l => l.rule === 'ssc-power' && l.cable === 'power-P').map(l => `${l.from.name}.${l.from.port}>${l.to.name}`),
+  ['ACDP1.SSC1P>SSC1', 'ACDP1.SSC2P>SSC2', 'ACDP2.SSC1P>SSC3', 'ACDP2.SSC2P>SSC4', 'ACDP2.SSC3P>SSC5', 'ACDP3.SSC1P>SSC6'], 'each ACDP uses its SSC1-3 ports for the SSCs chosen');
+eq(E.elecLinks(own).filter(l => l.rule === 'msm-power').map(l => l.from.name), ['ACDP2', 'ACDP2'], 'the MSM is fed by the ACDP chosen');
+eq(E.elecLinks(own).filter(l => l.rule === 'ac-in' && l.cable === 'ac-in-P').map(l => l.to.name), ['ACDP1', 'ACDP2', 'ACDP3'], 'every ACDP in use takes AC in');
+const osh = E.elecSheets(own);
+eq(osh[2].acdp, 'ACDP2', 'the MSM sheet shows the ACDP that feeds the MSM');
+eq(osh.filter(s => s.kind === 'acdp' || s.kind === 'ssc-back').map(s => s.items.join('+')), ['SSC3+SSC4', 'SSC5', 'ACDP1', 'SSC1+SSC2', 'ACDP3', 'SSC6'], 'each ACDP sheet before the SSCs it feeds');
+ok(!E.elecIssues(own).some(i => i.level === 'error' && /ACDP|powers /.test(i.text)), 'the own split has no ACDP issue');
 ok(sh.every(s => s.items.length <= 2), 'at most two SSCs on a sheet');
 ok(sh.every(s => s.of === 11), 'every sheet knows the total');
 const sh2 = E.elecSheets(two2);

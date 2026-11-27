@@ -43,8 +43,18 @@ const ELEC_CABLES = {
 /* line styles: dashed = between racks, through an inline connector; dotted = the customer's
    own cable (customer side of an inline connector, AC power in, the main power cables) */
 const ELEC_DASH = [1.6, 1.1], ELEC_DOT = [0, 0.9];
+/* AYK feedback (27 Nov 2026): every AYK harness lead is solid, also between racks; the
+   customer's side of an inline connector is dashed (part numbers go on those lines later) */
+const ELEC_CUST = ELEC_DASH;
+/* the name written on each inline connector, as on sheet 2 (AYK's P1562) */
+function elecPlugName(e) {
+  const c = e.cable || '', pb = c.slice(-1);
+  if (/^power-/.test(c)) return [e.port && e.port.startsWith('Power') ? (e.link && e.link.to.part === 'msm' ? 'MSM' : 'SSC') : (e.other && e.other.part === 'msm' ? 'MSM' : 'SSC'), 'POWER', pb];
+  if (/^ac-in-/.test(c)) return ['ACDP', 'POWER', pb];
+  return { comm: ['SSC', 'Com.P'], estop: ['Estop'], valve: ['Master', 'Valve'], 'dry-contact': ['Dry', 'Contact'], 'remote-estop': ['Remote', 'Estop'] }[c] || [];
+}
 /* every inline connector on the sheets is one size, drawn from AYK's P1562 (11.18 x 34.56) */
-const ELEC_PLUG = { w: 3.6, h: 11.2 };
+const ELEC_PLUG = { w: 5.2, h: 14 };   /* a bit larger than P1562's scale (AYK feedback, 27 Nov 2026) */
 /* every part's name tag is one size, centred on its part */
 const ELEC_TAG_SIZE = 3.4;
 let elecInlineView = null;   /* the P1562 inline connector drawing, set by elecDraw */
@@ -258,6 +268,16 @@ function elecLeader(doc, box, px, py, color) {
   if (box.id && doc.begin) elecItem(doc, box.id, 'leader', null, draw, true); else draw();
 }
 
+/** Thin leaders from one box to several points, moved and deleted with the box. */
+function elecLeaders(doc, box, pts, color) {
+  const draw = () => pts.forEach(([px, py]) => {
+    const cx = Math.max(box.x, Math.min(box.x + box.w, px)), cy = Math.max(box.y, Math.min(box.y + box.h, py));
+    doc.line(cx, cy, px, py, { color: color || '#22d3ee', w: 0.2, pin: true });
+    doc.circle(px, py, 0.5, { fill: color || '#22d3ee', stroke: false, pin: true });
+  });
+  if (box.id && doc.begin) elecItem(doc, box.id, 'leader', null, draw, true); else draw();
+}
+
 /** Inline connector, centred on x, top at y: AYK's P1562 drawing, the same size on every
     sheet (ELEC_PLUG); two halves in a box when the library has no drawing. Optional label
     lines are written across its middle on a white ground. */
@@ -269,7 +289,7 @@ function elecPlug(doc, x, top, lines) {
     doc.line(x - w / 2, top - h / 2, x + w / 2, top - h / 2, { color: '#334155', w: 0.25 });
   }
   (lines || []).forEach((t, i, all) => {
-    const size = 1.15, y = top - h / 2 + (all.length - 1) * 0.8 - i * 1.6 - 0.4;
+    const size = 1.2, y = top - h / 2 + (all.length - 1) * 0.85 - i * 1.7 - 0.45;
     const tw = pdfTextWidth(t, size, true);
     doc.rect(x - tw / 2 - 0.3, y - 0.3, tw + 0.6, size + 0.5, { fill: '#ffffff', stroke: false });
     doc.text(t, x, y, { size: size, bold: true, align: 'center', color: ELEC_INK });
@@ -279,16 +299,22 @@ function elecPlug(doc, x, top, lines) {
 
 /** Cable break (customer side): a short zigzag in a vertical lead at x around y. */
 function elecBreak(doc, x, y, color, dash) {
-  doc.poly([x, y + 3, x, y + 1.2, x - 1.4, y + 0.4, x + 1.4, y - 0.4, x, y - 1.2, x, y - 3], { color: color, w: 0.35, dash: dash === undefined ? ELEC_DOT : dash });
+  doc.poly([x, y + 3, x, y + 1.2, x - 1.4, y + 0.4, x + 1.4, y - 0.4, x, y - 1.2, x, y - 3], { color: color, w: 0.35, dash: dash === undefined ? ELEC_CUST : dash });
 }
 
 /** The end of a lead that leaves the sheet: its inline connector, and under it the label (reading upwards). */
-function elecEnd(doc, x, y, color, text) {
-  /* the connector and its words are two items, so the engineer can move the words alone */
-  const plugH = elecItem(doc, 'end:' + text, 'end', null, () => elecPlug(doc, x, y));
+function elecEnd(doc, x, y, color, text, e) {
+  /* the connector (with its name) and its words are two items, so the engineer can move the words
+     alone; under the connector a dashed stub: the customer's cable (AYK feedback, 27 Nov 2026) */
+  const stub = 4;
+  const plugH = elecItem(doc, 'end:' + text, 'end', null, () => {
+    const h = elecPlug(doc, x, y, e ? elecPlugName(e) : []);
+    doc.line(x, y - h, x, y - h - stub, { color: color, w: 0.35, dash: ELEC_CUST });
+    return h;
+  });
   return elecItem(doc, 'label:' + text, 'label', text, t => {
     /* under the connector, reading upwards, centred on the lead (DWG2527) */
-    const w = pdfTextWidth(t, 2, false), top = y - plugH - 1;
+    const w = pdfTextWidth(t, 2, false), top = y - plugH - stub - 1;
     doc.text(t, x + 0.7, top - w, { size: 2, rot: 90, color: ELEC_INK });
     return top - w;
   });
@@ -383,13 +409,14 @@ function elecEndsOn(links, sheetOf, part, name, ports, word) {
   }
   return ends;
 }
-const elecDashOf = e => (e.dash ? ELEC_DASH : null);
+const elecDashOf = () => null;   /* AYK side: always solid */
 
 /** Leads straight down from each port to a connector and its label at endY. */
 function elecDropLeads(doc, ends, endY) {
   for (const e of ends) {
+    e.endY = endY;
     doc.poly([e.x, e.y - e.r, e.x, endY], { color: e.color, w: 0.35, dash: elecDashOf(e), id: 'lead:' + e.text, end: 'end:' + e.text });
-    elecEnd(doc, e.x, endY, e.color, e.text);
+    elecEnd(doc, e.x, endY, e.color, e.text, e);
   }
 }
 
@@ -418,7 +445,7 @@ function elecNestedLeads(doc, ends, side, col0, step, endY, laneGap) {
       const lane = side === 'left' ? e.y - e.r - 1.4 - k * laneGap : e.y + e.r + 1.4 + (row.length - 1 - k) * laneGap;
       const col = side === 'left' ? col0 + i * step : col0 - i * step;
       doc.poly([e.x, side === 'left' ? e.y - e.r : e.y + e.r, e.x, lane, col, lane, col, endY], { color: e.color, w: 0.35, dash: elecDashOf(e), id: 'lead:' + e.text, end: 'end:' + e.text });
-      elecEnd(doc, col, endY, e.color, e.text);
+      elecEnd(doc, col, endY, e.color, e.text, e);
       i++;
     });
   }
@@ -433,21 +460,24 @@ function elecAcIn(doc, ends, boxTop, setup) {
   for (const e of ac) {
     doc.poly([e.x, e.y - e.r, e.x, boxTop - 1.5], { color: e.color, w: 0.35 });
     elecPlug(doc, e.x, boxTop - 1.5, ['ACDP', 'POWER', e.port.slice(-1)]);
-    doc.poly([e.x, boxTop - boxH + 1.5, e.x, boxTop - boxH - 6], { color: e.color, w: 0.35, dash: ELEC_DOT });
+    doc.poly([e.x, boxTop - boxH + 1.5, e.x, boxTop - boxH - 6], { color: e.color, w: 0.35, dash: ELEC_CUST });
     elecBreak(doc, e.x, boxTop - boxH - 9, e.color);
-    doc.line(e.x, boxTop - boxH - 12, e.x, boxTop - boxH - 15, { color: e.color, w: 0.35, dash: ELEC_DOT });
+    doc.line(e.x, boxTop - boxH - 12, e.x, boxTop - boxH - 15, { color: e.color, w: 0.35, dash: ELEC_CUST });
   }
   const tagTop = boxTop - boxH - 15, mid = (x0 + x1) / 2;
   const tag = elecNoteBox(doc, '230VAC Control Power Inlet For Battery Servicing', mid - 17, tagTop, 34, { fill: ELEC_TAG, size: 2.3, align: 'center' });
-  return { box: [x0, boxTop - boxH, x1 - x0, boxH], tag: tag };
+  return { box: [x0, boxTop - boxH, x1 - x0, boxH], tag: tag, plugs: ac.map(e => [e.x + ELEC_PLUG.w / 2, boxTop - 1.5 - ELEC_PLUG.h / 2]) };
 }
 
 /** The panel callout: TN0089 note and the rack's signal inter-connection panel. */
-function elecPanelNote(doc, setup, rack, x, top, w) {
+function elecPanelNote(doc, setup, rack, x, top, w, plugs, size) {
+  size = size || 1.9;
   const n = elecNote(setup, 'panel');
-  const b = n.trim() ? elecNoteBox(doc, n, x, top, w, { size: 1.9, align: 'center', id: 'note:panel' }) : { x: x, y: top, w: w, h: 0 };
+  const b = n.trim() ? elecNoteBox(doc, n, x, top, w, { size: size, align: 'center', id: 'note:panel' }) : { x: x, y: top, w: w, h: 0 };
   const name = (rack ? rack + ' ' : '') + 'Signal Inter Connection Panel';
-  const t = elecNoteBox(doc, name, x, b.y, w, { fill: false, frame: '#cbd5e1', size: 1.9, align: 'center' });
+  const t = elecNoteBox(doc, name, x, b.y, w, { fill: false, frame: '#cbd5e1', size: size, align: 'center' });
+  /* the callout points at each inline connector it is about (AYK feedback, 27 Nov 2026) */
+  if (plugs && plugs.length) elecLeaders(doc, n.trim() ? b : t, plugs.map(e => [e.x + (e.x < x ? ELEC_PLUG.w / 2 : -ELEC_PLUG.w / 2), e.endY - ELEC_PLUG.h / 2]));
   return { x: x, y: t.y, w: w, h: top - t.y };
 }
 
@@ -481,8 +511,8 @@ function elecNotesMsm(doc, setup, view) {
 function elecLegend(doc, x, top, w) {
   const L = Object.values(ELEC_CABLES), lh = 4.2;
   const rows = L.map(c => [c.label, { color: c.color, w: 0.6 }])
-    .concat([['Dashed: between racks, through an inline connector', { color: ELEC_INK, w: 0.4, dash: ELEC_DASH }],
-      ['Dotted: the customer\'s own cable (customer side)', { color: ELEC_INK, w: 0.5, dash: ELEC_DOT }]]);
+    .concat([['Solid: AYK harness (rack side of an inline connector)', { color: ELEC_INK, w: 0.4 }],
+      ['Dashed: the customer\'s own cable (customer side of an inline connector)', { color: ELEC_INK, w: 0.4, dash: ELEC_CUST }]]);
   const h = rows.length * lh + 3;
   doc.rect(x, top - h, w, h, { color: ELEC_INK, w: 0.3 });
   rows.forEach(([label, st], k) => {
@@ -557,10 +587,11 @@ function elecNotesInline(doc, setup, inline) {
       /* on the drawn connector: two lines between the upper nut and the middle band, the third (B/P) below it */
       [p[0], p[1], p[2]].filter(Boolean).forEach((t, i) => doc.text(t, cx, inline ? y0 + [21.2, 18.7, 13.8][i] : y0 + h - 9 - i * 3.6, { size: inline ? 1.8 : 2, align: 'center', bold: true }));
       doc.line(cx, y0 + h, cx, y0 + h + 30, { color: col, w: 0.4 });
-      doc.line(cx, y0, cx, y0 - 30, { color: col, w: 0.4, dash: ELEC_DOT });   /* the customer's cable */
+      doc.line(cx, y0, cx, y0 - 30, { color: col, w: 0.4, dash: ELEC_CUST });   /* the customer's cable */
     });
     const tag = elecNoteBox(doc, g.tag, x + w / 2 - 12, gi % 2 ? y0 - 37 : y0 + h + 58, 24, { fill: ELEC_TAG, size: 1.8, align: 'center' });
-    doc.line(x + w / 2, gi % 2 ? tag.top : tag.y, x + w / 2, gi % 2 ? y0 - 31 : y0 + h + 31, { color: '#94a3b8', w: 0.15 });
+    /* the tag points at its connector box (AYK feedback, 27 Nov 2026), beside the cable lines */
+    elecLeader(doc, tag, g.plugs.length > 1 ? x + w / 2 : x + w - 3, gi % 2 ? y0 : y0 + h, '#64748b');
     x += w + gap;
   }));
   doc.text('Rack side (AYK harness)', x0, y0 + h + 33, { size: 2, color: '#475569' });
@@ -602,7 +633,7 @@ function elecMsmSheet(doc, setup, b, sh, ctx) {
     doc.poly([e.x, over ? e.y + e.r : e.y - e.r, e.x, lane, col, lane, col, boxTop - 1.5], { color: e.color, w: 0.35, id: 'lead:' + e.text });
     elecPlug(doc, col, boxTop - 1.5, e.cable === 'dry-contact' ? ['Dry', 'Contact'] : ['Remote', 'Estop']);
     const tagTop = k ? 120 : 134;
-    doc.poly([col, boxTop - boxH + 1.5, col, tagTop], { color: e.color, w: 0.35, dash: ELEC_DOT, id: 'customer:' + e.text });
+    doc.poly([col, boxTop - boxH + 1.5, col, tagTop], { color: e.color, w: 0.35, dash: ELEC_CUST, id: 'customer:' + e.text });
     elecNoteBox(doc, e.cable === 'dry-contact' ? 'Client-side Thermal Runaway Status Signal' : 'Client-side Remote Estop', col - 9, tagTop, 18, { fill: ELEC_TAG, size: 1.9, align: 'center' });
   });
   /* master valves: down through the LP16-7 connectors to the valves */
@@ -612,7 +643,7 @@ function elecMsmSheet(doc, setup, b, sh, ctx) {
       doc.rect(e.x - 5.5, 147, 11, 9, { color: '#64748b', w: 0.25, fill: '#ffffff' });
       ['LP16-7 Female', 'to', 'LP16-7 Male'].forEach((t, i) => doc.text(t, e.x, 153.6 - i * 2.4, { size: 1.25, align: 'center' }));
     });
-    doc.poly([e.x, 147, e.x, 140], { color: e.color, w: 0.35, dash: ELEC_DOT });
+    doc.poly([e.x, 147, e.x, 140], { color: e.color, w: 0.35, dash: ELEC_CUST });
     elecNoteBox(doc, e.text.replace(/^To /, '').replace(/ · .*/, '').replace(/Master Valve\s*/, 'Master Valve '), e.x - 5.5, 140, 11, { fill: ELEC_TAG, size: 1.9, align: 'center' });
   }
   /* Ex.FanFB is not in use (DWG2527) */
@@ -652,9 +683,9 @@ function elecMsmSheet(doc, setup, b, sh, ctx) {
     const acNote = elecNote(setup, 'acPower');
     if (ac && acNote.trim()) {
       const nb = elecNoteBox(doc, acNote, 150, 102, 82, { size: 2, id: 'note:acPower' });
-      elecLeader(doc, nb, ac.box[0] + ac.box[2], ac.box[1] + ac.box[3] / 2);
+      elecLeaders(doc, nb, ac.plugs);   /* straight at each AC inline connector */
     }
-    elecPanelNote(doc, setup, a.rack || '', 30, 30, 56);
+    elecPanelNote(doc, setup, a.rack || '', 30, 30, 56, acdpEnds.filter(e => e.endY));
   } else {
     /* no ACDP drawn here: the MSM power leaves the sheet like any other lead */
     elecDropLeads(doc, ends.filter(e => /^power-/.test(e.cable)), 150);
@@ -673,9 +704,9 @@ function elecAcdpSheet(doc, setup, b, name, ctx) {
   const acNote = elecNote(setup, 'acPower');
   if (ac && acNote.trim()) {
     const nb = elecNoteBox(doc, acNote, 300, 200, 100, { size: 2.6, id: 'note:acPower' });
-    elecLeader(doc, nb, ac.box[0] + ac.box[2], ac.box[1] + ac.box[3] / 2);
+    elecLeaders(doc, nb, ac.plugs);   /* straight at each AC inline connector */
   }
-  elecPanelNote(doc, setup, a.rack || '', 80, 98, 60);
+  elecPanelNote(doc, setup, a.rack || '', 80, 88, 60, ends.filter(e => e.endY));
 }
 
 /** SSC backs (two at most) with their cooling fans. */
@@ -688,11 +719,11 @@ function elecSscSheet(doc, setup, sh, ctx) {
     const d = elecDrawPart(doc, v, [x0, 118, 140, 122], { nameSize: 1.7 });
     elecPartTag(doc, `${name} Back`, d.box);
     const ends = elecEndsOn(ctx.links, ctx.sheetOf, 'ssc', name, d.ports, 'From');
-    elecDropLeads(doc, ends, 108);
+    elecDropLeads(doc, ends, 112);
     /* cooling fans: down, along the bottom, up to an LP16-3 inline socket per fan */
     const fp = d.ports['Cooling Fan'], fans = Math.max(0, Math.min(6, +c.fans || 0));
     if (fp && fans) {
-      const col = ELEC_CABLES.fan.color, bx = x0 + 150, low = 62, top = 150;   /* low: under the labels hanging from the connectors */
+      const col = ELEC_CABLES.fan.color, bx = x0 + 150, low = 64.5, top = 150;   /* low: under the labels hanging from the connectors */
       doc.poly([fp.x, fp.y - fp.r, fp.x, low, bx, low, bx, top], { color: col, w: 0.35, id: 'fan:' + name });
       for (let f = 0; f < fans; f++) elecItem(doc, `fan:${name} ${f + 1}`, 'box', null, () => {
         const y = top - f * 8;
@@ -704,7 +735,8 @@ function elecSscSheet(doc, setup, sh, ctx) {
         doc.text('Cooling Fan ' + (f + 1), bx + 23, y - 0.9, { size: 2, align: 'center' });
       });
     }
-    elecPanelNote(doc, setup, c.rack || '', x0 + 4, 66, 64);
+    const pn = elecPanelNote(doc, setup, c.rack || '', x0 + 4, 63, 64, ends.filter(e => e.endY), 1.6);
+    void pn;
   });
 }
 
@@ -721,13 +753,17 @@ function elecFrontsSheet(doc, setup, sh, b, ctx) {
     const yA = jb.box[1] + jb.box[3] * 0.62, yB = jb.box[1] + jb.box[3] * 0.38;
     for (const [sx, dir] of [[jb.box[0], -1], [jb.box[0] + jb.box[2], 1]]) {
       for (const y of [yA, yB]) {
-        doc.poly([sx, y, sx + dir * 7, y, sx + dir * 8.5, y + 1.6, sx + dir * 10, y - 1.6, sx + dir * 11.5, y, sx + dir * 18, y], { color: ELEC_CABLES.bus.color, w: 0.4, dash: ELEC_DOT });
+        doc.poly([sx, y, sx + dir * 7, y, sx + dir * 8.5, y + 1.6, sx + dir * 10, y - 1.6, sx + dir * 11.5, y, sx + dir * 18, y], { color: ELEC_CABLES.bus.color, w: 0.4, dash: ELEC_CUST });
       }
       const t = elecNoteBox(doc, 'To Customer', dir < 0 ? sx - 36 : sx + 19, (yA + yB) / 2 + 3, 17, { size: 2.2, align: 'center' });
       void t;
     }
     const note = elecNote(setup, 'junctionBox');
-    if (note.trim()) elecNoteBox(doc, note, 22, 48, 88, { size: 1.9, id: 'note:junctionBox' });
+    /* the note points at the junction box (AYK feedback, 27 Nov 2026) */
+    if (note.trim()) {
+      const nb = elecNoteBox(doc, note, 22, 48, 88, { size: 1.9, id: 'note:junctionBox' });
+      elecLeader(doc, nb, jb.box[0], jb.box[1] + jb.box[3] * 0.25);
+    }
   }
   /* SSC B+ / B- to the junction box: odd SSCs of the bank to the first Bus pair, even to the second */
   const pairs = jb ? (() => { const plus = jb.list.filter(p => p.name === 'Bus+'), minus = jb.list.filter(p => p.name === 'Bus-'); return plus.map((p, i) => ({ plus: p, minus: minus[i] })).filter(p => p.minus); })() : [];
@@ -768,7 +804,10 @@ function elecModuleChain(doc, mv, d, mx, count) {
   const mods = shown.map(m => {
     const r = elecDrawPart(doc, mv, [mx, m.y, W, H], { portNames: false, lw: 0.1 });
     doc.text(m.label, mx + 34, m.y + 13.5, { size: 2, align: 'center', color: ELEC_INK });
-    for (const t of ['S', 'N']) { const p = r.ports[t]; doc.text(t, p.x - p.r - 0.6, p.y - 0.6, { size: 1.4, align: 'right', color: ELEC_INK }); }
+    /* the module's comm jacks read S (top) and N (below it) (AYK feedback, 27 Nov 2026); the
+       lines stay where DWG2527 draws them, only the printed letters follow AYK's correction */
+    [r.ports.S, r.ports.N].filter(Boolean).sort((a, b) => b.y - a.y)
+      .forEach((p, i) => doc.text(i ? 'N' : 'S', p.x - p.r - 0.6, p.y - 0.6, { size: 1.4, align: 'right', color: ELEC_INK }));
     return r.ports;
   });
   if (n === null || n > 3) {

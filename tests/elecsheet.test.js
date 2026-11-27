@@ -33,10 +33,10 @@ const ok = (c, m) => { assert.ok(c, m); n++; };
   /* sheet 1: AYK's notes, editable */
   ok(/only need to connect to the primary ports/.test(all(1)) && /Figure 1/.test(all(1)), 'sheet 1: the MSM notes and figure 1');
   ok(/Inline Connector Wiring Instructions/.test(all(2)), 'sheet 2: the wiring instructions');
-  ok(texts(2).includes('SSC_Cooling_Fan_Power: 0.3/0.5kV 3*0.823mm², OD 5-9mm') && /Dotted: the customer/.test(all(2)) && !texts(1).some(t => /^Dashed:/.test(t)), 'the cable legend is on sheet 2 with the inline connectors, with dashed and dotted');
-  ok(calls.filter(c => c[0] === 'poly' && c[1] === 2 && c[2] && c[2].dash && c[2].dash[0] === 0 && c[3].length === 4).length === 9 + 1, 'sheet 2: the customer side of each of the nine inline connectors dotted (and the legend sample)');
+  ok(texts(2).includes('SSC_Cooling_Fan_Power: 0.3/0.5kV 3*0.823mm², OD 5-9mm') && /Dashed: the customer/.test(all(2)) && /Solid: AYK harness/.test(all(2)) && !texts(1).some(t => /^Dashed:/.test(t)), 'the cable legend is on sheet 2 with the inline connectors: solid AYK side, dashed customer side');
+  ok(calls.filter(c => c[0] === 'poly' && c[1] === 2 && c[2] && c[2].dash && c[2].dash[0] === 1.6 && c[3].length === 4).length === 9 + 1, 'sheet 2: the customer side of each of the nine inline connectors dashed (and the legend sample)');
   const harness = calls.filter(c => c[0] === 'poly' && c[1] === 3 && c[2] && /^lead:To Client-side/.test(c[2].id || '')), custSide = calls.filter(c => c[0] === 'poly' && c[1] === 3 && c[2] && /^customer:To Client-side/.test(c[2].id || ''));
-  ok(harness.length === 2 && harness.every(c => !c[2].dash) && custSide.length === 2 && custSide.every(c => c[2].dash[0] === 0), 'MSM sheet: AYK harness to the dry contact / remote E-stop connectors solid, the customer side dotted');
+  ok(harness.length === 2 && harness.every(c => !c[2].dash) && custSide.length === 2 && custSide.every(c => c[2].dash[0] === 1.6), 'MSM sheet: AYK harness to the dry contact / remote E-stop connectors solid, the customer side dashed');
   ok(texts(1).includes('Figure 1') && texts(1).includes('Resistor Network') && texts(1).includes('1K') && texts(1).includes('10K'), 'sheet 1: Figure 1 as the technote (E-stop, resistor network, 1K, 10K)');
   /* sheet 2: the nine inline connectors of AYK's P1562, in its order, each drawn from the part */
   const plugNames = ['ACDP', 'ACDP', 'SSC', 'SSC', 'SSC', 'Master', 'Dry', 'Remote'];
@@ -81,11 +81,13 @@ const ok = (c, m) => { assert.ok(c, m); n++; };
   ok(crossingsOn(10) === 1, 'fronts sheet with an SSC of two modules: one unavoidable crossing (S- into Module 1 over the link to Module 2); found ' + crossingsOn(10));
   const greens = calls.filter(c => c[0] === 'poly' && c[1] === 9 && c[2] && c[2].color === '#16a34a').length;
   ok(greens === 2 * (2 + 2), 'fronts: S and N to the string plus two module-to-module comm links per SSC (' + greens + ')');
-  const dashed = calls.filter(c => c[0] === 'poly' && c[1] === 7 && c[2] && c[2].dash).length;
-  ok(dashed > 0, 'cables between racks are dashed');
+  /* AYK feedback 27 Nov 2026: every lead on the AYK side is solid, also between racks */
+  ok(!calls.some(c => c[0] === 'poly' && c[2] && /^lead:/.test(c[2].id || '') && c[2].dash), 'AYK harness leads are solid, also between racks');
+  const plugNm = p => texts(p).filter(t => t === 'POWER' || t === 'Com.P' || t === 'Estop').length;
+  ok(plugNm(3) > 0 && plugNm(6) > 0, 'each inline connector carries its name (MSM sheet ' + plugNm(3) + ', ACDP sheet ' + plugNm(6) + ')');
   /* the customer's own cables are dotted: AC power in, dry contact and remote E-stop past their connector */
-  const dotted = p => calls.filter(c => c[0] === 'poly' && c[1] === p && c[2] && c[2].dash && c[2].dash[0] === 0).length;
-  ok(dotted(3) >= 6 && dotted(6) >= 4, 'customer cables dotted (MSM sheet ' + dotted(3) + ', ACDP sheet ' + dotted(6) + ')');
+  const dotted = p => calls.filter(c => (c[0] === 'poly' || c[0] === 'line') && c[1] === p && c[2] && c[2].dash && c[2].dash[0] === 1.6).length;
+  ok(dotted(3) >= 6 && dotted(6) >= 4, 'customer cables dashed (MSM sheet ' + dotted(3) + ', ACDP sheet ' + dotted(6) + ')');
   /* an edited note prints; an emptied one is left off */
   s.notes = { comm: 'OUR OWN COMM NOTE', cloud: '' };
   calls.length = 0; rec.pages = 1;
