@@ -9,7 +9,7 @@ const fs = require('fs');
 const path = require('path');
 const ROOT = path.resolve(__dirname, '..');
 const W = new Function(fs.readFileSync(path.join(ROOT, 'js', 'cadwire.js'), 'utf8') +
-  '\nreturn { cadWirePlan, cadwColumns, cadwSegCross, cadwPowerCrossings, cadwLen, cadWireGuide, cadwPortHits, cadwPorts };')();
+  '\nreturn { cadwRemoteSsc, cadWirePlan, cadwColumns, cadwSegCross, cadwPowerCrossings, cadwLen, cadWireGuide, cadwPortHits, cadwPorts };')();
 
 let passed = 0; const failed = [];
 function ok(name, cond, info) { if (cond) passed++; else failed.push(name + (info ? '  [' + info + ']' : '')); console.log((cond ? 'PASS  ' : 'FAIL  ') + name + (info ? '  [' + info + ']' : '')); }
@@ -327,6 +327,33 @@ ok('refused: junction box terminals not taught', !nj.ok && /has no P1 terminals/
   const mix = W.cadWirePlan(rc, ss, { pair: 'P1', tray: 'CR' });
   const c0 = mix.cables.filter(c => c.ssc === ss[0].name && /B[+−-] →/.test(c.id));
   ok('tray per SSC overrides the rack tray', mix.ok && c0.length === 2 && c0.every(c => riserX(c) < cols[ss[0].comp._col].x0));
+}
+
+/* ---------- strings across racks (AYK S10176: SSC in one rack, its modules in another) ---------- */
+{
+  /* the module rack: rack 111 with one SSC taken away; its modules are fed from an SSC in the rack to the left */
+  const rc = rack111();
+  const ss = sscList(rc);
+  const gone = ss[ss.length - 1];
+  const remote = W.cadwRemoteSsc(rc.filter(c => c !== gone.comp), 'remote:r2:ssc1', 'left');
+  remote.linkKey = 'r2:ssc1';
+  const comps = rc.filter(c => c !== gone.comp).concat([remote]);
+  const sscs = ss.slice(0, -1).concat([{ comp: remote, key: 'remote:r2:ssc1', name: 'SSC9', count: gone.count, remote: true }]);
+  const plan = W.cadWirePlan(comps, sscs, { pair: 'P1' });
+  const mine = plan.cables.filter(c => c.ssc === 'SSC9');
+  ok('remote SSC: the string is wired from a stand-in at the ceiling', plan.ok && plan.strings.some(s => s.name === 'SSC9' && s.modules.length === gone.count), plan.errors && plan.errors.join(' '));
+  ok('remote SSC: no B+ / B- in the module rack', !mine.some(c => /B[+−-]/.test(c.id)));
+  const links = mine.filter(c => c.link);
+  ok('remote SSC: S−, S+, S, N carry the link to the SSC rack', links.length === 4 && ['S-', 'S+', 'S', 'N'].every(r => links.some(c => c.link.role === r && c.link.key === 'r2:ssc1')));
+  ok('remote SSC: its leads start at the ceiling, above the rack', links.every(c => c.pts[0][1] > Math.max(...rc.map(k => k.y1))));
+  ok('remote SSC: no power crossings', plan.crossings.length === 0, plan.crossings.length);
+  /* the SSC rack: one SSC and a junction box, no modules; its modules are in the rack to the right */
+  const ssc = rc.find(c => c.kind === 'ssc'), jb = rc.filter(c => c.kind === 'jb').sort((p, q) => Math.abs(p.x0 - ssc.x0) - Math.abs(q.x0 - ssc.x0))[0];
+  const away = W.cadWirePlan([ssc, jb], [{ comp: ssc, key: 'ssc1', name: 'SSC9', count: 0, away: true, side: 'right', linkKey: 'r2:ssc1' }], { pair: 'P1' });
+  const al = away.cables.filter(c => c.link);
+  ok('away SSC: B+ / B- to its junction box, S−, S+, S, N up to the ceiling', away.ok && away.cables.length === 6 && al.length === 4 && away.cables.filter(c => /B[+-]/.test(c.id)).length === 2, away.errors && away.errors.join(' '));
+  ok('away SSC: the ceiling leads leave the rack on the module rack\'s side', al.every(c => c.pts[c.pts.length - 1][0] > Math.max(ssc.x1, jb.x1)));
+  ok('away SSC: no power crossings', away.crossings.length === 0, away.crossings.length);
 }
 
 console.log('\n' + (failed.length ? 'FAILED ' + failed.length + ':\n  ' + failed.join('\n  ') : 'Wiring tests passed: ' + passed));

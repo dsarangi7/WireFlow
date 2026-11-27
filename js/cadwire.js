@@ -11,6 +11,11 @@
  *                     chosen once by the engineer, same on every JB);
  *   - power cables never cross each other anywhere in the rack; power and
  *     communication may cross.
+ * Across racks (AYK S10176, user 26 Nov 2026): an SSC may drive modules in another rack.
+ *   In the module rack the string's SSC is a stand-in at the ceiling on the SSC rack's side
+ *   (s.remote: S, N, S+, S- only, no junction box); in the SSC rack that SSC (s.away) wires
+ *   B+ / B- to its junction box and takes S, N, S+, S- up to the ceiling towards the module
+ *   rack. Those cables carry link {key, role}; the sheet joins the two ends over the top.
  * Drawing style (AYK marked-up rack): short jumps between neighbouring
  * modules, long cables run in the cable trays (the channels between module
  * columns) and across the rails (the gaps between rows) - never over a part,
@@ -354,6 +359,83 @@ function cadAutoJb(comps, ssc) {
   return (col && col.jbs.slice().sort((a, b) => Math.abs((a.y0 + a.y1) / 2 - cy) - Math.abs((b.y0 + b.y1) / 2 - cy))[0]) || null;
 }
 
+/* ---------- strings across racks ---------- */
+/** The stand-in for an SSC in another rack: a box at the ceiling above the outermost module
+    column on that rack's side, with S−, S, N, S+ along its lower edge. */
+function cadwRemoteSsc(comps, id, side) {
+  const mods = comps.filter(c => c.kind === 'module');
+  if (!mods.length) return null;
+  const cols = cadwColumns(comps);
+  const col = side === 'right' ? cols[cols.length - 1] : cols[0];
+  const ms = col ? col.modules : mods;
+  const x0 = Math.min(...ms.map(m => m.x0)), x1 = Math.max(...ms.map(m => m.x1));
+  const top = Math.max(...comps.map(c => c.y1));
+  const y0 = top + cadwU(120), y1 = y0 + cadwU(60), w = x1 - x0;
+  const roles = side === 'right' ? ['S+', 'N', 'S', 'S-'] : ['S-', 'S', 'N', 'S+'];
+  return { id: id, kind: 'ssc', remote: true, x0: x0, y0: y0, x1: x1, y1: y1,
+    terminals: roles.map((r, i) => ({ role: r, x: x0 + w * (0.2 + 0.2 * i), y: y0 })) };
+}
+
+/**
+ * An SSC whose modules are in another rack: B+ / B- to its junction box, S, N, S+, S- up to
+ * the ceiling and out of the rack towards the module rack (side 'left' or 'right'). Each lead
+ * leaves its connector down (under the SSC) or up (across its face) to a lane left or right of
+ * the SSC and runs up it; a junction box lead may also go straight up to the box. B+ / B- sit
+ * between S+ and S- on the SSC, so no single rule keeps power apart: every combination is
+ * tried and the one with the fewest power crossings (then the shortest) kept.
+ */
+function cadwAwayLeads(comps, s, jb, pair, side, linkKey, placed) {
+  const others = (placed || []).filter(k => k.kind === 'power');
+  const c = s.comp;
+  const tag = 'S' + ((String(s.name).match(/\d+/) || [''])[0]);
+  const all = comps.filter(k => k.x1 > k.x0);
+  const top = Math.max(...all.map(k => k.y1)), left = Math.min(...all.map(k => k.x0)), right = Math.max(...all.map(k => k.x1));
+  const specs = [['S', 'comm'], ['N', 'comm'], ['S+', 'power'], ['S-', 'power']].map(([r, kind]) => ({ role: r, kind: kind, t: cadwTerm(c, r), ceil: true }));
+  if (jb) for (const r of ['B+', 'B-']) specs.push({ role: r, kind: 'power', t: cadwTerm(c, r), to: cadwTerm(jb, pair + r.slice(1)) });
+  const leads = specs.filter(x => x.t && (x.ceil || x.to));
+  const n = leads.length;
+  /* ways out of a connector: down or up, to the left or right lane; a junction box lead may
+     also go straight up to the box ('J') */
+  const WAYS = ['LD', 'RD', 'LU', 'RU', 'J'];
+  const nWays = x => (x.to ? 5 : 4);
+  const combos = leads.reduce((p, x) => p * nWays(x), 1);
+  let best = null;
+  for (let code = 0; code < combos; code++) {
+    let rest = code;
+    const way = leads.map(x => { const w = WAYS[rest % nWays(x)]; rest = Math.floor(rest / nWays(x)); return w; });
+    const cables = leads.map((x, i) => Object.assign({}, x, { _way: way[i] }));
+    for (const g of ['LD', 'RD', 'LU', 'RU']) {
+      const mine = cables.filter(x => x._way === g), right2 = g[0] === 'R', up = g[1] === 'U';
+      /* the lead whose connector is furthest from its lane goes deepest (highest) and takes the outer lane */
+      mine.sort((a, b) => right2 ? a.t.x - b.t.x : b.t.x - a.t.x);
+      mine.forEach((x, i) => {
+        const d = cadwU(18 + (mine.length - 1 - i) * 9), y = up ? c.y1 + d : x.t.y - d;
+        const lane = right2 ? c.x1 + cadwU(30 + (mine.length - 1 - i) * 12 + (up ? 80 : 0)) : c.x0 - cadwU(30 + (mine.length - 1 - i) * 12 + (up ? 80 : 0));
+        x._lane = lane; x._pts = [[x.t.x, x.t.y], [x.t.x, y], [lane, y]];
+      });
+    }
+    /* up the lanes: the ceiling leads to their level over the rack (the lane furthest from the
+       module rack highest) and out; the junction box leads to the box's connectors */
+    const ceil = cables.filter(x => x.ceil).sort((a, b) => side === 'right' ? a._lane - b._lane : b._lane - a._lane);
+    ceil.forEach((x, i) => {
+      const y = top + cadwU(60 + (ceil.length - 1 - i) * 14), edge = side === 'right' ? right + cadwU(80) : left - cadwU(80);
+      x._pts = x._pts.concat([[x._lane, y], [edge, y]]);
+    });
+    const straight = cables.filter(z => z.to && z._way === 'J').sort((a, b) => a.t.x - b.t.x);
+    straight.forEach((x, i) => { const y = x.to.y - cadwU(30 + i * 9); x._pts = [[x.t.x, x.t.y], [x.t.x, y], [x.to.x, y], [x.to.x, x.to.y]]; });
+    for (const x of cables.filter(z => z.to && z._way !== 'J')) x._pts = x._pts.concat([[x._lane, x.to.y - cadwU(30)], [x.to.x, x.to.y - cadwU(30)], [x.to.x, x.to.y]]);
+    const out = cables.map(x => ({ id: x.ceil ? `${tag} ${x.role} → ceiling` : `${tag} ${x.role} → ${(jb && jb._name) || 'JB'} ${pair}${x.role.slice(1)}`,
+      ssc: s.name, kind: x.kind, from: `${tag} ${x.role}`, to: x.ceil ? 'ceiling' : `JB ${pair}${x.role.slice(1)}`, pts: cadwClean(x._pts),
+      link: x.ceil ? { key: linkKey, role: x.role, rack: s.awayRack || '' } : undefined }));
+    /* power crossings among these leads and with the rest of the rack's wiring */
+    let x = cadwPowerCrossings(out).length;
+    for (const k of out) if (k.kind === 'power') for (const o of others) x += cadwCrossings(k, o);
+    const score = x * 1e6 + out.reduce((t, k) => t + cadwLen(k.pts), 0);
+    if (!best || score < best.score) best = { score: score, cables: out };
+  }
+  return best ? best.cables : [];
+}
+
 /* ---------- planning ---------- */
 /**
  * Plans the wiring of the whole rack.
@@ -452,6 +534,10 @@ function cadWireGuide(comps, sscs, opts) {
 function cadWirePlan(comps, sscs, opts) {
   opts = opts || {};
   comps = cadwSameModules(comps);
+  /* SSCs whose modules are in another rack are wired on their own, after the strings */
+  const away = sscs.filter(s => s.away);
+  sscs = sscs.filter(s => !s.away);
+  if (away.length && !sscs.length) return cadwAwayPlan(comps, away, opts);
   const pair = opts.pair === 'P2' ? 'P2' : 'P1';
   const errors = [], warnings = [];
   const modules = comps.filter(c => c.kind === 'module');
@@ -462,7 +548,7 @@ function cadWirePlan(comps, sscs, opts) {
   if (sscs.some(x => !(x.count >= 1))) errors.push('Every SSC needs its number of modules.');
   else if (total !== modules.length) errors.push(`The SSC module counts add up to ${total}, but ${modules.length} modules are on the drawing.`);
   if (modules.some(m => need.module.some(r => !cadwTerm(m, r)))) errors.push('Module terminals are missing: teach the battery module with its four terminals.');
-  if (sscs.some(s => need.ssc.some(r => !cadwTerm(s.comp, r)))) errors.push('SSC terminals are missing: teach the SSC and click its six connectors (S, N, S+, B+, B−, S−).');
+  if (sscs.some(s => (s.remote ? ['S', 'N', 'S+', 'S-'] : need.ssc).some(r => !cadwTerm(s.comp, r)))) errors.push('SSC terminals are missing: teach the SSC and click its six connectors (S, N, S+, B+, B−, S−).');
   const cols = cadwColumns(comps);
   const jbNames = cadJbNames(comps);
   const allJbs = comps.filter(c => c.kind === 'jb');
@@ -470,6 +556,8 @@ function cadWirePlan(comps, sscs, opts) {
   const needJb = [];
   const usedPair = new Map();
   for (const s of sscs) {
+    /* a string fed from another rack: its SSC's B+ / B- are wired in that rack */
+    if (s.remote) { jbFor.set(s, { jb: null, pair: pair, name: null, tray: null }); continue; }
     /* the engineer's choice (s.jbId, s.pair), else the junction box of the SSC's own
        column (usually at the top, on some racks at the bottom) with the rack's pair */
     let jb = s.jbId ? allJbs.find(j => j.id === s.jbId) : null;
@@ -530,8 +618,48 @@ function cadWirePlan(comps, sscs, opts) {
   if (portHits.length) warnings.push(`${portHits.length} cable${portHits.length === 1 ? ' runs' : 's run'} over a connector with no clear way round: ${portHits.slice(0, 4).map(h => h.id).join(', ')}${portHits.length > 4 ? ' …' : ''}. Move ${portHits.length === 1 ? 'it' : 'them'} on the wiring sheet.`);
   if (crossings.length) warnings.push(`${crossings.length} power cable crossing${crossings.length === 1 ? '' : 's'}${best.custom ? ' with this numbering' : ' could not be avoided'}: check the highlighted cables.`);
   for (const st of best.strings) if (st.far) warnings.push(`${st.name} is not next to its modules; its long cables may be impractical.`);
-  return { ok: true, errors: [], warnings: warnings, pair: pair, custom: !!best.custom, suggested: best.suggested || null, strings: best.strings, cables: best.cables, crossings: crossings, portHits: portHits,
-    outline: best.strings.map(st => ({ ssc: st.name, segs: cadwOutline(st.modules.concat([st.ssc])) })) };
+  /* SSCs whose modules are in another rack: B+ / B- and the ceiling leads */
+  for (const s of away) {
+    const jb = cadwAwayJb(comps, s, pair, errors);
+    const cab = cadwAwayLeads(comps, s, jb && jb.jb, jb ? jb.pair : pair, s.side === 'left' ? 'left' : 'right', s.linkKey, best.cables);
+    best.cables.push(...cab);
+    best.strings.push({ name: s.name, tag: 'S' + ((String(s.name).match(/\d+/) || [''])[0]), ssc: s.comp, away: true, modules: [], labels: [] });
+  }
+  if (errors.length) return { ok: false, errors: errors, warnings: warnings, strings: [], cables: [], crossings: [], outline: [] };
+  const crossings2 = away.length ? cadwPowerCrossings(best.cables) : crossings;
+  return { ok: true, errors: [], warnings: warnings, pair: pair, custom: !!best.custom, suggested: best.suggested || null, strings: best.strings, cables: best.cables, crossings: crossings2, portHits: portHits,
+    outline: best.strings.filter(st => st.modules.length).map(st => ({ ssc: st.name, segs: cadwOutline(st.ssc && st.ssc.remote ? st.modules : st.modules.concat([st.ssc])) })) };
+}
+
+/** The junction box (and pair) of an SSC whose modules are in another rack: the engineer's
+    choice, else the nearest box above or below it. */
+function cadwAwayJb(comps, s, pair, errors) {
+  const jbs = comps.filter(c => c.kind === 'jb');
+  let jb = s.jbId ? jbs.find(j => j.id === s.jbId) : null;
+  const cx = (s.comp.x0 + s.comp.x1) / 2, cy = (s.comp.y0 + s.comp.y1) / 2;
+  if (!jb) jb = jbs.slice().sort((a, b) => Math.hypot((a.x0 + a.x1) / 2 - cx, (a.y0 + a.y1) / 2 - cy) - Math.hypot((b.x0 + b.x1) / 2 - cx, (b.y0 + b.y1) / 2 - cy))[0] || null;
+  const pr = s.pair === 'P1' || s.pair === 'P2' ? s.pair : pair;
+  if (!jb) { errors.push(`${s.name}: no junction box for its B+ / B-.`); return null; }
+  if (!cadwTerm(jb, pr + '+') || !cadwTerm(jb, pr + '-')) { errors.push(`${s.name}: the junction box has no ${pr} terminals. Teach it and click its four connectors.`); return null; }
+  const names = cadJbNames(comps);
+  jb._name = names.get(jb.id);
+  return { jb: jb, pair: pr };
+}
+/** A rack whose SSCs all drive modules in other racks (an SSC / MSM rack with no modules). */
+function cadwAwayPlan(comps, away, opts) {
+  const pair = opts.pair === 'P2' ? 'P2' : 'P1';
+  const errors = [], cables = [], strings = [];
+  const ws = comps.filter(c => c.kind === 'ssc').map(c => c.x1 - c.x0).sort((a, b) => a - b);
+  /* no module to measure the drawing scale by: an AYK SSC is about 600 mm wide */
+  if (ws.length) CADW_K = ws[ws.length >> 1] / 600;
+  for (const s of away) {
+    if (['S', 'N', 'S+', 'S-', 'B+', 'B-'].some(r => !cadwTerm(s.comp, r))) { errors.push(`${s.name}: SSC terminals are missing: teach the SSC and click its six connectors (S, N, S+, B+, B−, S−).`); continue; }
+    const jb = cadwAwayJb(comps, s, pair, errors);
+    cables.push(...cadwAwayLeads(comps, s, jb && jb.jb, jb ? jb.pair : pair, s.side === 'left' ? 'left' : 'right', s.linkKey));
+    strings.push({ name: s.name, tag: 'S' + ((String(s.name).match(/\d+/) || [''])[0]), ssc: s.comp, away: true, modules: [], labels: [] });
+  }
+  if (errors.length) return { ok: false, errors: errors, warnings: [], strings: [], cables: [], crossings: [], outline: [] };
+  return { ok: true, errors: [], warnings: [], pair: pair, custom: true, strings: strings, cables: cables, crossings: cadwPowerCrossings(cables), portHits: [], outline: [] };
 }
 
 /** Key of the module groups a traversal gives (null when the counts do not fit). */
@@ -689,7 +817,7 @@ function cadwPlanString(st, cols, jb, pair, placed, gapUse, jbName, tray) {
       { key: 'S+', from: [ssc, 'S+'], to: [last, 'power+'], name: `${tag} ${label.get(last)} + → S+` },
       { key: 'B+', from: [ssc, 'B+'], to: [jb, pair + '+'], name: `${tag} B+ → ${jbName} ${pair}+` },
       { key: 'B-', from: [ssc, 'B-'], to: [jb, pair + '-'], name: `${tag} B− → ${jbName} ${pair}−` },
-    ];
+    ].filter(x => jb || (x.key !== 'B+' && x.key !== 'B-'));
     const longComm = [
       { key: 'S', from: [ssc, 'S'], to: [first, 'comm-N'], name: `${tag} S → ${label.get(first)} N` },
       { key: 'N', from: [ssc, 'N'], to: [last, 'comm-S'], name: `${tag} ${label.get(last)} S → N` },
@@ -739,7 +867,8 @@ function cadwPlanString(st, cols, jb, pair, placed, gapUse, jbName, tray) {
         for (const [key, slot] of pick.c.lanes) { if (!lanesUsed.has(key)) lanesUsed.set(key, new Set()); lanesUsed.get(key).add(slot); }
         k++;
         if (kind === 'power') crossings += pick.x;
-        cables.push({ id: spec.name, ssc: st.s.name, kind: kind, from: spec.name.split(' → ')[0].replace(tag + ' ', ''), to: spec.name.split(' → ')[1], pts: pick.c.pts, _cands: inside, _lanes: pick.c.lanes });
+        cables.push({ id: spec.name, ssc: st.s.name, kind: kind, from: spec.name.split(' → ')[0].replace(tag + ' ', ''), to: spec.name.split(' → ')[1], pts: pick.c.pts, _cands: inside, _lanes: pick.c.lanes,
+          link: ssc.remote ? { key: ssc.linkKey, role: spec.key, rack: ssc.otherRack || '' } : undefined });
       };
       for (const spec of perm) place(spec, 'power');
       /* second look: each long power cable re-picks its route now that the others are known
@@ -887,7 +1016,7 @@ function cadwSuggestOrders(cols, comps, sscs, jbFor, opts) {
     return out;
   };
   /* B+ / B- run up the tray from the SSC to its junction box */
-  const busRun = (s, side) => { const j = jbFor.get(s); return j ? runRows(s, (j.jb.y0 + j.jb.y1) / 2).map(r => sideGap(s, side) + ',' + r) : []; };
+  const busRun = (s, side) => { const j = jbFor.get(s); return j && j.jb ? runRows(s, (j.jb.y0 + j.jb.y1) / 2).map(r => sideGap(s, side) + ',' + r) : []; };
   if (!opts.chooseTray) for (const s of sscs) for (const k of busRun(s, trayOf(s))) inc(blocks, k, 1);
   /* the tray an S- / S+ cable uses to reach module m, and the rows it passes */
   const endRun = (s, m) => {
@@ -1138,7 +1267,7 @@ function cadWireSave(plan, key) {
   return {
     key: key, pair: plan.pair, custom: !!plan.custom, generated: new Date().toISOString(),
     crossings: plan.crossings.slice(), portHits: (plan.portHits || []).slice(), warnings: plan.warnings.slice(),
-    cables: plan.cables.map(c => ({ id: c.id, ssc: c.ssc, kind: c.kind, from: c.from, to: c.to, curve: !!c.curve, pts: c.pts.map(p => [r(p[0]), r(p[1])]),
+    cables: plan.cables.map(c => ({ id: c.id, ssc: c.ssc, kind: c.kind, from: c.from, to: c.to, curve: !!c.curve, link: c.link, pts: c.pts.map(p => [r(p[0]), r(p[1])]),
       ways: c.kind === 'power' && c.ways && c.ways.length ? c.ways.map(w => ({ curve: !!w.curve, pts: w.pts.map(p => [r(p[0]), r(p[1])]) })) : undefined })),
     strings: plan.strings.map(st => ({ name: st.name, tag: st.tag, modules: st.modules.map(m => m.id),
       labels: st.labels.map(l => ({ id: l.id, text: l.text, x: r(l.x), y: r(l.y) })) })),

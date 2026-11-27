@@ -146,6 +146,32 @@ function checkPdf(bytes) {
   const stM = L.sheetSettings({ pages: { count: 2, of: Object.fromEntries(M.wiring.strings.filter(st => /^Rack 3/.test(st.name)).map(st => [st.name, 2])) } }, 'x');
   const svgM2 = L.sheetSvgTarget();
   L.sheetDraw(svgM2, { bounds: M.flat.bounds, jbs: M.jbs, parts: M.parts, wiring: M.wiring, settings: stM, components: M.components, grounds: M.grounds, page: 1 });
+  /* an SSC in one rack driving modules in the next (AYK S10176): joined over the ceiling */
+  {
+    const C = new Function(src('cadwire.js') + '\nreturn { cadwRemoteSsc };')();
+    const rc = R.rack111(), ss = R.sscList(rc), gone = ss[ss.length - 1];
+    const rest = rc.filter(c => c !== gone.comp);
+    const stand = C.cadwRemoteSsc(rest, 'remote:r', 'left'); stand.linkKey = 'rA:ssc'; stand.otherRack = 'Rack 2';
+    const modPlan = L.cadWirePlan(rest.concat([stand]), ss.slice(0, -1).concat([{ comp: stand, key: 'remote:r', name: 'SSC9', count: gone.count, remote: true }]), { pair: 'P1' });
+    const jbA = rc.filter(c => c.kind === 'jb')[0];
+    const sscA = Object.assign({}, gone.comp, { id: 'sA' });
+    const sscPlan = L.cadWirePlan([sscA, jbA], [{ comp: sscA, key: 'ssc', name: 'SSC9', count: 0, away: true, side: 'right', linkKey: 'rA:ssc', awayRack: 'Rack 4' }], { pair: 'P1' });
+    const fl = b => ({ polylines: [], circles: [], texts: [], bounds: b });
+    const bA = { minX: Math.min(sscA.x0, jbA.x0) - 100, minY: sscA.y0 - 400, maxX: Math.max(sscA.x1, jbA.x1) + 100, maxY: Math.max(sscA.y1, jbA.y1) + 50 };
+    const X = L.sheetMergeRacks([
+      { key: 'rA', name: 'Rack 2', flat: fl(bA), wiring: L.cadWireSave(sscPlan, 'a'), components: [sscA, jbA], parts: [], jbs: [jbA], unit: 1 },
+      { key: 'rB', name: 'Rack 4', flat: fl(bounds), wiring: L.cadWireSave(modPlan, 'b'), components: rest, parts: [], jbs: rest.filter(c => c.kind === 'jb'), unit: 1 }], 600);
+    ok('across racks: both halves planned', modPlan.ok && sscPlan.ok, (modPlan.errors || []).concat(sscPlan.errors || []).join(' '));
+    ok('across racks: the SSC keeps one name in both racks', X.wiring.strings.filter(st => st.name === 'SSC9').length === 2 && !X.wiring.strings.some(st => /Rack \d SSC9/.test(st.name)));
+    ok('across racks: S−, S+, S and N joined over the ceiling', X.wiring.links.length === 4 && ['S-', 'S+', 'S', 'N'].every(r => X.wiring.links.some(l => l.role === r)));
+    const sv = L.sheetSvgTarget();
+    L.sheetDraw(sv, { bounds: X.flat.bounds, jbs: X.jbs, parts: X.parts, wiring: X.wiring, settings: L.sheetSettings({}, 'x'), components: X.components, grounds: X.grounds, ground0: X.ground0 });
+    const dashedLinks = (sv.svg().match(/<polyline[^>]*stroke-dasharray="1.6 1.1"/g) || []).length;
+    ok('across racks: drawn dashed over the top, no loose ends', dashedLinks >= 4 && !/ to Rack 4| from Rack 2/.test(sv.svg()), dashedLinks);
+    const one = L.sheetSvgTarget();
+    L.sheetDraw(one, { bounds: bA, jbs: [jbA], wiring: L.cadWireSave(sscPlan, 'a'), settings: L.sheetSettings({}, 'x') });
+    ok('across racks: on its own, the SSC rack says where each lead goes', /S[−-] to Rack 4/.test(one.svg()) && /N to Rack 4/.test(one.svg()));
+  }
   ok('two racks over two sheets: the second rack fenced on sheet 1', (svgM2.svg().match(/class="sh-cable"/g) || []).length === 0 && /Please see sheet 2, Rack 3 SSC1 &amp;/.test(svgM2.svg()));
   fs.mkdirSync(path.join(ROOT, 'prototype-output'), { recursive: true });
   fs.writeFileSync(path.join(ROOT, 'prototype-output', 'sheet-test.pdf'), pdf);

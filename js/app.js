@@ -1588,6 +1588,19 @@ async function renderCadPage(id) {
   cad.signatures.forEach(cadNormaliseTerminals);
   const renamedTerminals = roleList() !== rolesBefore;
   if (!cad.labels || typeof cad.labels !== 'object') cad.labels = {};
+  if (!Array.isArray(cad.remoteSscs)) cad.remoteSscs = [];
+  /* the project's other racks: an SSC there may drive modules here, or modules there may hang
+     on an SSC here (AYK S10176: SSC-1 in Rack 2, its modules in Rack 4, wired over the ceiling) */
+  const folderCads = project.folder ? (await localProjects().catch(() => [])).filter(p => p.underlay_kind === 'cad' && p.folder === project.folder && p.id !== project.id) : [];
+  const cadOf = p => (p.config && p.config.cad) || {};
+  /* the SSCs of the other racks: from their saved parts, else from their SSC labels (keys "ssc@x,y") */
+  const otherSscs = () => folderCads.flatMap(p => {
+    const k = cadOf(p), comps = (k.components || []).filter(c => c.kind === 'ssc');
+    if (comps.length) return comps.map(c => ({ rack: p.id, rackName: p.name, key: cadCompKey(c), name: cadCompLabel(c, k.labels || {}) }));
+    return Object.keys(k.labels || {}).filter(key => /^ssc@/.test(key)).map(key => ({ rack: p.id, rackName: p.name, key: key, name: k.labels[key].label || key }));
+  }).sort((x, y) => String(x.rackName + ' ' + x.name).localeCompare(String(y.rackName + ' ' + y.name), undefined, { numeric: true }));
+  /* an SSC here whose modules another rack of the project wires from it */
+  const awayOf = key => { for (const p of folderCads) for (const r of cadOf(p).remoteSscs || []) if (r.rack === project.id && r.ssc === key) return { rackId: p.id, rackName: p.name, side: r.side }; return null; };
   let components = [];
   let fromLibrary = false;
   /* generated wiring (plain data, saved with the drawing) */
@@ -1770,7 +1783,7 @@ async function renderCadPage(id) {
     rememberWiring();
     const inp = wiringInputs();
     let plan;
-    try { plan = cadWirePlan(components, inp.sscs, { pair: inp.pair, tray: inp.tray, orders: orders || undefined }); } catch (e) { plan = { ok: false, errors: [e.message] }; }
+    try { plan = cadWirePlan(inp.comps, inp.sscs, { pair: inp.pair, tray: inp.tray, orders: orders || undefined }); } catch (e) { plan = { ok: false, errors: [e.message] }; }
     if (!plan.ok) { wiringHistory.pop(); say(plan.errors.join(' ') + (orders ? ' Your numbering is kept: fix this and press Draw the wiring again.' : ''), 'warn'); return false; }
     /* the engineer's numbering no longer fits (module counts or parts changed): keep it and
        the wiring as they are rather than drawing another numbering over them */
@@ -1790,6 +1803,7 @@ async function renderCadPage(id) {
   /* a finished numbering goes into the library on this device, by rack layout, so it can be
      offered again when a rack of the same layout is opened (any project, any drawing scale) */
   function keepNumbering(orders, inp, crossings) {
+    if (inp.sscs.some(s => s.remote || s.away)) return;       /* strings across racks: not a layout of its own */
     try {
       const pf = rackFolder(project);
       const e = numlibEntry(components, inp.sscs, orders, { project: project.name, projectId: project.id, pair: inp.pair, tray: inp.tray, crossings: crossings });
@@ -1806,7 +1820,7 @@ async function renderCadPage(id) {
     list = list.filter(e => e.projectId !== project.id || !(cad.wiring && cad.wiring.orders)).sort((a, b) => (b.folder === myFolder && myFolder ? 1 : 0) - (a.folder === myFolder && myFolder ? 1 : 0));
     if (!list.length || !(cad.wiring && cad.wiring.orders)) return list;
     const ids = orderIds(cad.wiring.orders);
-    const mine = numlibEntry(components, inp.sscs, ids, { pair: inp.pair, tray: inp.tray });
+    const mine = inp.sscs.some(s => s.remote || s.away) ? null : numlibEntry(components, inp.sscs, ids, { pair: inp.pair, tray: inp.tray });
     return mine ? list.filter(e => !(e.layout === mine.layout && JSON.stringify(e.strings) === JSON.stringify(mine.strings))) : list;
   }
   /* use a saved numbering: its order, junction boxes, pairs and trays; then draw the wiring */
@@ -1878,8 +1892,8 @@ async function renderCadPage(id) {
   const numberedCount = d => d ? Object.values(d.picked || {}).reduce((n, a) => n + a.length, 0) : 0;
   function startNumbering(fresh) {
     const inp = wiringInputs();
-    if (!inp.sscs.every(s => s.confirmed && s.count >= 1)) { say('Confirm the SSC numbers and module counts first.', 'warn'); return; }
-    const list = inp.sscs.slice().sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }))
+    if (!inp.sscs.every(s => s.confirmed && (s.away || s.count >= 1))) { say('Confirm the SSC numbers and module counts first.', 'warn'); return; }
+    const list = inp.sscs.filter(s => !s.away).slice().sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }))
       .map(s => ({ key: s.key, name: s.name, count: s.count, tag: 'S' + ((String(s.name).match(/\d+/) || [''])[0]) }));
     /* carry on from the saved clicks, unless the engineer chose to start over */
     const draft = !fresh && cad.wiring && cad.wiring.draft;
@@ -1903,7 +1917,7 @@ async function renderCadPage(id) {
     const run = numbering;
     setTimeout(() => {
       if (numbering !== run) return;
-      try { run.guide = cadWireGuide(components, inp.sscs, { pair: inp.pair, tray: inp.tray }); } catch (e) { console.error('Numbering guide failed', e); run.guide = null; }
+      try { run.guide = cadWireGuide(inp.comps, inp.sscs.filter(s => !s.away), { pair: inp.pair, tray: inp.tray }); } catch (e) { console.error('Numbering guide failed', e); run.guide = null; }
       numberPrompt(); viewer.redraw();
     }, 30);
   }
@@ -2137,15 +2151,28 @@ async function renderCadPage(id) {
       const saved = cad.labels[cadCompKey(c)] || {};
       const jm = (cad.wiring && cad.wiring.jbMap && cad.wiring.jbMap[cadCompKey(c)]) || {};
       const jb = jm.jb ? components.find(j => j.kind === 'jb' && cadCompKey(j) === jm.jb) : null;
-      return { comp: c, key: cadCompKey(c), name: cadCompLabel(c, cad.labels), count: saved.modules || 0, confirmed: !!saved.confirmed,
+      const s = { comp: c, key: cadCompKey(c), name: cadCompLabel(c, cad.labels), count: saved.modules || 0, confirmed: !!saved.confirmed,
         jbId: jb ? jb.id : null, pair: jm.pair || null, tray: jm.tray === 'CL' || jm.tray === 'CR' ? jm.tray : null };
+      /* its modules are in another rack: wired from there; here only B+ / B- and the ceiling leads */
+      const aw = awayOf(s.key);
+      if (aw) Object.assign(s, { away: true, count: 0, side: aw.side === 'right' ? 'left' : 'right', linkKey: project.id + ':' + s.key, awayRack: aw.rackName });
+      return s;
     });
+    /* strings fed by an SSC in another rack: a stand-in SSC at this rack's ceiling on that side */
+    const remote = cad.remoteSscs.map(r => {
+      const comp = cadwRemoteSsc(components, 'remote:' + r.id, r.side === 'right' ? 'right' : 'left');
+      if (!comp) return null;
+      comp.linkKey = r.rack + ':' + r.ssc; comp.otherRack = r.rackName;
+      return { comp: comp, key: 'remote:' + r.id, name: r.name, count: r.count || 0, confirmed: r.count >= 1, remote: true, remoteRack: r.rackName, jbId: null, pair: null, tray: null };
+    }).filter(Boolean);
+    sscs.push(...remote);
     const pair = (cad.wiring && cad.wiring.pair) === 'P2' ? 'P2' : 'P1';
     /* cable tray for B+ / B- to the junction box: the engineer must choose it (CL / CR) */
     const tray = cad.wiring && (cad.wiring.tray === 'CL' || cad.wiring.tray === 'CR') ? cad.wiring.tray : null;
-    const key = JSON.stringify([pair, tray, sscs.map(s => [cadCompKey(s.comp), s.name, s.count, s.jbId, s.pair, s.tray]),
+    const key = JSON.stringify([pair, tray, sscs.map(s => [s.remote ? s.key : cadCompKey(s.comp), s.name, s.count, s.jbId, s.pair, s.tray, !!s.away, s.side || '', s.comp.linkKey || '']),
       components.map(c => cadCompKey(c) + (c.terminals || []).map(t => t.role).join(''))]);
-    return { sscs: sscs, pair: pair, tray: tray, key: key };
+    /* the planner gets the stand-ins too */
+    return { sscs: sscs, pair: pair, tray: tray, key: key, comps: components.concat(remote.map(s => s.comp)) };
   }
 
   /* one row per SSC: which junction box and which pair its B+ / B- go to */
@@ -2154,8 +2181,9 @@ async function renderCadPage(id) {
     if (!jbs.length) return '';
     const names = cadJbNames(components);
     const opts = jbs.slice().sort((a, b) => names.get(a.id).localeCompare(names.get(b.id), undefined, { numeric: true }));
-    const rows = inp.sscs.slice().sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true })).map(s => {
-      const auto = cadAutoJb(components, s.comp);
+    const nearest = s => jbs.slice().sort((p, q) => Math.hypot((p.x0 + p.x1) / 2 - (s.comp.x0 + s.comp.x1) / 2, (p.y0 + p.y1) / 2 - (s.comp.y0 + s.comp.y1) / 2) - Math.hypot((q.x0 + q.x1) / 2 - (s.comp.x0 + s.comp.x1) / 2, (q.y0 + q.y1) / 2 - (s.comp.y0 + s.comp.y1) / 2))[0];
+    const rows = inp.sscs.filter(s => !s.remote).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true })).map(s => {
+      const auto = s.away ? nearest(s) : cadAutoJb(components, s.comp);
       const chosen = s.jbId ? components.find(j => j.id === s.jbId) : null;
       const need = !auto && !chosen;
       return `<tr class="${need ? 'cad-jb-need' : ''}"><th>${esc(s.name)}</th>
@@ -2174,7 +2202,7 @@ async function renderCadPage(id) {
           <option value="CR" ${s.tray === 'CR' ? 'selected' : ''}>CR · column right</option>
         </select></td></tr>`;
     }).join('');
-    const missing = inp.sscs.filter(s => (!s.jbId && !cadAutoJb(components, s.comp)) || (!s.tray && !inp.tray)).length;
+    const missing = inp.sscs.filter(s => !s.remote && !s.away && ((!s.jbId && !cadAutoJb(components, s.comp)) || (!s.tray && !inp.tray))).length;
     return `<details class="cad-jb" ${missing ? 'open' : ''}><summary>Junction boxes per SSC${missing ? ` · <b>${missing} need a choice</b>` : ''}</summary>
       <p class="muted small">Tray: the cable tray the B+ / B− cables run in up to the junction box, CL (column left) or CR (column right) of the SSC's column. Normally each SSC uses the junction box in its own column. If a column has none, pick another junction box; two SSCs can share one by using its left pair and its right pair. JB numbers are shown on the drawing.</p>
       <table class="cad-wire-table cad-jb-table"><thead><tr><th>SSC</th><th>Junction box</th><th>Pair</th><th>Tray</th></tr></thead><tbody>${rows}</tbody></table></details>`;
@@ -2186,17 +2214,19 @@ async function renderCadPage(id) {
     const inp = wiringInputs();
     if (!inp.sscs.length) { box.innerHTML = ''; return; }
     if (wiring && wiring.key !== inp.key) wiring = null;
-    const ready = inp.sscs.every(s => s.confirmed && s.count >= 1);
+    const ready = inp.sscs.every(s => s.confirmed && (s.away || s.count >= 1));
     const jbs = components.filter(c => c.kind === 'jb');
+    /* a rack whose strings are all fed from SSCs in other racks needs no junction box */
+    const needJb = inp.sscs.some(s => !s.remote);
     const jbTaught = jbs.length && jbs.every(j => (j.terminals || []).length === 4);
     const todo = [];
     /* a numbering in progress (saved click by click) */
     const draftN = numberedCount(cad.wiring && cad.wiring.draft);
     const totalN = inp.sscs.reduce((n, s) => n + (s.count || 0), 0);
     if (!ready) todo.push('Confirm the SSC numbers and module counts above.');
-    if (!jbs.length) todo.push('Teach the junction box (the box at the top of each SSC column).');
-    else if (!jbTaught) todo.push('Teach the junction box again and click its four connectors left to right (+, −, +, −).');
-    if (!inp.tray && inp.sscs.some(s => !s.tray)) todo.push('Choose the cable tray for the junction box cables: CL (column left) or CR (column right).');
+    if (needJb && !jbs.length) todo.push('Teach the junction box (the box at the top of each SSC column).');
+    else if (needJb && !jbTaught) todo.push('Teach the junction box again and click its four connectors left to right (+, −, +, −).');
+    if (!inp.tray && inp.sscs.some(s => !s.tray && !s.remote && !s.away)) todo.push('Choose the cable tray for the junction box cables: CL (column left) or CR (column right).');
     /* numberings saved from racks of this same layout */
     const lib = libraryMatches(inp);
     const day = iso => { const d = new Date(iso); return isNaN(d) ? '' : d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }); };
@@ -2343,13 +2373,63 @@ async function renderCadPage(id) {
     return `<p class="warn small">${first} is normally the ${cadKind(kind).label} closest to the MSM (now named ${esc(cadCompLabel(nearest, cad.labels))}). Use Show to check before confirming.</p>`;
   }
 
+  /* strings whose SSC is in another rack of the project (AYK S10176: SSC-1 in Rack 2, its
+     modules in Rack 4): the engineer adds each with its module count and the side that rack
+     stands on, then numbers its modules here as usual */
+  const remoteTotal = () => cad.remoteSscs.reduce((n, r) => n + (+r.count || 0), 0);
+  function remoteCard() {
+    const others = otherSscs();
+    if (!others.length && !cad.remoteSscs.length) return '';
+    if (!components.some(c => c.kind === 'module') && !cad.remoteSscs.length) return '';
+    const used = new Set(cad.remoteSscs.map(r => r.rack + ':' + r.ssc));
+    const free = others.filter(o => !used.has(o.rack + ':' + o.key));
+    return `<div class="cad-label-card cad-remote">
+      <h4><span class="cad-swatch" style="background:#7c3aed"></span>Strings fed from another rack
+        ${cad.remoteSscs.length ? `<span class="chip ${cad.remoteSscs.every(r => r.count >= 1) ? 'chip-ok' : 'chip-warn'}">${cad.remoteSscs.length}</span>` : ''}</h4>
+      <p class="muted small">An SSC in another rack of this project can drive modules here (as AYK S10176: SSC-1 in Rack 2, its modules in Rack 4). Add it with its module count and the side its rack stands on, then number its modules by clicking as usual. Its S, N, S+ and S− come in over the ceiling; its B+ / B− stay in its own rack. Draw that rack's wiring again after this one.</p>
+      ${cad.remoteSscs.map(r => `<div class="cad-label-row cad-remote-row">
+        <b>${esc(r.name)}</b><span class="muted small">${esc(r.rackName)}</span>
+        <input type="number" class="cad-modules" min="1" step="1" inputmode="numeric" value="${r.count || ''}" data-remote-count="${esc(r.id)}" placeholder="modules" aria-label="Modules for ${esc(r.name)}"><span class="muted small">modules</span>
+        <select data-remote-side="${esc(r.id)}" aria-label="Where ${esc(r.rackName)} stands"><option value="left" ${r.side !== 'right' ? 'selected' : ''}>its rack on the left</option><option value="right" ${r.side === 'right' ? 'selected' : ''}>its rack on the right</option></select>
+        <button class="btn btn-ghost btn-xs" data-remote-del="${esc(r.id)}" title="Remove this string">×</button></div>
+        ${components.some(c => c.kind === 'ssc' && cadCompLabel(c, cad.labels) === r.name) ? `<p class="warn small">This rack also has an SSC called ${esc(r.name)}: rename one of them so their module labels (${esc('S' + ((String(r.name).match(/\d+/) || [''])[0]))}-M…) differ.</p>` : ''}`).join('')}
+      ${free.length ? `<div class="cad-label-row"><select id="cad-remote-pick" aria-label="SSC in another rack">${free.map(o => `<option value="${o.rack}|${esc(o.key)}">${esc(o.name)} · ${esc(o.rackName)}</option>`).join('')}</select>
+        <button class="btn btn-ghost btn-sm" id="cad-remote-add">Add string</button></div>`
+        : `<p class="muted small">${others.length ? 'Every SSC of the other racks is added.' : 'No SSC in the other racks of this project.'}</p>`}
+    </div>`;
+  }
+  function wireRemote() {
+    const box = $('cad-labels');
+    const done = async msg => { await persist(); renderFound(); viewer.redraw(); if (msg) say(msg, 'cad-ok'); };
+    const add = box.querySelector('#cad-remote-add');
+    if (add) add.onclick = () => {
+      const [rack, key] = box.querySelector('#cad-remote-pick').value.split('|');
+      const o = otherSscs().find(x => String(x.rack) === rack && x.key === key);
+      if (!o) return;
+      cad.remoteSscs.push({ id: 'r' + Date.now().toString(36), rack: o.rack, rackName: o.rackName, ssc: o.key, name: o.name, count: null, side: 'left' });
+      done(`${o.name} of ${o.rackName} added: enter how many modules it drives here.`);
+    };
+    box.querySelectorAll('[data-remote-count]').forEach(inp => inp.onchange = () => {
+      const r = cad.remoteSscs.find(x => x.id === inp.dataset.remoteCount);
+      const v = Math.round(+inp.value);
+      r.count = v >= 1 ? v : null; done();
+    });
+    box.querySelectorAll('[data-remote-side]').forEach(sel => sel.onchange = () => { cad.remoteSscs.find(x => x.id === sel.dataset.remoteSide).side = sel.value; done(); });
+    box.querySelectorAll('[data-remote-del]').forEach(b => b.onclick = () => {
+      const r = cad.remoteSscs.find(x => x.id === b.dataset.remoteDel);
+      if (!confirm(`Remove ${r.name} (${r.rackName}) from this rack? Its numbering here is dropped.`)) return;
+      cad.remoteSscs = cad.remoteSscs.filter(x => x !== r); done();
+    });
+  }
+
   /* ACDP / MSM labels: ACDP numbered from the MSM, MSM left to right; the
      engineer confirms every label. */
   function renderLabels() {
     const box = $('cad-labels');
     const kinds = CAD_KINDS.filter(k => cadNamed(k.id) && components.some(c => c.kind === k.id));
     const modulesFound = components.filter(c => c.kind === 'module').length;
-    if (!kinds.length) { box.innerHTML = ''; return; }
+    const remoteHtml = remoteCard();
+    if (!kinds.length) { box.innerHTML = remoteHtml; wireRemote(); return; }
     box.innerHTML = kinds.map(k => {
       const list = components.filter(c => c.kind === k.id).sort((a, b) => (a.proposal || 0) - (b.proposal || 0));
       const done = list.every(c => cad.labels[cadCompKey(c)] && cad.labels[cadCompKey(c)].confirmed);
@@ -2365,14 +2445,16 @@ async function renderCadPage(id) {
           return `<div class="cad-label-row">
           <button class="btn btn-ghost btn-xs" data-show="${esc(cadCompKey(c))}" title="Zoom to this ${esc(k.label)}">Show</button>
           <input type="text" maxlength="24" value="${esc(cadCompLabel(c, cad.labels))}" data-key="${esc(cadCompKey(c))}" aria-label="${esc(k.label)} name">
-          ${k.id === 'ssc' ? `<input type="number" class="cad-modules" min="1" step="1" inputmode="numeric" placeholder="modules" value="${saved.modules ? esc(String(saved.modules)) : ''}" data-modules="${esc(cadCompKey(c))}" aria-label="Number of modules for ${esc(cadCompLabel(c, cad.labels))}"><span class="muted small">modules</span>` : ''}
+          ${k.id === 'ssc' && awayOf(cadCompKey(c)) ? `<input type="hidden" value="0" data-modules="${esc(cadCompKey(c))}" data-away="1"><span class="muted small cad-away">modules in ${esc(awayOf(cadCompKey(c)).rackName)}, wired from there</span>`
+            : k.id === 'ssc' ? `<input type="number" class="cad-modules" min="1" step="1" inputmode="numeric" placeholder="modules" value="${saved.modules ? esc(String(saved.modules)) : ''}" data-modules="${esc(cadCompKey(c))}" aria-label="Number of modules for ${esc(cadCompLabel(c, cad.labels))}"><span class="muted small">modules</span>` : ''}
         </div>`;
         }).join('')}
-        ${k.id === 'ssc' ? `<p class="small muted" data-total>Total entered: <b>${list.reduce((n, c) => n + (+((cad.labels[cadCompKey(c)] || {}).modules) || 0), 0)}</b> of ${modulesFound}</p>` : ''}
+        ${k.id === 'ssc' ? `<p class="small muted" data-total>Total entered: <b>${list.reduce((n, c) => n + (awayOf(cadCompKey(c)) ? 0 : +((cad.labels[cadCompKey(c)] || {}).modules) || 0), 0) + remoteTotal()}</b> of ${modulesFound}${cad.remoteSscs.length ? ' (with the strings fed from another rack)' : ''}</p>` : ''}
         <p class="cad-card-msg" role="alert" hidden></p>
         <button class="btn btn-primary btn-sm" data-confirm="${k.id}">Confirm ${k.id === 'ssc' ? 'SSC numbers and modules' : esc(k.label) + ' labels'}</button>
       </div>`;
-    }).join('');
+    }).join('') + remoteHtml;
+    wireRemote();
     box.querySelectorAll('[data-show]').forEach(b => b.onclick = () => {
       const c = components.find(x => cadCompKey(x) === b.dataset.show);
       if (!c) return;
@@ -2387,7 +2469,7 @@ async function renderCadPage(id) {
     box.querySelectorAll('input[data-key], input[data-modules]').forEach(inp => inp.oninput = () => {
       const card = inp.closest('.cad-label-card');
       const total = card.querySelector('[data-total] b');
-      if (total) total.textContent = [...card.querySelectorAll('input[data-modules]')].reduce((n, i) => n + (+i.value || 0), 0);
+      if (total) total.textContent = [...card.querySelectorAll('input[data-modules]')].reduce((n, i) => n + (+i.value || 0), 0) + remoteTotal();
       const key = inp.dataset.key || inp.dataset.modules;
       const prev = cad.labels[key];
       if (prev && prev.confirmed) prev.confirmed = false;
@@ -2414,13 +2496,14 @@ async function renderCadPage(id) {
       if (di >= 0) { refuse(`The label ${names[di]} is used twice.`, inputs[di]); return; }
       let counts = null;
       if (card.dataset.kind === 'ssc') {
+        const awayIn = inputs.map(i => !!card.querySelector(`input[data-modules="${CSS.escape(i.dataset.key)}"][data-away]`));
         counts = inputs.map(i => card.querySelector(`input[data-modules="${CSS.escape(i.dataset.key)}"]`).value.trim());
-        const bad = counts.findIndex(v => !/^[1-9][0-9]*$/.test(v));
+        const bad = counts.findIndex((v, i) => !awayIn[i] && !/^[1-9][0-9]*$/.test(v));
         if (bad >= 0) { refuse(`Enter the number of modules for ${names[bad]} (a whole number, 1 or more).`, card.querySelector(`input[data-modules="${CSS.escape(inputs[bad].dataset.key)}"]`)); return; }
         counts = counts.map(Number);
-        const total = counts.reduce((a, b) => a + b, 0);
+        const total = counts.reduce((a, b) => a + b, 0) + remoteTotal();
         if (total !== modulesFound) {
-          refuse(`The SSC module counts add up to ${total}, but ${modulesFound} modules were found on the drawing. Check the counts, or teach any missing modules first.`, card.querySelector('input[data-modules]'));
+          refuse(`The SSC module counts${cad.remoteSscs.length ? ' (with the strings fed from another rack)' : ''} add up to ${total}, but ${modulesFound} modules were found on the drawing. Check the counts, or teach any missing modules first.`, card.querySelector('input[data-modules]'));
           return;
         }
       }

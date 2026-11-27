@@ -63,7 +63,7 @@ function sheetMergeRacks(racks, gapMm) {
   const u0 = racks[0].unit > 0 ? racks[0].unit : 1;
   const out = { flat: { polylines: [], circles: [], texts: [], bounds: null }, jbs: [], parts: [], components: [], grounds: [], racks: [],
     wiring: { cables: [], strings: [], outline: [], crossings: [], portHits: [], warnings: [] } };
-  const names = new Set();
+  const names = new Set(), linkNames = new Map(), ends = [];
   let right = null, floor = null, anyWiring = false;
   racks.forEach((r, i) => {
     const B = r.flat.bounds, k = u0 / (r.unit > 0 ? r.unit : 1);
@@ -91,8 +91,19 @@ function sheetMergeRacks(racks, gapMm) {
     if (!W) return;
     anyWiring = true;
     const rename = new Map();
-    for (const st of W.strings) { let n = st.name; if (names.has(n)) n = (r.name || r.key) + ' ' + n; names.add(n); rename.set(st.name, n); }
+    /* a string across racks (its SSC here, its modules there, or the other way) keeps its name */
+    const linkOf = name => { const c = W.cables.find(k => k.ssc === name && k.link); return c ? c.link.key : null; };
+    for (const st of W.strings) {
+      let n = st.name;
+      const lk = linkOf(st.name);
+      if (names.has(n) && !(lk && linkNames.get(lk) === n)) n = (r.name || r.key) + ' ' + n;
+      names.add(n); rename.set(st.name, n);
+      if (lk) linkNames.set(lk, n);
+    }
     const nm = n => rename.get(n) || n;
+    /* each lead to the ceiling: its end there (the SSC rack's lead ends at the ceiling, the module
+       rack's starts at it) */
+    for (const c of W.cables) if (c.link) { const p = c.to === 'ceiling' ? c.pts[c.pts.length - 1] : c.pts[0]; ends.push({ key: c.link.key, role: c.link.role, kind: c.kind, id: pre + c.id, ssc: nm(c.ssc), at: pt(p) }); }
     for (const c of W.cables) out.wiring.cables.push(Object.assign({}, c, { id: pre + c.id, ssc: nm(c.ssc), pts: c.pts.map(pt),
       ways: c.ways ? c.ways.map(w => Object.assign({}, w, { pts: w.pts.map(pt) })) : undefined }));
     for (const st of W.strings) out.wiring.strings.push(Object.assign({}, st, { name: nm(st.name), modules: (st.modules || []).map(m => pre + m),
@@ -102,6 +113,18 @@ function sheetMergeRacks(racks, gapMm) {
     if (i === 0) Object.assign(out.wiring, { key: W.key, pair: W.pair, custom: W.custom, generated: W.generated });
   });
   if (!anyWiring) out.wiring = null;
+  else {
+    /* the two ends of each lead across racks, joined over the top of both racks */
+    out.wiring.links = [];
+    const used = new Set();
+    for (const e of ends) {
+      if (used.has(e)) continue;
+      const o = ends.find(x => x !== e && !used.has(x) && x.key === e.key && x.role === e.role);
+      if (!o) continue;
+      used.add(e); used.add(o);
+      out.wiring.links.push({ key: e.key, role: e.role, kind: e.kind, ssc: e.ssc, a: e.at, b: o.at, ids: [e.id, o.id] });
+    }
+  }
   return out;
 }
 
@@ -452,6 +475,26 @@ function sheetDraw(doc, model) {
       const pts = (E.cables && E.cables[c.id]) || c.pts;
       doc.poly(pts.map(P.pt), { w: kind === 'power' ? 0.32 : 0.26, color: SHEET_COLORS[kind], id: ia ? c.id : null, cls: ia ? 'sh-cable' : null, hit: ia });
     }
+  }
+
+  /* leads across racks (an SSC in one rack, its modules in another): dashed over the top of
+     both racks, each lead at its own height (S-, S+, S, N); a lead whose other rack is not on
+     this sheet ends with the rack's name */
+  const ROLE_ORDER = { 'S-': 0, 'S+': 1, 'S': 2, 'N': 3 };
+  const paired = new Set();
+  for (const l of W.links || []) {
+    if (!here(l.ssc)) continue;
+    l.ids.forEach(i => paired.add(i));
+    const top = Math.max(model.bounds.maxY, l.a[1], l.b[1]) + (60 + (ROLE_ORDER[l.role] || 0) * 30) * u;
+    const pts = [l.a, [l.a[0], top], [l.b[0], top], l.b].map(P.pt);
+    doc.poly(pts, { w: l.kind === 'power' ? 0.32 : 0.26, color: SHEET_COLORS[l.kind], dash: [1.6, 1.1] });
+  }
+  for (const c of W.cables) {
+    if (!c.link || paired.has(c.id) || (c.ssc && !here(c.ssc))) continue;
+    const pts = (E.cables && E.cables[c.id]) || c.pts;
+    const p = P.pt(c.to === 'ceiling' ? pts[pts.length - 1] : pts[0]);
+    const role = c.link.role.replace('-', '−');
+    doc.text(`${role} ${c.to === 'ceiling' ? 'to' : 'from'} ${c.link.rack || 'the other rack'}`, p[0] + (c.to === 'ceiling' ? 1 : 0), p[1] + 1.2, { size: 1.8, color: SHEET_COLORS[c.kind], align: c.to === 'ceiling' ? 'left' : 'center' });
   }
 
   /* module labels S1-M1 … */
