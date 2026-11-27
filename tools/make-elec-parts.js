@@ -32,10 +32,12 @@ const PARTS = [
   { id: 'msm', file: /^1-9 .*.dxf$/i, label: 'MSM, 9 SSCs', sscs: 9, views: [{ id: 'back', label: 'MSM back (9 SSCs)' }] },
   { id: 'msm6', file: /^1-6 .*.dxf$/i, label: 'MSM, 6 SSCs', sscs: 6, views: [{ id: 'back', label: 'MSM back (6 SSCs)' }] },
   { id: 'msm3', file: /^1-3 .*.dxf$/i, label: 'MSM, 3 SSCs', sscs: 3, views: [{ id: 'back', label: 'MSM back (3 SSCs)' }] },
-  { id: 'ssc', file: 'SSC.dxf', label: 'SSC', order: 'x', views: [{ id: 'front', label: 'SSC front' }, { id: 'back', label: 'SSC back' }] },
-  { id: 'jb2', file: 'JUNCTION BOX2.dxf', label: 'Junction box, 2 connectors', order: 'x', views: [{ id: 'front', label: 'Junction box front (2 connectors)' }, { id: 'back', label: 'Junction box back', drop: true }] },
+  /* AYK A2008408 (27 Nov 2026) draws the SSC back only: the front is kept from the last build */
+  { id: 'ssc', file: /^A2008408 .*\.dxf$/i, label: 'SSC', keep: ['front'], views: [{ id: 'back', label: 'SSC back' }] },
+  /* AYK A2043601 (27 Nov 2026): the 2-connector junction box front, one view */
+  { id: 'jb2', file: /^A2043601 .*\.dxf$/i, label: 'Junction box, 2 connectors', views: [{ id: 'front', label: 'Junction box front (2 connectors)' }] },
   { id: 'jb4', file: 'JUNCTION BOX4.dxf', label: 'Junction box, 4 connectors', views: [{ id: 'front', label: 'Junction box front (4 connectors)' }] },
-  { id: 'acdp', file: 'A2012504 AC_Breaker_Panel_12.DXF', label: 'ACDP (AC breaker panel)', views: [{ id: 'back', label: 'ACDP back' }] },
+  { id: 'acdp', file: /AC_Breaker_Panel.*.dxf$/i, label: 'ACDP (AC breaker panel)', views: [{ id: 'back', label: 'ACDP back' }] },
   { id: 'module', file: 'MODULE.dxf', label: 'Battery module', order: '-y', views: [{ id: 'front', label: 'Module front' }, { id: 'back', label: 'Module back', drop: true }] },
   { id: 'inline', file: 'P1562 Inline Connector.dxf', label: 'Inline connector', paper: true, pick: 'leftmost', views: [{ id: 'side', label: 'Inline connector' }] },
 ];
@@ -137,6 +139,7 @@ for (const P of PARTS) {
   if (P.order === 'x') groups.sort((a, b) => a.b[0] - b.b[0]);
   if (P.order === '-y') groups.sort((a, b) => b.b[1] - a.b[1]);
   const part = { id: P.id, label: P.label, file: file, views: [] };
+  const kept = (P.keep || []).map(id => { const v = ((before.parts.find(p => p.id === P.id) || {}).views || []).find(v => v.id === id); if (!v) throw new Error(`${P.label}: no ${id} view from the last build to keep.`); delete v.ports; return v; });
   if (P.sscs) part.sscs = P.sscs;
   groups.forEach((G, i) => {
     const [x0, y0, x1, y1] = G.b;
@@ -159,6 +162,7 @@ for (const P of PARTS) {
   });
   /* views not used on the diagram are left out (the module back, AYK 20 Nov 2026) */
   part.views = part.views.filter(v => !P.views.find(x => x.id === v.id).drop);
+  if (kept.length) { part.views = kept.concat(part.views); console.log('  kept from the last build:', kept.map(v => v.label).join(', ')); }
   out.parts.push(part);
   console.log(file, part.views.map(v => `${v.label} ${v.w} x ${v.h}, ${v.circles.length} circles, ${(v.d.length / 1024).toFixed(0)} kB`).join(' | '));
 }
@@ -249,7 +253,7 @@ function acdpPorts(v) {
 }
 /* junction box front: Bus+, Bus-, Bus+, Bus- left to right (confirmed by AYK, 20 Nov 2026) */
 function jbPorts(v, n, ring) {
-  const row = ringsOf(v, ring, 0.06).sort((a, b) => a[0] - b[0]);
+  const row = ringsOf(v, ring, 0.11).sort((a, b) => a[0] - b[0]);
   expect(row, n, `junction box front (${n} Bus connectors)`);
   return row.map((p, i) => port(i % 2 ? 'Bus-' : 'Bus+', p, 'round', ring * 2, true));
 }
