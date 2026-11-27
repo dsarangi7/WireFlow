@@ -78,7 +78,7 @@ Get-ChildItem tests\*.test.js | ForEach-Object { node $_.FullName }
 
 - Passwords are stored only as scrypt hashes. Sessions last 12 hours of inactivity, in an HttpOnly cookie limited to `/wireflow/`.
 - After 10 failed sign-ins from one PC, sign-in is blocked for 15 minutes. Behind nginx, each engineer's own address is used, so one PC's failures never block the others.
-- The admin can add engineers, set a new password, and lock or unlock an account. Locking signs that person out at once. Accounts are never deleted, so the log of who changed what stays complete.
+- Usernames are the engineers' email addresses. The admin's **Engineers** page (top bar) lists everyone and can add, edit (name or email), set a new password, lock or unlock, and delete. Locking or deleting signs that person out at once; their projects and the log stay.
 - **Two engineers on one rack:** if engineer B saves a rack that engineer A changed after B opened it, B's save is refused. B sees who changed it and is asked to reload, so nobody's work is overwritten silently.
 - Only the site files are served. The database, the server code, the tests, `.git` and the confidential `Electrical Diagram` folder are never served.
 - **Worldwide address on plain HTTP:** passwords and drawings cross the internet unencrypted. Use strong passwords. HTTPS on nginx (a certificate for the public address) would fix this. Until then, an option is to give the worldwide address only to engineers who need it.

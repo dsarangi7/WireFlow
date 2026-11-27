@@ -146,6 +146,7 @@ function shell(content, active) {
         </a>
         <nav class="tb-nav" aria-label="App">
           <a href="#/app" class="${active === 'dash' ? 'on' : ''}">Diagrams</a>
+          ${WF.remote && WF.user && WF.user.admin ? `<a href="#/account" class="${active === 'account' ? 'on' : ''}">Engineers</a>` : ''}
         </nav>
         ${WF.remote && WF.user
           ? `<span class="tb-note tb-user"><a href="#/account" title="Your account">${esc(WF.user.name)}${WF.user.admin ? ' · admin' : ''}</a><button type="button" class="btn btn-ghost btn-sm" id="tb-signout">Sign out</button></span>`
@@ -561,12 +562,13 @@ function renderLogin() {
   shell(`<form class="modal wf-dialog wf-login" novalidate>
       <h3>Sign in to WireFlow</h3>
       <p class="muted small">Use the account the WireFlow admin gave you. Projects here are shared by every AYK engineer.</p>
-      <div class="field"><label for="lg-user">Username</label><input id="lg-user" autocomplete="username" autocapitalize="none" spellcheck="false"></div>
+      <div class="field"><label for="lg-user">Email address</label><input id="lg-user" type="text" inputmode="email" placeholder="name@aykpower.com" autocomplete="username" autocapitalize="none" spellcheck="false"></div>
       <div class="field"><label for="lg-pw">Password</label><input id="lg-pw" type="password" autocomplete="current-password"></div>
       <p class="warn small lg-err" role="alert"></p>
       <div class="modal-actions"><button type="submit" class="btn btn-primary">Sign in</button></div>
     </form>`, 'dash');
   const f = app.querySelector('form');
+  wfPasswordEyes(f);
   f.querySelector('#lg-user').focus();
   f.onsubmit = async e => {
     e.preventDefault();
@@ -585,26 +587,28 @@ async function renderAccount() {
   const me = WF.user;
   let users = [];
   if (me.admin) { try { users = (await wfApi('GET', '/api/users')).data; } catch (e) { toast(e.message, 'error'); } }
-  const row = u => `<tr class="${u.active ? '' : 'muted'}"><td>${esc(u.name)}</td><td>${esc(u.username)}</td><td>${u.admin ? 'Admin' : 'Engineer'}${u.active ? '' : ' (locked)'}</td>
-    <td>${u.username === me.username ? '' : `<button class="btn btn-ghost btn-xs" data-reset="${esc(u.username)}">New password</button>
-      <button class="btn btn-ghost btn-xs" data-lock="${esc(u.username)}" data-on="${u.active ? 0 : 1}">${u.active ? 'Lock' : 'Unlock'}</button>`}</td></tr>`;
+  const row = u => `<tr class="${u.active ? '' : 'muted'}"><td>${esc(u.name)}</td><td><span class="wf-copy" title="Click to copy" data-copy="${esc(u.username)}">${esc(u.username)}</span></td><td>${u.admin ? 'Admin' : 'Engineer'}${u.active ? '' : ' (locked)'}</td>
+    <td>${u.username === me.username ? '<span class="muted small">you</span>' : `<button class="btn btn-ghost btn-xs" data-edit="${esc(u.username)}" data-name="${esc(u.name)}">Edit</button>
+      <button class="btn btn-ghost btn-xs" data-reset="${esc(u.username)}">New password</button>
+      <button class="btn btn-ghost btn-xs" data-lock="${esc(u.username)}" data-on="${u.active ? 0 : 1}">${u.active ? 'Lock' : 'Unlock'}</button>
+      <button class="btn btn-ghost btn-xs wf-del" data-del="${esc(u.username)}" data-name="${esc(u.name)}">Delete</button>`}</td></tr>`;
   const admin = !me.admin ? '' : `
+      <div class="modal wf-dialog wf-users"><h3>Engineers (${users.length})</h3>
+        <table class="wf-users-t"><thead><tr><th>Name</th><th>Username (email)</th><th>Role</th><th></th></tr></thead><tbody>${users.map(row).join('')}</tbody></table>
+        <p class="muted small">Click a username to copy it. A locked engineer cannot sign in until unlocked; a deleted one is gone for good. Their projects stay either way, and the log keeps who changed what.</p>
+      </div>
       <form class="modal wf-dialog" id="acc-add" novalidate>
         <h3>Add an engineer</h3>
         <div class="field"><label for="nu-name">Full name</label><input id="nu-name" maxlength="80" autocomplete="off"></div>
-        <div class="field"><label for="nu-user">Username (lower case, e.g. first name)</label><input id="nu-user" maxlength="40" autocapitalize="none" spellcheck="false" autocomplete="off"></div>
-        <div class="field"><label for="nu-pw">First password (at least 8 characters; they can change it)</label><input id="nu-pw" type="text" autocomplete="off"></div>
-        <label class="small"><input type="checkbox" id="nu-admin"> Admin (can manage accounts)</label>
+        <div class="field"><label for="nu-user">Email address (their username)</label><input id="nu-user" maxlength="80" inputmode="email" placeholder="name@aykpower.com" autocapitalize="none" spellcheck="false" autocomplete="off"></div>
+        <div class="field"><label for="nu-pw">First password (at least 8 characters; they can change it)</label><input id="nu-pw" type="password" autocomplete="new-password"></div>
+        <label class="small"><input type="checkbox" id="nu-admin"> Admin (can manage engineers)</label>
         <p class="warn small nu-err" role="alert"></p>
-        <div class="modal-actions"><button type="submit" class="btn btn-primary">Add account</button></div>
-      </form>
-      <div class="modal wf-dialog wf-users"><h3>Accounts</h3>
-        <table class="wf-users-t"><thead><tr><th>Name</th><th>Username</th><th>Role</th><th></th></tr></thead><tbody>${users.map(row).join('')}</tbody></table>
-        <p class="muted small">A locked engineer cannot sign in; their projects stay. Accounts are not deleted, so the record of who changed what stays complete.</p>
-      </div>`;
+        <div class="modal-actions"><button type="submit" class="btn btn-primary">Add engineer</button></div>
+      </form>`;
   shell(`<div class="dash">
     <div class="dash-head"><div><h1>${esc(me.name)}</h1><p>Signed in as <b>${esc(me.username)}</b>${me.admin ? ' · admin' : ''}.</p></div></div>
-    <section class="wf-acc">
+    <section class="wf-acc">${admin}
       <form class="modal wf-dialog" id="acc-pw" novalidate>
         <h3>Change your password</h3>
         <div class="field"><label for="pw-old">Current password</label><input id="pw-old" type="password" autocomplete="current-password"></div>
@@ -612,8 +616,8 @@ async function renderAccount() {
         <div class="field"><label for="pw-new2">New password again</label><input id="pw-new2" type="password" autocomplete="new-password"></div>
         <p class="warn small pw-err" role="alert"></p>
         <div class="modal-actions"><button type="submit" class="btn btn-primary">Change password</button></div>
-      </form>${admin}
-    </section></div>`, 'dash');
+      </form>
+    </section></div>`, 'account');
   const pw = document.getElementById('acc-pw');
   pw.onsubmit = async e => {
     e.preventDefault();
@@ -643,6 +647,52 @@ async function renderAccount() {
     if (!on && !confirm(`Lock ${b.dataset.lock}? They are signed out and cannot sign in until unlocked.`)) return;
     try { await wfApi('PATCH', '/api/users/' + encodeURIComponent(b.dataset.lock), { active: on }); renderAccount(); }
     catch (x) { toast(x.message, 'error'); }
+  });
+  app.querySelectorAll('[data-edit]').forEach(b => b.onclick = async () => {
+    const name = prompt('Full name:', b.dataset.name);
+    if (name == null) return;
+    const email = prompt('Email address (their username):', b.dataset.edit);
+    if (email == null) return;
+    try {
+      await wfApi('PATCH', '/api/users/' + encodeURIComponent(b.dataset.edit), { name: name.trim(), username: email.trim().toLowerCase() });
+      toast(email.trim().toLowerCase() !== b.dataset.edit ? 'Saved. They now sign in with ' + email.trim().toLowerCase() + '.' : 'Saved.'); renderAccount();
+    } catch (x) { toast(x.message, 'error'); }
+  });
+  app.querySelectorAll('[data-del]').forEach(b => b.onclick = async () => {
+    if (!confirm(`Delete ${b.dataset.name} (${b.dataset.del})? They can no longer sign in, and this cannot be undone. Their projects stay.`)) return;
+    try { await wfApi('DELETE', '/api/users/' + encodeURIComponent(b.dataset.del)); toast(`${b.dataset.name} deleted.`); renderAccount(); }
+    catch (x) { toast(x.message, 'error'); }
+  });
+  app.querySelectorAll('[data-copy]').forEach(s => s.onclick = async () => {
+    try { await navigator.clipboard.writeText(s.dataset.copy); toast('Copied ' + s.dataset.copy); }
+    catch (e) { const r = document.createRange(); r.selectNodeContents(s); const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r); }
+  });
+  wfPasswordEyes(app);
+}
+
+/** An eye on every password field: one click shows what is typed, the next hides it again. */
+function wfPasswordEyes(root) {
+  root.querySelectorAll('input[type=password]').forEach(inp => {
+    if (inp.parentElement.classList.contains('wf-pw')) return;
+    const wrap = document.createElement('span');
+    wrap.className = 'wf-pw';
+    inp.parentNode.insertBefore(wrap, inp);
+    wrap.appendChild(inp);
+    const eye = document.createElement('button');
+    eye.type = 'button'; eye.className = 'wf-eye'; eye.title = 'Show password'; eye.setAttribute('aria-label', 'Show password');
+    const icon = shown => shown
+      ? '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 3l18 18M10.6 6.1A10 10 0 0 1 12 6c6 0 10 6 10 6a17 17 0 0 1-3.2 3.8M6.2 7.4C3.6 9.2 2 12 2 12s4 6 10 6a9.6 9.6 0 0 0 4.1-.9"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>'
+      : '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 12s4-6 10-6 10 6 10 6-4 6-10 6S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>';
+    eye.innerHTML = icon(false);
+    eye.onclick = () => {
+      const show = inp.type === 'password';
+      inp.type = show ? 'text' : 'password';
+      eye.innerHTML = icon(show);
+      eye.title = show ? 'Hide password' : 'Show password';
+      eye.setAttribute('aria-label', eye.title);
+      inp.focus();
+    };
+    wrap.appendChild(eye);
   });
 }
 

@@ -110,6 +110,23 @@ const ok = (cond, msg) => { assert.ok(cond, msg); passed++; };
   ok((await anon('POST', '/api/login', { username: 'dibya', password: 'admin-pass-1' }, { 'X-Forwarded-For': '192.168.3.66' })).status === 429, 'ten failures block that PC');
   ok((await anon('POST', '/api/login', { username: 'dibya', password: 'admin-pass-1' }, { 'X-Forwarded-For': '192.168.3.67' })).status === 200, 'other PCs behind the same nginx still sign in');
 
+  /* email addresses as usernames; the admin renames and deletes */
+  const admin2 = client();
+  await admin2('POST', '/api/login', { username: 'dibya', password: 'admin-pass-1' });
+  ok((await admin2('POST', '/api/users', { username: 'Fawad.Ali@AYKpower.com', name: 'Fawad Ali', password: 'engineer-1' })).status === 200, 'email address accepted as username');
+  ok((await admin2('POST', '/api/users', { username: 'not an email', name: 'X', password: 'engineer-1' })).status === 400, 'bad username refused');
+  const fawad = client();
+  ok((await fawad('POST', '/api/login', { username: ' fawad.ali@aykpower.com ', password: 'engineer-1' })).status === 200, 'signs in with the email, any case, spaces trimmed');
+  const ren = await admin2('PATCH', '/api/users/fawad.ali@aykpower.com', { username: 'fawadali@aykpower.com', name: 'Fawad Ali' });
+  ok(ren.status === 200 && ren.data.username === 'fawadali@aykpower.com', 'admin changes the username');
+  ok((await fawad('GET', '/api/projects')).status === 401, 'renamed engineer signs in again');
+  ok((await fawad('POST', '/api/login', { username: 'fawadali@aykpower.com', password: 'engineer-1' })).status === 200, 'with the new username, same password');
+  ok((await admin2('DELETE', '/api/users/dibya')).status === 400, 'admin cannot delete themself');
+  ok((await eng('DELETE', '/api/users/fawadali@aykpower.com')).status === 403, 'engineer cannot delete accounts');
+  ok((await admin2('DELETE', '/api/users/fawadali@aykpower.com')).status === 200, 'admin deletes an engineer');
+  ok((await fawad('GET', '/api/projects')).status === 401, 'deleted engineer is signed out');
+  ok(!(await admin2('GET', '/api/users')).data.some(u => u.username === 'fawadali@aykpower.com'), 'gone from the list');
+
   /* every change was logged */
   const n = srv.db.prepare('SELECT COUNT(*) AS n FROM log').get().n;
   ok(n > 10, 'changes logged');

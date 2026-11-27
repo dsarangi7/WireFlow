@@ -782,3 +782,10 @@ select.cad-need { border-color: #f59e0b; box-shadow: 0 0 0 2px rgba(245, 158, 11
 .wf-upload-card { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; padding: 14px 18px; margin: 0 0 20px; border: 1px solid #fdba74; background: #fff7ed; border-radius: 12px; color: #7c2d12; }
 .wf-upload-card .muted { color: #9a3412; }
 .wf-upload-card > span:last-child { margin-left: auto; }
+.wf-pw { position: relative; display: block; }
+.wf-pw input { padding-right: 40px; }
+.wf-eye { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); background: none; border: 0; padding: 4px; color: #64748b; cursor: pointer; line-height: 0; border-radius: 6px; }
+.wf-eye:hover { color: #0f172a; background: #f1f5f9; }
+.wf-copy { cursor: copy; border-bottom: 1px dashed #94a3b8; }
+.wf-del { color: #b91c1c; }
+.wf-users { width: 760px; }

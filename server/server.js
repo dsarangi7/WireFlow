@@ -16,6 +16,7 @@
  *   node server/server.js adduser <user> "<Full name>" [--admin]
  *   node server/server.js passwd <user>           set a new password
  *   node server/server.js users                   list the accounts
+ *   node server/server.js rename <user> <new>     change a username (e.g. to the email address)
  *   node server/server.js backup [folder]         copy the database (default data/backups)
  * Settings (environment): WIREFLOW_PORT (80), WIREFLOW_HOST (0.0.0.0),
  *   WIREFLOW_DATA (<repo>/data), WIREFLOW_PFX + WIREFLOW_PFX_PASS for HTTPS.
@@ -82,7 +83,8 @@ function addUser(username, name, pw, admin) {
     .run(username, name, hashPassword(pw, salt), salt, admin ? 1 : 0, now());
 }
 const cleanUser = u => u && { username: u.username, name: u.name, admin: !!u.admin, active: !!u.active };
-const validUsername = u => typeof u === 'string' && /^[a-z0-9._-]{2,40}$/.test(u);
+/* a username is the engineer's email address (or a short name such as the admin's) */
+const validUsername = u => typeof u === 'string' && /^[a-z0-9._+-]+(@[a-z0-9.-]+\.[a-z]{2,})?$/.test(u) && u.length >= 2 && u.length <= 80;
 
 function cookies(req) {
   const out = {};
@@ -243,7 +245,7 @@ async function api(req, res, pathname) {
     if (req.method === 'POST') {
       const b = await readJson(req);
       const username = String(b.username || '').trim().toLowerCase();
-      if (!validUsername(username)) throw fail(400, 'Usernames are 2 to 40 lower-case letters, digits, dots, dashes or underscores.');
+      if (!validUsername(username)) throw fail(400, 'Use the engineer\'s email address as the username (e.g. name@aykpower.com).');
       if (!String(b.name || '').trim()) throw fail(400, 'Enter the engineer\'s name.');
       const bad = passwordProblem(b.password); if (bad) throw fail(400, bad);
       if (db.prepare('SELECT 1 FROM users WHERE username = ?').get(username)) throw fail(409, 'That username is taken.');
@@ -252,7 +254,7 @@ async function api(req, res, pathname) {
       return send(res, 200, { ok: true });
     }
   }
-  const um = pathname.match(/^\/api\/users\/([a-z0-9._-]+)$/);
+  const um = pathname.match(/^\/api\/users\/([a-z0-9._+@-]+)$/);
   if (um && req.method === 'PATCH') {
     if (!me.admin) throw fail(403, 'Only the admin manages accounts.');
     const u = db.prepare('SELECT * FROM users WHERE username = ?').get(um[1]);
@@ -263,7 +265,28 @@ async function api(req, res, pathname) {
     if (b.admin != null) db.prepare('UPDATE users SET admin = ? WHERE username = ?').run(b.admin ? 1 : 0, u.username);
     if (b.active != null) { db.prepare('UPDATE users SET active = ? WHERE username = ?').run(b.active ? 1 : 0, u.username); if (!b.active) db.prepare('DELETE FROM sessions WHERE username = ?').run(u.username); }
     if (b.password != null) { const bad = passwordProblem(b.password); if (bad) throw fail(400, bad); setPassword(u.username, b.password); }
-    log(me.username, 'user changed', u.username + ' ' + Object.keys(b).filter(k => k !== 'password').concat(b.password != null ? ['password'] : []).join(','));
+    let now_ = u.username;
+    if (b.username != null) {
+      /* a new username (their email address): they sign in again with it */
+      const to = String(b.username).trim().toLowerCase();
+      if (to !== u.username) {
+        if (!validUsername(to)) throw fail(400, 'Use the engineer\'s email address as the username (e.g. name@aykpower.com).');
+        if (db.prepare('SELECT 1 FROM users WHERE username = ?').get(to)) throw fail(409, 'That username is taken.');
+        db.prepare('DELETE FROM sessions WHERE username = ?').run(u.username);
+        db.prepare('UPDATE users SET username = ? WHERE username = ?').run(to, u.username);
+        now_ = to;
+      }
+    }
+    log(me.username, 'user changed', u.username + (now_ !== u.username ? ' -> ' + now_ : '') + ' ' + Object.keys(b).filter(k => k !== 'password').concat(b.password != null ? ['password'] : []).join(','));
+    return send(res, 200, { ok: true, username: now_ });
+  }
+  if (um && req.method === 'DELETE') {
+    if (!me.admin) throw fail(403, 'Only the admin manages accounts.');
+    if (um[1] === me.username) throw fail(400, 'You cannot delete your own account.');
+    const u = db.prepare('SELECT * FROM users WHERE username = ?').get(um[1]);
+    if (!u) throw fail(404, 'No such account.');
+    db.prepare('DELETE FROM users WHERE username = ?').run(u.username);  /* their sessions go with it */
+    log(me.username, 'user deleted', u.username + ' (' + u.name + ')');
     return send(res, 200, { ok: true });
   }
 
@@ -375,6 +398,18 @@ function askPassword(prompt) {
 }
 async function cli(args) {
   const [cmd, username, name] = args;
+  if (cmd === 'rename') {
+    /* node server/server.js rename <old username> <new username>: e.g. to the engineer's email address */
+    const to = String(name || '').trim().toLowerCase();
+    if (!db.prepare('SELECT 1 FROM users WHERE username = ?').get(username)) { console.error('No such account: ' + username); process.exit(1); }
+    if (!validUsername(to)) { console.error('Not a valid username: ' + to); process.exit(1); }
+    if (db.prepare('SELECT 1 FROM users WHERE username = ?').get(to)) { console.error('Already taken: ' + to); process.exit(1); }
+    db.prepare('DELETE FROM sessions WHERE username = ?').run(username);
+    db.prepare('UPDATE users SET username = ? WHERE username = ?').run(to, username);
+    log(null, 'user renamed (console)', username + ' -> ' + to);
+    console.log(`${username} is now ${to}`);
+    return;
+  }
   if (cmd === 'users') { for (const u of db.prepare('SELECT * FROM users ORDER BY name').all()) console.log(`${u.username}\t${u.name}${u.admin ? '\t(admin)' : ''}${u.active ? '' : '\t(locked)'}`); return; }
   if ((cmd === 'adduser' || cmd === 'passwd') && validUsername(username)) {
     const exists = db.prepare('SELECT 1 FROM users WHERE username = ?').get(username);
@@ -399,7 +434,7 @@ async function cli(args) {
     console.log('Backup written: ' + file);
     return;
   }
-  console.error('Usage: node server/server.js [adduser <user> "<Full name>" [--admin] | passwd <user> | users | backup [folder]]');
+  console.error('Usage: node server/server.js [adduser <user> "<Full name>" [--admin] | passwd <user> | users | rename <user> <new user> | backup [folder]]');
   process.exit(1);
 }
 
