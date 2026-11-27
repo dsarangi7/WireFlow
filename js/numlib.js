@@ -121,8 +121,8 @@ function numlibApply(entry, comps, counts) {
 
 /* ---- storage on this device (wrapped: private windows may refuse it) ---- */
 function numlibLoad() {
-  try { const v = JSON.parse(localStorage.getItem(NUMLIB_KEY) || '[]'); return Array.isArray(v) ? v : []; } catch (e) { return []; }
+  try { const v = JSON.parse((typeof wfStorage !== 'undefined' ? wfStorage : localStorage).getItem(NUMLIB_KEY) || '[]'); return Array.isArray(v) ? v : []; } catch (e) { return []; }
 }
 function numlibStore(lib) {
-  try { localStorage.setItem(NUMLIB_KEY, JSON.stringify(lib)); return true; } catch (e) { return false; }
+  try { (typeof wfStorage !== 'undefined' ? wfStorage : localStorage).setItem(NUMLIB_KEY, JSON.stringify(lib)); return true; } catch (e) { return false; }
 }

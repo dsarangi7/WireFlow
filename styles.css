@@ -762,3 +762,23 @@ select.cad-need { border-color: #f59e0b; box-shadow: 0 0 0 2px rgba(245, 158, 11
 .sh-see textarea { width: 100%; box-sizing: border-box; padding: 6px 8px; border-radius: 8px; border: 1px solid rgba(120,145,185,.3); background: #0d1528; color: #f3f6fc; font: inherit; font-size: 12px; resize: vertical; }
 .sh-see { display: grid; gap: 4px; }
 .sh-paper .sh-away { pointer-events: none; }
+
+/* company server: sign in, accounts, copying this browser's projects */
+.tb-user { gap: 10px; }
+.tb-user a { color: #dbe4f3; font-weight: 600; text-decoration: none; }
+.tb-user a:hover { text-decoration: underline; }
+.tb-user .btn { background: transparent; color: #dbe4f3; border: 1px solid rgba(219,228,243,.35); }
+.tb-user .btn:hover { background: rgba(219,228,243,.12); }
+.wf-login { margin: 64px auto; box-shadow: 0 10px 40px rgba(15,23,42,.12); }
+.wf-acc { display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-start; }
+.wf-acc .modal, .wf-login { color: #0f172a; }
+.wf-acc .modal .muted, .wf-login .muted { color: #64748b; }
+.wf-users-t th { color: #475569; font-size: 12px; text-transform: uppercase; letter-spacing: .03em; }
+.wf-acc .modal { box-shadow: 0 6px 24px rgba(15,23,42,.08); border: 1px solid var(--line); }
+.wf-users { width: 640px; }
+.wf-users-t { width: 100%; border-collapse: collapse; font-size: 14px; margin-bottom: 12px; }
+.wf-users-t th, .wf-users-t td { text-align: left; padding: 7px 6px; border-bottom: 1px solid var(--line); }
+.wf-users-t td:last-child { text-align: right; white-space: nowrap; }
+.wf-upload-card { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; padding: 14px 18px; margin: 0 0 20px; border: 1px solid #fdba74; background: #fff7ed; border-radius: 12px; color: #7c2d12; }
+.wf-upload-card .muted { color: #9a3412; }
+.wf-upload-card > span:last-child { margin-left: auto; }

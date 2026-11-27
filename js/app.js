@@ -49,22 +49,32 @@ async function localStore(name, mode, work) {
   });
 }
 
-async function localProjects() {
+/* On the company server the same calls go to the server (js/store.js); the browser's own
+   store (idb…) stays for this browser's projects, which can be uploaded from the Diagrams page. */
+async function localProjects() { return WF.remote ? wfRemoteStore.projects() : idbProjects(); }
+async function localProject(id) { return WF.remote ? wfRemoteStore.project(id) : idbProject(id); }
+async function localPutProject(project) { return WF.remote ? wfRemoteStore.put(project) : idbPutProject(project); }
+async function localDeleteProject(id) { return WF.remote ? wfRemoteStore.remove(id) : idbDeleteProject(id); }
+async function localAddProject(project) { return WF.remote ? wfRemoteStore.add(project) : idbAddProject(project); }
+async function localPutUnderlay(projectId, blob, kind) { return WF.remote ? wfRemoteStore.putUnderlay(projectId, blob, kind) : idbPutUnderlay(projectId, blob, kind); }
+async function localGetUnderlay(projectId) { return WF.remote ? wfRemoteStore.getUnderlay(projectId) : idbGetUnderlay(projectId); }
+
+async function idbProjects() {
   const rows = await localStore('projects', 'readonly', store => store.getAll());
   return (rows || []).sort((a, b) => String(b.updated_at || b.created_at).localeCompare(String(a.updated_at || a.created_at)));
 }
-async function localProject(id) { return localStore('projects', 'readonly', store => store.get(Number(id))); }
-async function localPutProject(project) { return localStore('projects', 'readwrite', store => store.put(project)); }
+async function idbProject(id) { return localStore('projects', 'readonly', store => store.get(Number(id))); }
+async function idbPutProject(project) { return localStore('projects', 'readwrite', store => store.put(project)); }
 /** Deletes a project and its stored drawing for good. */
-async function localDeleteProject(id) {
+async function idbDeleteProject(id) {
   await localStore('projects', 'readwrite', store => store.delete(Number(id)));
   try { await localStore('underlays', 'readwrite', store => store.delete(Number(id))); } catch (e) {}
 }
-async function localAddProject(project) { return localStore('projects', 'readwrite', store => store.add(project)); }
-async function localPutUnderlay(projectId, blob, kind) {
+async function idbAddProject(project) { return localStore('projects', 'readwrite', store => store.add(project)); }
+async function idbPutUnderlay(projectId, blob, kind) {
   return localStore('underlays', 'readwrite', store => store.put({ projectId: Number(projectId), blob, kind }));
 }
-async function localGetUnderlay(projectId) { return localStore('underlays', 'readonly', store => store.get(Number(projectId))); }
+async function idbGetUnderlay(projectId) { return localStore('underlays', 'readonly', store => store.get(Number(projectId))); }
 
 /* ---------------- utilities ---------------- */
 function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
@@ -100,6 +110,14 @@ async function route() {
     return;
   }
   document.title = 'WireFlow';
+  await wfStoreReady;
+  if (WF.remote) {
+    /* company server: sign in first; other engineers' changes show on every page change */
+    if (h.startsWith('#/login')) { if (WF.user) { location.replace(wfNextHash()); return; } renderLogin(); return; }
+    if (!WF.user) { location.replace('#/login?next=' + encodeURIComponent(h)); return; }
+    await wfRefreshLists();
+    if (h === '#/account') { renderAccount(); return; }
+  }
   if (h.startsWith('#/cad/')) { renderCadPage(+h.split('/')[2]); return; }
   if (h.startsWith('#/sheet/')) { renderSheetPage(+h.split('/')[2]); return; }
   if (h.startsWith('#/folder/')) { renderDashboard(decodeURIComponent(h.split('/')[2] || '') || undefined); return; }
@@ -111,7 +129,7 @@ async function route() {
     case '#/wiring': renderDashboard(); return;
     case '#/electrical': renderElecDashboard(); return;
     case '#/example': openExampleRack().catch(e => { shell(`<div class="empty"><h3>Could not open the example</h3><p>${esc(e.message)}</p><a class="btn btn-primary" href="#/app">Back</a></div>`, 'dash'); }); return;
-    case '#/login': location.replace('#/app'); return;
+    case '#/login': case '#/account': location.replace('#/app'); return;
     default: renderHome();
   }
 }
@@ -129,11 +147,15 @@ function shell(content, active) {
         <nav class="tb-nav" aria-label="App">
           <a href="#/app" class="${active === 'dash' ? 'on' : ''}">Diagrams</a>
         </nav>
-        <span class="tb-note"><span class="tb-dot" aria-hidden="true"></span>Drawings stay on this device</span>
+        ${WF.remote && WF.user
+          ? `<span class="tb-note tb-user"><a href="#/account" title="Your account">${esc(WF.user.name)}${WF.user.admin ? ' · admin' : ''}</a><button type="button" class="btn btn-ghost btn-sm" id="tb-signout">Sign out</button></span>`
+          : WF.remote ? '' : `<span class="tb-note"><span class="tb-dot" aria-hidden="true"></span>Drawings stay on this device</span>`}
       </div>
     </header>
     <main class="main">${content}</main>
   </div>`;
+  const so = document.getElementById('tb-signout');
+  if (so) so.onclick = async () => { try { await wfApi('POST', '/api/logout'); } catch (e) {} WF.user = null; location.hash = '#/login'; };
 }
 
 /* ================= DASHBOARD ================= */
@@ -142,10 +164,10 @@ function shell(content, active) {
    numbering) is offered first on the next rack of the same project. */
 const FOLDERS_KEY = 'wireflow.folders';
 function foldersLoad() {
-  try { const v = JSON.parse(localStorage.getItem(FOLDERS_KEY) || '[]'); return Array.isArray(v) ? v.filter(f => f && f.id) : []; } catch (e) { return []; }
+  try { const v = JSON.parse(wfStorage.getItem(FOLDERS_KEY) || '[]'); return Array.isArray(v) ? v.filter(f => f && f.id) : []; } catch (e) { return []; }
 }
 function foldersSave(list) {
-  try { localStorage.setItem(FOLDERS_KEY, JSON.stringify(list)); return true; } catch (e) { return false; }
+  try { wfStorage.setItem(FOLDERS_KEY, JSON.stringify(list)); return true; } catch (e) { return false; }
 }
 function folderLabel(f) { return f ? f.number + (f.name ? ' · ' + f.name : '') : 'Not in a project'; }
 /** "Rack N" after the highest rack number already in the folder. */
@@ -304,7 +326,7 @@ async function renderDashboard(folderId) {
     const stats = [['modules', n('module')], ['SSCs', n('ssc')], ['JBs', n('jb')], ['ACDPs', n('acdp')], ['MSMs', n('msm')]].filter(x => x[1]);
     return `<div class="d-card-wrap"><a class="d-card" href="#/cad/${p.id}">
       <div class="d-card-top"><span class="d-file" aria-hidden="true">DXF</span>
-        <div class="d-card-title"><b>${esc(p.name)}</b><small>${p.cad_file && p.cad_file.replace(/\.dxf$/i, '') !== p.name ? esc(p.cad_file) + ' · ' : ''}Updated ${esc(when(p))}</small></div></div>
+        <div class="d-card-title"><b>${esc(p.name)}</b><small>${p.cad_file && p.cad_file.replace(/\.dxf$/i, '') !== p.name ? esc(p.cad_file) + ' · ' : ''}Updated ${esc(when(p))}${p.updated_by ? ' by ' + esc(p.updated_by) : ''}</small></div></div>
       <div class="d-stats">${stats.length ? stats.map(x => `<span><b>${x[1]}</b> ${x[0]}</span>`).join('') : '<span class="muted">Open the drawing and teach one module to start.</span>'}</div>
       <div class="d-status d-status-${status[1]}"><span class="d-dot"></span>${status[0]}</div>
     </a><div class="d-card-btns"><button type="button" class="d-card-edit" data-edit="${p.id}" title="Rename this rack or move it to another project" aria-label="Rename or move ${esc(p.name)}">Rename / move</button><button type="button" class="d-card-edit d-card-del" data-del-rack="${p.id}" title="Delete this rack" aria-label="Delete ${esc(p.name)}">Delete</button></div></div>`;
@@ -369,7 +391,6 @@ async function renderDashboard(folderId) {
         </div>
         <h2 id="drop-title">Drop an AutoCAD rack drawing here${folder ? ' to add it to ' + esc(folder.number) : ''}</h2>
         <p>ASCII DXF in millimetres &middot; <button class="link-btn" id="drop-browse">browse files</button></p>
-        <p class="drop-hint">Have a DWG? Convert it with <code>tools/dwg-to-dxf.ps1</code> (uses your AutoCAD) or AutoCAD <i>Save As &rarr; DXF</i>.</p>
         <p id="studio-import-status" class="drop-status" role="status"></p>
         <input id="studio-import-file" type="file" accept=".dxf" hidden>
       </section>
@@ -442,7 +463,7 @@ async function renderDashboard(folderId) {
     if (!file) return;
     studioStatus.textContent = 'Checking drawing…';
     try {
-      if (/\.dwg$/i.test(file.name)) throw new Error('DWG cannot be read in the browser. Convert it with tools/dwg-to-dxf.ps1 or AutoCAD Save As DXF, then import the .dxf.');
+      if (/\.dwg$/i.test(file.name)) throw new Error('DWG cannot be read in the browser. In AutoCAD use Save As DXF, then import the .dxf.');
       if (/\.dxf$/i.test(file.name)) { await openStudioCad(file); return; }
       throw new Error('Choose a DXF drawing (AutoCAD Save As DXF).');
     } catch (error) {
@@ -507,8 +528,9 @@ async function renderHome() {
     <div class="dash home">
       <div class="dash-head"><div>
         <h1>What are you drawing?</h1>
-        <p>${folders.length ? `${plural(folders.length, 'project')} on this device. ` : ''}Both diagrams use the same project folders: one per project number.</p>
+        <p>${folders.length ? `${plural(folders.length, 'project')} ${WF.remote ? 'shared on the AYK server' : 'on this device'}. ` : ''}Both diagrams use the same project folders: one per project number.</p>
       </div></div>
+      <div id="wf-upload"></div>
       <div class="home-cards">
         <a class="home-card" href="#/wiring">
           <span class="home-ico" aria-hidden="true"><svg width="34" height="34" viewBox="0 0 24 24" fill="none"><rect x="3" y="3" width="7" height="5" rx="1" stroke="currentColor" stroke-width="1.6"/><rect x="14" y="3" width="7" height="5" rx="1" stroke="currentColor" stroke-width="1.6"/><rect x="3" y="16" width="7" height="5" rx="1" stroke="currentColor" stroke-width="1.6"/><rect x="14" y="16" width="7" height="5" rx="1" stroke="currentColor" stroke-width="1.6"/><path d="M6.5 8v8M17.5 8v8M10 5.5h4" stroke="#ef4444" stroke-width="1.6"/><path d="M10 18.5h4" stroke="#22c55e" stroke-width="1.6"/></svg></span>
@@ -524,6 +546,177 @@ async function renderHome() {
         </a>
       </div>
     </div>`, 'dash');
+  if (WF.remote) wfOfferUpload();
+}
+
+/* ================= COMPANY SERVER: SIGN IN, ACCOUNTS, UPLOAD ================= */
+/** Where to go after signing in (the page asked for, else the diagrams). */
+function wfNextHash() {
+  const next = decodeURIComponent(location.hash.split('?next=')[1] || '');
+  return next.startsWith('#/') && !next.startsWith('#/login') ? next : '#/app';
+}
+
+function renderLogin() {
+  document.title = 'Sign in · WireFlow';
+  shell(`<form class="modal wf-dialog wf-login" novalidate>
+      <h3>Sign in to WireFlow</h3>
+      <p class="muted small">Use the account the WireFlow admin gave you. Projects here are shared by every AYK engineer.</p>
+      <div class="field"><label for="lg-user">Username</label><input id="lg-user" autocomplete="username" autocapitalize="none" spellcheck="false"></div>
+      <div class="field"><label for="lg-pw">Password</label><input id="lg-pw" type="password" autocomplete="current-password"></div>
+      <p class="warn small lg-err" role="alert"></p>
+      <div class="modal-actions"><button type="submit" class="btn btn-primary">Sign in</button></div>
+    </form>`, 'dash');
+  const f = app.querySelector('form');
+  f.querySelector('#lg-user').focus();
+  f.onsubmit = async e => {
+    e.preventDefault();
+    const err = f.querySelector('.lg-err'); err.textContent = '';
+    const btn = f.querySelector('button[type=submit]'); btn.disabled = true;
+    try {
+      const { data } = await wfApi('POST', '/api/login', { username: f.querySelector('#lg-user').value.trim(), password: f.querySelector('#lg-pw').value });
+      WF.user = data.user;
+      location.replace(wfNextHash());
+    } catch (x) { err.textContent = x.message; btn.disabled = false; f.querySelector('#lg-pw').select(); }
+  };
+}
+
+async function renderAccount() {
+  document.title = 'Account · WireFlow';
+  const me = WF.user;
+  let users = [];
+  if (me.admin) { try { users = (await wfApi('GET', '/api/users')).data; } catch (e) { toast(e.message, 'error'); } }
+  const row = u => `<tr class="${u.active ? '' : 'muted'}"><td>${esc(u.name)}</td><td>${esc(u.username)}</td><td>${u.admin ? 'Admin' : 'Engineer'}${u.active ? '' : ' (locked)'}</td>
+    <td>${u.username === me.username ? '' : `<button class="btn btn-ghost btn-xs" data-reset="${esc(u.username)}">New password</button>
+      <button class="btn btn-ghost btn-xs" data-lock="${esc(u.username)}" data-on="${u.active ? 0 : 1}">${u.active ? 'Lock' : 'Unlock'}</button>`}</td></tr>`;
+  const admin = !me.admin ? '' : `
+      <form class="modal wf-dialog" id="acc-add" novalidate>
+        <h3>Add an engineer</h3>
+        <div class="field"><label for="nu-name">Full name</label><input id="nu-name" maxlength="80" autocomplete="off"></div>
+        <div class="field"><label for="nu-user">Username (lower case, e.g. first name)</label><input id="nu-user" maxlength="40" autocapitalize="none" spellcheck="false" autocomplete="off"></div>
+        <div class="field"><label for="nu-pw">First password (at least 8 characters; they can change it)</label><input id="nu-pw" type="text" autocomplete="off"></div>
+        <label class="small"><input type="checkbox" id="nu-admin"> Admin (can manage accounts)</label>
+        <p class="warn small nu-err" role="alert"></p>
+        <div class="modal-actions"><button type="submit" class="btn btn-primary">Add account</button></div>
+      </form>
+      <div class="modal wf-dialog wf-users"><h3>Accounts</h3>
+        <table class="wf-users-t"><thead><tr><th>Name</th><th>Username</th><th>Role</th><th></th></tr></thead><tbody>${users.map(row).join('')}</tbody></table>
+        <p class="muted small">A locked engineer cannot sign in; their projects stay. Accounts are not deleted, so the record of who changed what stays complete.</p>
+      </div>`;
+  shell(`<div class="dash">
+    <div class="dash-head"><div><h1>${esc(me.name)}</h1><p>Signed in as <b>${esc(me.username)}</b>${me.admin ? ' · admin' : ''}.</p></div></div>
+    <section class="wf-acc">
+      <form class="modal wf-dialog" id="acc-pw" novalidate>
+        <h3>Change your password</h3>
+        <div class="field"><label for="pw-old">Current password</label><input id="pw-old" type="password" autocomplete="current-password"></div>
+        <div class="field"><label for="pw-new">New password (at least 8 characters)</label><input id="pw-new" type="password" autocomplete="new-password"></div>
+        <div class="field"><label for="pw-new2">New password again</label><input id="pw-new2" type="password" autocomplete="new-password"></div>
+        <p class="warn small pw-err" role="alert"></p>
+        <div class="modal-actions"><button type="submit" class="btn btn-primary">Change password</button></div>
+      </form>${admin}
+    </section></div>`, 'dash');
+  const pw = document.getElementById('acc-pw');
+  pw.onsubmit = async e => {
+    e.preventDefault();
+    const err = pw.querySelector('.pw-err'); err.textContent = '';
+    const n = pw.querySelector('#pw-new').value;
+    if (n !== pw.querySelector('#pw-new2').value) { err.textContent = 'The two new passwords differ.'; return; }
+    try { await wfApi('POST', '/api/password', { old: pw.querySelector('#pw-old').value, new: n }); WF.user = null; toast('Password changed. Sign in with the new password.'); location.hash = '#/login'; }
+    catch (x) { err.textContent = x.message; }
+  };
+  const add = document.getElementById('acc-add');
+  if (add) add.onsubmit = async e => {
+    e.preventDefault();
+    const err = add.querySelector('.nu-err'); err.textContent = '';
+    try {
+      await wfApi('POST', '/api/users', { name: add.querySelector('#nu-name').value.trim(), username: add.querySelector('#nu-user').value.trim().toLowerCase(), password: add.querySelector('#nu-pw').value, admin: add.querySelector('#nu-admin').checked });
+      toast('Account added. Give the engineer the username and first password.'); renderAccount();
+    } catch (x) { err.textContent = x.message; }
+  };
+  app.querySelectorAll('[data-reset]').forEach(b => b.onclick = async () => {
+    const pass = prompt(`New password for ${b.dataset.reset} (at least 8 characters):`);
+    if (!pass) return;
+    try { await wfApi('PATCH', '/api/users/' + encodeURIComponent(b.dataset.reset), { password: pass }); toast('Password set. Give it to the engineer.'); }
+    catch (x) { toast(x.message, 'error'); }
+  });
+  app.querySelectorAll('[data-lock]').forEach(b => b.onclick = async () => {
+    const on = b.dataset.on === '1';
+    if (!on && !confirm(`Lock ${b.dataset.lock}? They are signed out and cannot sign in until unlocked.`)) return;
+    try { await wfApi('PATCH', '/api/users/' + encodeURIComponent(b.dataset.lock), { active: on }); renderAccount(); }
+    catch (x) { toast(x.message, 'error'); }
+  });
+}
+
+/* Projects made before the server (in this browser's own storage) can be copied up once.
+   The browser keeps its copy. Rack numbers are new on the server, so the links between
+   racks (strings across racks, racks drawn on one sheet) are renumbered. */
+const WF_UPLOADED_KEY = 'wireflow.uploaded';
+async function wfOfferUpload() {
+  const box = document.getElementById('wf-upload');
+  if (!box) return;
+  let local = [];
+  try { if (!localStorage.getItem(WF_UPLOADED_KEY)) local = await idbProjects(); } catch (e) { return; }
+  if (!local.length) return;
+  const card = inner => `<div class="wf-upload-card">${inner}</div>`;
+  box.innerHTML = card(`<b>${local.length} project${local.length === 1 ? ' is' : 's are'} only in this browser.</b>
+    <span class="muted small">Copy ${local.length === 1 ? 'it' : 'them'} to the server so every engineer can open ${local.length === 1 ? 'it' : 'them'}. This browser keeps its copy.</span>
+    <span><button class="btn btn-primary btn-sm" id="wf-up-go">Copy to the server</button> <button class="btn btn-ghost btn-sm" id="wf-up-no">Don't copy</button></span>`);
+  box.querySelector('#wf-up-no').onclick = () => {
+    if (!confirm('Hide this for good on this PC? The projects stay only in this browser.')) return;
+    try { localStorage.setItem(WF_UPLOADED_KEY, 'skipped ' + new Date().toISOString()); } catch (e) {}
+    box.innerHTML = '';
+  };
+  box.querySelector('#wf-up-go').onclick = async () => {
+    box.innerHTML = card('<b>Copying…</b>');
+    try {
+      const n = await wfUploadLocal(local, msg => { box.innerHTML = card(`<b>${esc(msg)}</b>`); });
+      toast(`${n} project${n === 1 ? '' : 's'} copied to the server.`); renderHome();
+    } catch (e) { box.innerHTML = card(`<b class="warn">Copying stopped: ${esc(e.message)}</b><span class="muted small">What was copied stays on the server; check it before copying again.</span>`); }
+  };
+}
+async function wfUploadLocal(local, progress) {
+  const readLocal = k => { try { const v = JSON.parse(localStorage.getItem(k) || '[]'); return Array.isArray(v) ? v : []; } catch (e) { return []; } };
+  /* a project folder with the same number on the server is the same project */
+  const folders = foldersLoad(), folderMap = {};
+  for (const lf of readLocal(FOLDERS_KEY)) {
+    const same = folders.find(x => String(x.number).toLowerCase() === String(lf.number).toLowerCase());
+    if (same) folderMap[lf.id] = same.id; else { folders.push(lf); folderMap[lf.id] = lf.id; }
+  }
+  foldersSave(folders);
+  const idMap = {}, added = [];
+  let i = 0;
+  for (const p of local.slice().sort((x, y) => x.id - y.id)) {
+    progress(`Copying ${++i} of ${local.length}: ${p.name}…`);
+    const copy = JSON.parse(JSON.stringify(p));
+    const oldId = copy.id; delete copy.id;
+    if (copy.folder) copy.folder = folderMap[copy.folder] || copy.folder;
+    const id = await wfRemoteStore.add(copy);
+    idMap[oldId] = id; copy.id = id; added.push(copy);
+    const u = await idbGetUnderlay(oldId);
+    if (u && u.blob) await wfRemoteStore.putUnderlay(id, u.blob, u.kind);
+  }
+  /* the links between racks carry rack numbers */
+  const mapId = v => idMap[v] != null ? idMap[v] : v;
+  for (const p of added) {
+    const cad = p.config && p.config.cad;
+    if (!cad) continue;
+    let changed = false;
+    for (const r of cad.remoteSscs || []) { r.rack = mapId(r.rack); changed = true; }
+    if (cad.sheet && Array.isArray(cad.sheet.racks) && cad.sheet.racks.length) { cad.sheet.racks = cad.sheet.racks.map(mapId); changed = true; }
+    if (cad.wiring) { cad.wiring = JSON.parse(JSON.stringify(cad.wiring).replace(/"key":"(\d+):/g, (m, n) => '"key":"' + mapId(+n) + ':')); changed = true; }
+    if (changed) await wfRemoteStore.put(p);
+  }
+  /* taught parts and numberings join the shared lists */
+  const merge = (key, extra, idOf) => {
+    const list = JSON.parse(wfStorage.getItem(key) || '[]');
+    const have = new Set(list.map(idOf));
+    for (const x of extra) if (!have.has(idOf(x))) list.push(x);
+    wfStorage.setItem(key, JSON.stringify(list));
+  };
+  merge(CAD_LIBRARY_KEY, readLocal(CAD_LIBRARY_KEY), cadSigId);
+  merge(NUMLIB_KEY, readLocal(NUMLIB_KEY).map(e => Object.assign({}, e, { projectId: mapId(e.projectId) })), WF_LISTS[NUMLIB_KEY].id);
+  await wfListSaving;
+  try { localStorage.setItem(WF_UPLOADED_KEY, new Date().toISOString()); } catch (e) {}
+  return added.length;
 }
 
 /* ================= ELECTRICAL DIAGRAM: PROJECTS ================= */
@@ -572,7 +765,7 @@ async function renderElecDashboard(folderId) {
     const status = sum.confirmed ? ['Setup confirmed', 'ok'] : sum.banks || sum.sscs ? ['Setup in progress', 'warn'] : ['Not set up yet', 'idle'];
     return `<div class="d-card-wrap"><a class="d-card" href="#/elec/${p.id}">
       <div class="d-card-top"><span class="d-file d-file-elec" aria-hidden="true">EL</span>
-        <div class="d-card-title"><b>${esc(p.name)}</b><small>Updated ${esc(when(p))}</small></div></div>
+        <div class="d-card-title"><b>${esc(p.name)}</b><small>Updated ${esc(when(p))}${p.updated_by ? ' by ' + esc(p.updated_by) : ''}</small></div></div>
       <div class="d-stats"><span><b>${sum.banks}</b> bank${sum.banks === 1 ? '' : 's'}</span><span><b>${sum.sscs}</b> SSC${sum.sscs === 1 ? '' : 's'}</span></div>
       <div class="d-status d-status-${status[1]}"><span class="d-dot"></span>${status[0]}</div>
     </a><div class="d-card-btns"><button type="button" class="d-card-edit" data-edit="${p.id}" aria-label="Rename or move ${esc(p.name)}">Rename / move</button><button type="button" class="d-card-edit d-card-del" data-del="${p.id}" title="Delete this electrical diagram" aria-label="Delete ${esc(p.name)}">Delete</button></div></div>`;
@@ -1539,10 +1732,10 @@ function cadNormaliseTerminals(sig) {
 
 /** Device-local library of taught parts, reused on other racks. */
 function cadLibraryLoad() {
-  try { const v = JSON.parse(localStorage.getItem(CAD_LIBRARY_KEY) || '[]'); return Array.isArray(v) ? v : []; } catch (e) { return []; }
+  try { const v = JSON.parse(wfStorage.getItem(CAD_LIBRARY_KEY) || '[]'); return Array.isArray(v) ? v : []; } catch (e) { return []; }
 }
 function cadLibrarySave(list) {
-  try { localStorage.setItem(CAD_LIBRARY_KEY, JSON.stringify(list)); return true; } catch (e) { return false; }
+  try { wfStorage.setItem(CAD_LIBRARY_KEY, JSON.stringify(list)); return true; } catch (e) { return false; }
 }
 /** Identity of a taught part, shared by its drawing copy and library copy. */
 function cadSigId(sig) {

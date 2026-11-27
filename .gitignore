@@ -18,3 +18,6 @@ __pycache__/
 
 # AYK technotes and part drawings: kept on this PC only (confidential). The site uses assets/elec/parts.json.
 /Electrical Diagram/
+
+# company server data (projects, accounts): never in git
+/data/
