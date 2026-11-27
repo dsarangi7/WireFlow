@@ -103,6 +103,13 @@ const ok = (cond, msg) => { assert.ok(cond, msg); passed++; };
   for (const p of ['/server/server.js', '/data/wireflow.db', '/tests/server.test.js', '/.git/config', '/Electrical%20Diagram/x.dxf', '/js/../server/server.js'])
     ok((await anon('GET', p)).status === 404, 'not served: ' + p);
 
+  /* behind nginx at /wireflow/: cookie path, and failed sign-ins counted per engineer, not per nginx */
+  const viaNginx = await anon('POST', '/api/login', { username: 'dibya', password: 'admin-pass-1' }, { 'X-Forwarded-Prefix': '/wireflow', 'X-Forwarded-For': '192.168.3.50' });
+  ok(/Path=\/wireflow\//.test(viaNginx.headers.get('set-cookie')), 'cookie path is the nginx sub-path');
+  for (let i = 0; i < 10; i++) await anon('POST', '/api/login', { username: 'dibya', password: 'wrong' }, { 'X-Forwarded-For': '192.168.3.66' });
+  ok((await anon('POST', '/api/login', { username: 'dibya', password: 'admin-pass-1' }, { 'X-Forwarded-For': '192.168.3.66' })).status === 429, 'ten failures block that PC');
+  ok((await anon('POST', '/api/login', { username: 'dibya', password: 'admin-pass-1' }, { 'X-Forwarded-For': '192.168.3.67' })).status === 200, 'other PCs behind the same nginx still sign in');
+
   /* every change was logged */
   const n = srv.db.prepare('SELECT COUNT(*) AS n FROM log').get().n;
   ok(n > 10, 'changes logged');

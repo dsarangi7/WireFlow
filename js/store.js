@@ -41,7 +41,8 @@ async function wfApi(method, path, body, headers) {
     else { opts.body = JSON.stringify(body); opts.headers['Content-Type'] = 'application/json'; }
   }
   let res;
-  try { res = await fetch(path, opts); } catch (e) { throw new Error('The WireFlow server cannot be reached. Check the network and try again.'); }
+  /* relative to the page, so WireFlow also works under a sub-path (nginx: /wireflow/api/...) */
+  try { res = await fetch(path.replace(/^\//, ''), opts); } catch (e) { throw new Error('The WireFlow server cannot be reached. Check the network and try again.'); }
   if (res.status === 401 && path !== '/api/login' && path !== '/api/me') {
     WF.user = null;
     if (!location.hash.startsWith('#/login')) location.hash = '#/login';
@@ -57,7 +58,7 @@ async function wfApi(method, path, body, headers) {
 const wfStoreReady = (async () => {
   if (location.protocol === 'file:') return;
   try {
-    const res = await fetch('/api/me', { credentials: 'same-origin' });
+    const res = await fetch('api/me', { credentials: 'same-origin' });
     const type = res.headers.get('Content-Type') || '';
     if (!type.includes('json') || (res.status !== 200 && res.status !== 401)) return;
     const data = await res.json();

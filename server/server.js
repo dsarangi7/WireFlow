@@ -88,7 +88,9 @@ function cookies(req) {
   const out = {};
   for (const part of String(req.headers.cookie || '').split(';')) {
     const i = part.indexOf('=');
-    if (i > 0) out[part.slice(0, i).trim()] = decodeURIComponent(part.slice(i + 1).trim());
+    /* the first of two same-named cookies is the one with the longer path (/wireflow/ before /) */
+    const k = i > 0 ? part.slice(0, i).trim() : '';
+    if (k && !(k in out)) out[k] = decodeURIComponent(part.slice(i + 1).trim());
   }
   return out;
 }
@@ -101,9 +103,18 @@ function sessionUser(req) {
   if (row.expires - Date.now() < (SESSION_HOURS - 1) * 3600e3) db.prepare('UPDATE sessions SET expires = ? WHERE token = ?').run(Date.now() + SESSION_HOURS * 3600e3, token);
   return row;
 }
+/* Behind nginx (AYK: http://192.168.3.8:3002/wireflow/) the request comes from nginx itself:
+   the engineer's address is the last X-Forwarded-For entry, the sub-path is X-Forwarded-Prefix,
+   and HTTPS is X-Forwarded-Proto. Those headers are trusted only from this machine. */
+const fromProxy = req => /^(127\.|::1$|::ffff:127\.)/.test(req.socket.remoteAddress || '');
+function clientIp(req) {
+  const fwd = fromProxy(req) && String(req.headers['x-forwarded-for'] || '').split(',').map(s => s.trim()).filter(Boolean).pop();
+  return fwd || req.socket.remoteAddress;
+}
 function sessionCookie(req, token, maxAge) {
-  const secure = req.socket.encrypted ? '; Secure' : '';
-  return `wf_session=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${maxAge}${secure}`;
+  const https = req.socket.encrypted || (fromProxy(req) && req.headers['x-forwarded-proto'] === 'https');
+  const prefix = fromProxy(req) && /^\/[\w-]+$/.test(req.headers['x-forwarded-prefix'] || '') ? req.headers['x-forwarded-prefix'] + '/' : '/';
+  return `wf_session=${token}; HttpOnly; SameSite=Strict; Path=${prefix}; Max-Age=${maxAge}${https ? '; Secure' : ''}`;
 }
 
 /* failed sign-ins: at most 10 per address in 15 minutes */
@@ -193,7 +204,7 @@ function listOut(list) {
 async function api(req, res, pathname) {
   /* every change needs this header, so a page on another site cannot post here */
   if (req.method !== 'GET' && req.headers['x-wireflow'] !== '1') throw fail(403, 'Refused.');
-  const ip = req.socket.remoteAddress;
+  const ip = clientIp(req);
 
   if (pathname === '/api/login' && req.method === 'POST') {
     if (tooManyFailures(ip)) throw fail(429, 'Too many failed sign-ins. Wait 15 minutes and try again.');
