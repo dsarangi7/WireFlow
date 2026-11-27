@@ -1011,9 +1011,9 @@ async function renderElecSheetsPage(id) {
         <h1>${esc(project.name)} · sheets</h1>
         <span class="chip">A3 · ${sheets.length} sheets</span>
         <div class="cad-tools">
-          <button class="btn btn-ghost btn-sm" id="ed-prev" title="Previous sheet (Page Up)">‹</button>
+          <button class="btn btn-ghost btn-sm" id="ed-prev" title="Previous sheet (Left arrow or Page Up)">‹</button>
           <select id="ed-sheet" aria-label="Sheet">${sheets.map(s => `<option value="${s.n}">Sheet ${s.n} · ${esc(s.title)}</option>`).join('')}</select>
-          <button class="btn btn-ghost btn-sm" id="ed-next" title="Next sheet (Page Down)">›</button>
+          <button class="btn btn-ghost btn-sm" id="ed-next" title="Next sheet (Right arrow or Page Down)">›</button>
           <button class="btn btn-ghost btn-sm" id="ed-undo" title="Undo (Ctrl+Z)" disabled>Undo</button>
           <button class="btn btn-ghost btn-sm" id="sh-zoom-out" title="Zoom out">−</button>
           <button class="btn btn-ghost btn-sm" id="sh-zoom-fit" title="Fit the sheet (key 0). The mouse wheel zooms at the pointer; drag empty paper to move around.">Fit</button>
@@ -1454,6 +1454,8 @@ async function renderElecSheetsPage(id) {
     if (ev.key === 'Escape') { if (tool) { setTool(tool); return; } sel = null; markSel(); showSel(); return; }
     if (ev.key === 'PageUp') { ev.preventDefault(); go(cur - 1); return; }
     if (ev.key === 'PageDown') { ev.preventDefault(); go(cur + 1); return; }
+    /* left / right arrows change the sheet when nothing is selected (with a selection they move it) */
+    if (!sel && (ev.key === 'ArrowLeft' || ev.key === 'ArrowRight')) { ev.preventDefault(); go(cur + (ev.key === 'ArrowLeft' ? -1 : 1)); return; }
     if (ev.key === '+' || ev.key === '=') { zoomTo(zoom * 1.5); return; }
     if (ev.key === '-') { zoomTo(zoom / 1.5); return; }
     if (ev.key === '0') { $('sh-zoom-fit').onclick(); return; }
@@ -3285,9 +3287,9 @@ async function renderSheetPage(id) {
   function drawPages() {
     const pg = sheetPagesOf(st, wiring), n = pg.count;
     const num = k => sheetNumber(F, k, n).n;
-    $('sh-page-nav').innerHTML = n > 1 ? `<button class="btn btn-ghost btn-sm" data-page-go="${page - 1}" ${page <= 1 ? 'disabled' : ''} title="Previous sheet">‹</button>
+    $('sh-page-nav').innerHTML = n > 1 ? `<button class="btn btn-ghost btn-sm" data-page-go="${page - 1}" ${page <= 1 ? 'disabled' : ''} title="Previous sheet (Left arrow or Page Up)">‹</button>
       <select id="sh-page" aria-label="Sheet">${Array.from({ length: n }, (_, i) => `<option value="${i + 1}" ${i + 1 === page ? 'selected' : ''}>Sheet ${num(i + 1)}</option>`).join('')}</select>
-      <button class="btn btn-ghost btn-sm" data-page-go="${page + 1}" ${page >= n ? 'disabled' : ''} title="Next sheet">›</button>` : '';
+      <button class="btn btn-ghost btn-sm" data-page-go="${page + 1}" ${page >= n ? 'disabled' : ''} title="Next sheet (Right arrow or Page Down)">›</button>` : '';
     const away = [];
     for (let k = 1; k <= n; k++) if (k !== page) {
       const names = wiring.strings.filter(s => pg.of[s.name] === k).map(s => s.name).sort((x, y) => String(x).localeCompare(String(y), undefined, { numeric: true }));
@@ -3302,6 +3304,16 @@ async function renderSheetPage(id) {
       : '<p class="muted small">One sheet: every string is wired on it. Add a sheet to split the wiring.</p>'}`;
     document.querySelectorAll('[data-page-go]').forEach(b => b.onclick = () => { const k = +b.dataset.pageGo; if (k >= 1 && k <= n) { page = k; render(); } });
     if ($('sh-page')) $('sh-page').onchange = e => { page = +e.target.value; render(); };
+    /* keyboard: Page Up / Left arrow = previous sheet, Page Down / Right arrow = next */
+    if (WF.sheetKeys) document.removeEventListener('keydown', WF.sheetKeys);
+    WF.sheetKeys = ev => {
+      if (!$('sh-page-nav')) { document.removeEventListener('keydown', WF.sheetKeys); WF.sheetKeys = null; return; }
+      if (ev.ctrlKey || ev.metaKey || ev.altKey || /INPUT|TEXTAREA|SELECT/.test((ev.target && ev.target.tagName) || '')) return;
+      const d = { PageUp: -1, ArrowLeft: -1, PageDown: 1, ArrowRight: 1 }[ev.key];
+      if (!d || page + d < 1 || page + d > n) return;
+      ev.preventDefault(); page += d; render();
+    };
+    document.addEventListener('keydown', WF.sheetKeys);
     $('sh-page-add').onclick = () => {
       st.pages.count = n + 1; page = n + 1;
       save(); render();
