@@ -11,7 +11,8 @@
   (deploy\nginx-wireflow.conf), so no firewall or router change is needed.
   Running it again replaces both tasks with the new settings.
 
-  Needs Node.js 22.13 or newer (https://nodejs.org, LTS, Windows installer). No npm packages.
+  Needs Node.js 22.13 or newer: by default its own copy in C:\apps\node-wireflow (the Windows zip from nodejs.org),
+  so the Node.js other tools use is not changed. No npm packages.
 
 .EXAMPLE
   .\server\install-windows.ps1
@@ -20,7 +21,9 @@
 param(
   [int]    $Port      = 3005,
   [string] $DataDir   = 'C:\WireFlowData',
-  [string] $BackupDir = 'C:\WireFlowData\backups'
+  [string] $BackupDir = 'C:\WireFlowData\backups',
+  # WireFlow's own Node.js (portable zip unpacked here), so the server's Node used by other tools stays as it is
+  [string] $Node      = 'C:\apps\node-wireflow\node.exe'
 )
 $ErrorActionPreference = 'Stop'
 
@@ -30,8 +33,8 @@ if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administra
 $root = Split-Path -Parent $PSScriptRoot
 if (-not (Test-Path (Join-Path $root 'server\server.js'))) { throw "server\server.js not found under $root" }
 
-$node = (Get-Command node -ErrorAction SilentlyContinue).Source
-if (-not $node) { throw 'Node.js is not installed (https://nodejs.org, LTS).' }
+$node = if (Test-Path $Node) { $Node } else { (Get-Command node -ErrorAction SilentlyContinue).Source }
+if (-not $node) { throw "Node.js not found at $Node (unpack the Node.js 22 Windows zip there)." }
 $ver = [version]((& $node --version).TrimStart('v'))
 if ($ver -lt [version]'22.13.0') { throw "Node.js $ver is too old: WireFlow needs 22.13 or newer." }
 

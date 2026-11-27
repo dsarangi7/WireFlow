@@ -28,7 +28,7 @@ A rack drawing takes about 3 MB once compressed, and WireFlow uses well under 1 
 
 ## First installation
 
-1. Install **Node.js LTS** (22.13 or newer) from https://nodejs.org.
+1. WireFlow needs Node.js 22.13 or newer. The server's own Node.js (v20, used by the other tools) is left alone. WireFlow gets its own copy: unpack the Node.js 22 Windows zip (`node-v22.x.x-win-x64.zip` from https://nodejs.org/dist/latest-v22.x/) so that `C:\apps\node-wireflow\node.exe` exists.
 2. Clone the code:
 
    ```powershell
@@ -45,7 +45,7 @@ A rack drawing takes about 3 MB once compressed, and WireFlow uses well under 1 
 4. Create the admin account. You are asked for the password, which is never shown:
 
    ```powershell
-   $env:WIREFLOW_DATA = 'C:\WireFlowData'; node server\server.js adduser dibya "Dibya Jyoti Sarangi" --admin
+   $env:WIREFLOW_DATA = 'C:\WireFlowData'; C:\apps\node-wireflow\node.exe server\server.js adduser dibya "Dibya Jyoti Sarangi" --admin
    ```
 
 5. Add the block from `deploy/nginx-wireflow.conf` inside the `server { listen 3002; ... }` block, before `location / { ... }`. Back up `nginx.conf` first, run `nginx -t`, then `nginx -s reload`.
@@ -89,7 +89,7 @@ Get-ChildItem tests\*.test.js | ForEach-Object { node $_.FullName }
 - A backup can be taken at any time, while WireFlow runs:
 
   ```powershell
-  cd C:\apps\WireFlow; $env:WIREFLOW_DATA = 'C:\WireFlowData'; node server\server.js backup
+  cd C:\apps\WireFlow; $env:WIREFLOW_DATA = 'C:\WireFlowData'; C:\apps\node-wireflow\node.exe server\server.js backup
   ```
 
 - **To restore:**
@@ -109,7 +109,7 @@ When an engineer signs in on a PC that already has projects in its browser, the 
 
 ## Other commands
 
-Run these in `C:\apps\WireFlow`, after `$env:WIREFLOW_DATA = 'C:\WireFlowData'`:
+Run these in `C:\apps\WireFlow`, after `$env:WIREFLOW_DATA = 'C:\WireFlowData'`. Here `node` means WireFlow's own `C:\apps\node-wireflow\node.exe`:
 
 | Command | Does |
 | --- | --- |
